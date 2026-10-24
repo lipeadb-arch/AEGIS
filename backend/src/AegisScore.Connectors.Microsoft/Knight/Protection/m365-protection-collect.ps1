@@ -24,6 +24,43 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# ---- [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Protocolo de quadros na saída padrão ------------------------------
+#
+# Tudo o que o AEGIS interpreta sai em linhas prefixadas por '##aegis:', escritas DIRETAMENTE na saída padrão e
+# descarregadas na hora (um processo encerrado no meio ainda deixa o que já foi escrito):
+#   ##aegis:stage <estágio>   — gravado ANTES de cada passo (é o que diz até onde o processo chegou);
+#   ##aegis:read <json>       — UMA leitura concluída, emitida assim que termina (sobrevive a uma falha posterior);
+#   ##aegis:result <json>     — o resumo final (runtime, conexão, categorias de falha).
+# Qualquer outra linha (aviso de módulo, saída de host) é ignorada pelo AEGIS — não contamina o resultado.
+
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+
+function Write-AegisFrame {
+    param([string]$Kind, [string]$Payload)
+    [Console]::Out.WriteLine('##aegis:' + $Kind + ' ' + $Payload)
+    [Console]::Out.Flush()
+}
+
+function Write-AegisStage {
+    param([string]$Name)
+    Write-AegisFrame 'stage' $Name
+}
+
+function Add-AegisRead {
+    <# Registra a leitura no documento e a EMITE imediatamente como quadro próprio. #>
+    param($Record)
+    $script:Reads.Add($Record)
+    Write-AegisFrame 'read' ($Record | ConvertTo-Json -Depth 12 -Compress)
+}
+
+function Write-AegisResult {
+    <# Resumo final. As leituras já saíram em quadros próprios: o resumo não as repete. #>
+    param($Result)
+    Write-AegisStage 'result'
+    $Result.reads = @()
+    Write-AegisFrame 'result' ($Result | ConvertTo-Json -Depth 12 -Compress)
+}
+
 $script:DefenderCommands = @(
     'Get-AtpPolicyForO365',
     'Get-SafeLinksPolicy', 'Get-SafeLinksRule',
@@ -132,30 +169,34 @@ $script:Reads = New-Object System.Collections.Generic.List[object]
 
 function Invoke-Read {
     param([string]$Capability, [string]$Command, [scriptblock]$Body, [bool]$Enumerated = $false)
+    Write-AegisStage ('read ' + $Capability)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $produced = & $Body
-        $items = if ($null -eq $produced) { @() } elseif ($produced -is [System.Array]) { $produced } else { , $produced }
-        $script:Reads.Add(@{
+        # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Atribuição em cada ramo: a saída de um `if` passa pelo pipeline e DESEMBRULHA o array de
+        # um item (`, $produced` virava o objeto) — leituras de objeto único saíam como objeto e o AEGIS as lia como lista vazia.
+        if ($null -eq $produced) { $items = @() } elseif ($produced -is [System.Array]) { $items = $produced } else { $items = , $produced }
+        Add-AegisRead @{
             capability = $Capability; command = $Command; ok = $true; items = $items
             truncated = ($Enumerated -and ($items.Count -ge $script:EnumerationLimit))
-            errorCategory = $null; errorId = $null
-        })
+            errorCategory = $null; errorId = $null; durationMs = [long]$sw.ElapsedMilliseconds
+        }
     }
     catch {
-        $script:Reads.Add(@{
+        Add-AegisRead @{
             capability = $Capability; command = $Command; ok = $false; items = @(); truncated = $false
-            errorCategory = (Get-ErrorCategory $_); errorId = (Get-ErrorId $_)
-        })
+            errorCategory = (Get-ErrorCategory $_); errorId = (Get-ErrorId $_); durationMs = [long]$sw.ElapsedMilliseconds
+        }
     }
 }
 
 function Add-FailedRead {
     <# Leitura NÃO tentada porque a sessão dela não conectou: o motivo é o da conexão, declarado por leitura. #>
     param([string]$Capability, [string]$Command, [string]$Category, [string]$Id)
-    $script:Reads.Add(@{
+    Add-AegisRead @{
         capability = $Capability; command = $Command; ok = $false; items = @(); truncated = $false
         errorCategory = $Category; errorId = $Id
-    })
+    }
 }
 
 function Get-RuleReach {
@@ -432,14 +473,18 @@ $result = @{
 }
 
 try {
+    Write-AegisStage 'start'
     $result.runtime.powerShell = [string]$PSVersionTable.PSVersion
     $result.runtime.platform = [string]$PSVersionTable.Platform
 
+    Write-AegisStage 'input'
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Nenhuma credencial recebida na entrada padrão.' }
     $request = $raw | ConvertFrom-Json
 
+    Write-AegisStage 'import'
     Import-Module ExchangeOnlineManagement -ErrorAction Stop
+    Write-AegisStage 'imported'
     $module = Get-Module ExchangeOnlineManagement
     if ($null -ne $module) { $result.runtime.module = [string]$module.Version }
 
@@ -448,11 +493,10 @@ try {
     if ($mode -eq 'module-check') {
         foreach ($n in @('Connect-ExchangeOnline', 'Connect-IPPSSession', 'Disconnect-ExchangeOnline')) {
             $found = $null -ne (Get-Command $n -Module ExchangeOnlineManagement -ErrorAction SilentlyContinue)
-            $script:Reads.Add(@{ capability = 'ModuleCheck'; command = $n; ok = $found; items = @(); truncated = $false
-                errorCategory = $(if ($found) { $null } else { 'Unavailable' }); errorId = $(if ($found) { $null } else { 'CommandNotFound' }) })
+            Add-AegisRead @{ capability = 'ModuleCheck'; command = $n; ok = $found; items = @(); truncated = $false
+                errorCategory = $(if ($found) { $null } else { 'Unavailable' }); errorId = $(if ($found) { $null } else { 'CommandNotFound' }) }
         }
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        Write-AegisResult $result
         exit 0
     }
 
@@ -474,15 +518,27 @@ try {
                    elseif ($testOnly) { @('Get-AtpPolicyForO365') }
                    else { $script:DefenderCommands }
 
+    # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Módulo temporário da conexão no diretório PRIVADO desta execução, quando a versão
+    # instalada aceita -EXOModuleBasePath (documentado a partir da 3.9.2).
+    $workDir = [string](Get-Prop $request 'workDir')
+    $useWorkDir = (-not [string]::IsNullOrWhiteSpace($workDir)) -and (Test-Path -LiteralPath $workDir)
+
     try {
-        Connect-ExchangeOnline -AccessToken $accessToken -Organization $organization -CommandName $exoCommands `
-            -ShowBanner:$false -SkipLoadingFormatData -ErrorAction Stop | Out-Null
+        $connect = @{
+            AccessToken = $accessToken; Organization = $organization; CommandName = $exoCommands
+            ShowBanner = $false; SkipLoadingFormatData = $true; ErrorAction = 'Stop'
+        }
+        if ($useWorkDir -and (Get-Command Connect-ExchangeOnline).Parameters.ContainsKey('EXOModuleBasePath')) { $connect['EXOModuleBasePath'] = $workDir }
+        Write-AegisStage 'connect'
+        Connect-ExchangeOnline @connect | Out-Null
         $result.connected = $true
+        Write-AegisStage 'connected'
     }
     catch {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $_
         $result.connectionErrorId = Get-ErrorId $_
+        Write-AegisStage 'connect-failed'
     }
 
     if ($result.connected) {
@@ -492,6 +548,7 @@ try {
             else { Read-Defender }
         }
         finally {
+            Write-AegisStage 'disconnect'
             try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
         }
     }
@@ -499,45 +556,78 @@ try {
     if ($profileName -eq 'purview') {
         # A sessão do Security & Compliance é OUTRA conexão, com OUTRO token. A falha dela não apaga a leitura do log
         # de auditoria, e as leituras que dependem dela registram o motivo da conexão.
-        $complianceToken = [string](Get-Prop $request 'complianceToken')
-        try {
-            if ([string]::IsNullOrWhiteSpace($complianceToken)) { throw 'Token do Security & Compliance ausente.' }
-            Connect-IPPSSession -AccessToken $complianceToken -Organization $organization -CommandName $script:PurviewComplianceCommands `
-                -ShowBanner:$false -ErrorAction Stop | Out-Null
-            $result.complianceConnected = $true
+        #
+        # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A Microsoft documenta que Connect-IPPSSession — e portanto o Security &
+        # Compliance PowerShell — NÃO está disponível no PowerShell 7 em Linux nem em macOS. Nessas plataformas a sessão NÃO é
+        # tentada: as leituras dela saem como limitação de plataforma, antes de qualquer conexão. E quando o AEGIS já decidiu
+        # o desfecho delas (complianceMode = skip: plataforma ou falha do token), o script não registra nada por elas.
+        $complianceMode = [string](Get-Prop $request 'complianceMode')
+        if ($complianceMode -eq 'skip') {
+            $result.complianceConnectionErrorCategory = $null
         }
-        catch {
-            $result.complianceConnectionErrorCategory = Get-ErrorCategory $_
-            $result.complianceConnectionErrorId = Get-ErrorId $_
-        }
-
-        if ($result.complianceConnected) {
-            try { if (-not $testOnly) { Read-PurviewCompliance } else { Invoke-Read 'PurviewDlpPolicies' 'Get-DlpCompliancePolicy' { @(Get-DlpCompliancePolicy | Select-Object -First 1 | ForEach-Object { @{ ok = $true } }) } } }
-            finally { try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { } }
+        elseif ($IsLinux -or $IsMacOS) {
+            $result.complianceConnectionErrorCategory = 'PlatformUnsupported'
+            $result.complianceConnectionErrorId = 'ConnectIPPSSessionUnavailableOnPlatform'
+            Add-FailedRead 'PurviewDlpPolicies' 'Get-DlpCompliancePolicy' 'PlatformUnsupported' 'ConnectIPPSSessionUnavailableOnPlatform'
+            if (-not $testOnly) {
+                Add-FailedRead 'PurviewLabelPolicies' 'Get-LabelPolicy' 'PlatformUnsupported' 'ConnectIPPSSessionUnavailableOnPlatform'
+            }
         }
         else {
-            Add-FailedRead 'PurviewDlpPolicies' 'Get-DlpCompliancePolicy' $result.complianceConnectionErrorCategory $result.complianceConnectionErrorId
-            if (-not $testOnly) {
-                Add-FailedRead 'PurviewLabelPolicies' 'Get-LabelPolicy' $result.complianceConnectionErrorCategory $result.complianceConnectionErrorId
+            $complianceToken = [string](Get-Prop $request 'complianceToken')
+            try {
+                if ([string]::IsNullOrWhiteSpace($complianceToken)) { throw 'Token do Security & Compliance ausente.' }
+                $ipps = @{
+                    AccessToken = $complianceToken; Organization = $organization; CommandName = $script:PurviewComplianceCommands
+                    ShowBanner = $false; ErrorAction = 'Stop'
+                }
+                if ($useWorkDir -and (Get-Command Connect-IPPSSession).Parameters.ContainsKey('EXOModuleBasePath')) { $ipps['EXOModuleBasePath'] = $workDir }
+                Write-AegisStage 'compliance-connect'
+                Connect-IPPSSession @ipps | Out-Null
+                $result.complianceConnected = $true
+            }
+            catch {
+                $result.complianceConnectionErrorCategory = Get-ErrorCategory $_
+                $result.complianceConnectionErrorId = Get-ErrorId $_
+            }
+
+            if ($result.complianceConnected) {
+                try { if (-not $testOnly) { Read-PurviewCompliance } else { Invoke-Read 'PurviewDlpPolicies' 'Get-DlpCompliancePolicy' { @(Get-DlpCompliancePolicy | Select-Object -First 1 | ForEach-Object { @{ ok = $true } }) } } }
+                finally {
+                    Write-AegisStage 'disconnect'
+                    try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
+                }
+            }
+            else {
+                Add-FailedRead 'PurviewDlpPolicies' 'Get-DlpCompliancePolicy' $result.complianceConnectionErrorCategory $result.complianceConnectionErrorId
+                if (-not $testOnly) {
+                    Add-FailedRead 'PurviewLabelPolicies' 'Get-LabelPolicy' $result.complianceConnectionErrorCategory $result.complianceConnectionErrorId
+                }
             }
         }
     }
 
-    $result.reads = $script:Reads.ToArray()
-    $result | ConvertTo-Json -Depth 12 -Compress
+    Write-AegisResult $result
     exit 0
 }
 catch {
     $registro = $_
+    # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha depois da conexão: as leituras já emitidas valem e o código 1 impede que a
+    # coleta seja declarada íntegra. Antes da conexão: classificada, com o estágio declarado dizendo onde aconteceu.
+    $depoisDaConexao = $false
+    try { $depoisDaConexao = [bool]$result.connected } catch { }
     try {
-        $result.connected = $false
-        $result.connectionErrorCategory = Get-ErrorCategory $registro
-        $result.connectionErrorId = Get-ErrorId $registro
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        if (-not $depoisDaConexao) {
+            $result.connected = $false
+            $result.connectionErrorCategory = Get-ErrorCategory $registro
+            $result.connectionErrorId = Get-ErrorId $registro
+        }
+        Write-AegisResult $result
     }
     catch {
-        '{"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}'
+        [Console]::Out.WriteLine('##aegis:result {"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}')
+        [Console]::Out.Flush()
     }
+    if ($depoisDaConexao) { exit 1 }
     exit 0
 }

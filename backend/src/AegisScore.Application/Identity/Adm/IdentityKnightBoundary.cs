@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -178,6 +178,8 @@ public static class IdentityKnightBoundary
         KnightCapabilityOutcome.AuthenticationFailure => IdentityObservationSetOutcome.Unavailable,
         KnightCapabilityOutcome.Unavailable => IdentityObservationSetOutcome.Unavailable,
         KnightCapabilityOutcome.NotAttempted => IdentityObservationSetOutcome.NotAttempted,
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Leitura indisponível na plataforma de execução: não foi tentada.
+        KnightCapabilityOutcome.PlatformUnsupported => IdentityObservationSetOutcome.NotAttempted,
         KnightCapabilityOutcome.Error => IdentityObservationSetOutcome.Error,
         _ => IdentityObservationSetOutcome.Error,
     };

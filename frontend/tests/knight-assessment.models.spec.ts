@@ -27,6 +27,7 @@ import {
   isEvaluated,
   isFinding,
   limitationViews,
+  diagnosticLines,
   matchesFilters,
   overviewKpis,
   priorityControls,
@@ -420,6 +421,33 @@ test('controles citados: título desta avaliação + código; ausente na avalia�
   ok(!!refs[0].title, 'o título vem da própria avaliação');
   eq(refs[1].title, null, 'controle fora da avaliação: título indisponível, nunca inventado');
   eq(refs[1].id, 'AK-NAO-EXISTE', 'o código continua');
+});
+
+test('[COLLECTION-RELIABILITY-01] limitação de plataforma: causa própria, nada a conceder, detalhe técnico seguro', () => {
+  const a = {
+    indicators: [],
+    capabilities: [
+      {
+        capability: 'PurviewDlpPolicies', outcome: 'PlatformUnsupported', detail: 'Limitação de plataforma.',
+        diagnostic: { stage: 'compliance-session', kind: 'PlatformUnsupported', code: 'ConnectIPPSSessionUnavailableOnPlatform', correlationId: 'c0ffee00c0ffee00' },
+      },
+      { capability: 'ExchangeOrganizationConfig', outcome: 'Error', detail: 'Falha anterior.' },
+    ],
+  } as unknown as KnightAssessment;
+  const [platform, legacy] = limitationViews(a);
+  eq(platform.cause, 'Limitação de plataforma', 'não é erro de coleta nem autorização recusada');
+  ok(platform.guidance.startsWith('Nada a conceder'), 'nenhum pedido de permissão para incompatibilidade de execução');
+  ok(platform.technical.includes('Correlação da execução: c0ffee00c0ffee00'), 'a correlação chega ao operador');
+  ok(platform.technical.some((l) => l.includes('ConnectIPPSSessionUnavailableOnPlatform')), 'o código sanitizado aparece');
+  eq(legacy.technical.length, 0, 'capacidade gravada antes do pacote (sem diagnóstico) não inventa detalhe técnico');
+});
+
+test('[COLLECTION-RELIABILITY-01] detalhe técnico: só os campos presentes, duração em segundos', () => {
+  eq(diagnosticLines(undefined).length, 0, 'sem diagnóstico, nada');
+  const lines = diagnosticLines({ stage: 'read UserRegistrationDetails', kind: 'Timeout', durationMs: 30000, code: 'TimeoutRejected' } as never);
+  ok(lines.includes('Duração: 30,0 s'), 'duração legível');
+  ok(lines.includes('código TimeoutRejected'), 'código sem HTTP quando não houve resposta');
+  ok(!lines.some((l) => l.startsWith('Endpoint') || l.startsWith('Requisição')), 'campos ausentes não aparecem');
 });
 
 console.log(`\n${count - failures}/${count} testes passaram (knight-assessment.models).`);

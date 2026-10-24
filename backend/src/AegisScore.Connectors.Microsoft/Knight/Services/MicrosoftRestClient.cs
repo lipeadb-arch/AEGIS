@@ -84,7 +84,7 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
             var body = await response.Content.ReadAsStringAsync(ct);
             if (!response.IsSuccessStatusCode)
                 throw new EntraGraphException(Classify(response.StatusCode, body), $"retornou {(int)response.StatusCode}",
-                    (int)response.StatusCode, ErrorCode(body), uri.AbsolutePath);
+                    (int)response.StatusCode, ErrorCode(body), uri.AbsolutePath, EntraGraphException.RequestIdOf(response));
 
             if (string.IsNullOrWhiteSpace(body)) return default;
             try
@@ -94,8 +94,9 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
             }
             catch (JsonException)
             {
-                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "resposta não é JSON válido",
-                    (int)response.StatusCode, endpointPath: uri.AbsolutePath);
+                // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Resposta 2xx ilegível é contrato violado, não indisponibilidade.
+                throw new EntraGraphException(EntraGraphErrorKind.Contract, "resposta não é JSON válido",
+                    (int)response.StatusCode, endpointPath: uri.AbsolutePath, serviceRequestId: EntraGraphException.RequestIdOf(response));
             }
         }
     }
@@ -115,7 +116,7 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
             next = NextLink(root, url);
             // O próximo link tem de ficar no MESMO host: o token nunca segue para outro destino.
             if (next is not null && (!Uri.TryCreate(next, UriKind.Absolute, out var nu) || !string.Equals(nu.Host, host, StringComparison.OrdinalIgnoreCase)))
-                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "próximo link fora do host de origem");
+                throw new EntraGraphException(EntraGraphErrorKind.Contract, "próximo link fora do host de origem");
         }
     }
 

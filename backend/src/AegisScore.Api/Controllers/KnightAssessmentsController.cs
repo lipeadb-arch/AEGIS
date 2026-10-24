@@ -145,8 +145,15 @@ public class KnightAssessmentsController : ControllerBase
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Capacidade com o requisito e a versão preview, da mesma autoridade das exportações.</summary>
     private static KnightCapabilityDto CapabilityDto(KnightCapabilityStatus c) => new(
         c.Capability.ToString(), c.Outcome.ToString(), c.Detail,
-        AegisScore.Application.Posture.Export.KnightCapabilityLabels.RequiredPermission(c.Capability, KnightSourceType.Consolidated),
-        KnightCollectorCapabilities.PreviewApi(c.Capability));
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Limitação de plataforma não se resolve com permissão: nenhum requisito é exibido.
+        c.Outcome == KnightCapabilityOutcome.PlatformUnsupported
+            ? null
+            : AegisScore.Application.Posture.Export.KnightCapabilityLabels.RequiredPermission(c.Capability, KnightSourceType.Consolidated),
+        KnightCollectorCapabilities.PreviewApi(c.Capability),
+        c.Diagnostic is { } d
+            ? new KnightCapabilityDiagnosticDto(d.Stage, d.Kind.ToString(), d.DurationMs, d.HttpStatus, d.Code, d.Endpoint, d.CorrelationId,
+                d.ServiceRequestId)
+            : null);
 
     private static KnightManualResultDto ManualDto(KnightManualResultView m) => new(
         m.Id, m.ReferenceKey, m.Result.ToString(), m.ResultLabel, m.Justification, m.ResponsibleName, m.EvidenceReference,

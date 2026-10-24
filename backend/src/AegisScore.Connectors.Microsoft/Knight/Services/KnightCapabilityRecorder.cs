@@ -27,86 +27,78 @@ public sealed class KnightCapabilityRecorder
 {
     private readonly ILogger? _log;
     private readonly string _serviceLabel;
+    private readonly TimeProvider _time;
 
-    public KnightCapabilityRecorder(string serviceLabel, ILogger? log = null)
+    public KnightCapabilityRecorder(string serviceLabel, ILogger? log = null, TimeProvider? time = null, string? correlationId = null)
     {
         _serviceLabel = serviceLabel;
         _log = log;
+        _time = time ?? TimeProvider.System;
+        CorrelationId = correlationId ?? KnightRunCorrelation.New();
     }
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Correlação desta execução de coleta (diagnóstico e logs).</summary>
+    public string CorrelationId { get; }
 
     public List<KnightConfigurationDocument> Documents { get; } = new();
 
     public List<KnightCapabilityStatus> Capabilities { get; } = new();
 
     /// <summary>Registra um desfecho sem executar leitura (ex.: capacidade que exige certificado e ele não existe).</summary>
-    public void Record(KnightCapability capability, KnightCapabilityOutcome outcome, string? detail = null) =>
-        Capabilities.Add(new KnightCapabilityStatus(capability, outcome, detail));
+    public void Record(KnightCapability capability, KnightCapabilityOutcome outcome, string? detail = null,
+        KnightCapabilityDiagnostic? diagnostic = null) =>
+        Capabilities.Add(new KnightCapabilityStatus(capability, outcome, detail,
+            diagnostic is null ? null : diagnostic with { CorrelationId = diagnostic.CorrelationId ?? CorrelationId }));
+
+    /// <summary>Registra uma falha classificada (desfecho, motivo e diagnóstico com a correlação desta coleta).</summary>
+    public void Record(KnightCapability capability, KnightFailure failure)
+    {
+        Record(capability, failure.Outcome, failure.Reason, failure.Diagnostic);
+        Log(capability, failure);
+    }
 
     /// <summary>Executa UMA capacidade; publica os documentos somente se ela concluir.</summary>
     public async Task RunAsync(
         KnightCapability capability, Func<Action<KnightConfigurationDocument>, Task> collect, CancellationToken ct)
     {
         var pending = new List<KnightConfigurationDocument>();
+        var started = _time.GetTimestamp();
         try
         {
             await collect(pending.Add);
             Documents.AddRange(pending);
             Capabilities.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Collected));
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
             throw;
         }
-        catch (EntraGraphException ex)
-        {
-            var (outcome, reason) = Classify(ex, _serviceLabel);
-            _log?.LogWarning(
-                "Falha sanitizada em {Capability}: Outcome={Outcome}, HttpStatus={HttpStatus}, Code={Code}, Endpoint={Endpoint}",
-                capability, outcome, ex.HttpStatusCode, ex.GraphErrorCode ?? "n/a", ex.EndpointPath ?? "n/a");
-            Capabilities.Add(new KnightCapabilityStatus(capability, outcome, reason));
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or TimeoutException)
-        {
-            _log?.LogWarning("Falha de transporte em {Capability}: {Type}.", capability, ex.GetType().Name);
-            Capabilities.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Unavailable,
-                $"{_serviceLabel}: falha de rede ou tempo esgotado nesta leitura."));
-        }
         catch (Exception ex)
         {
-            _log?.LogWarning(ex, "Falha inesperada ao coletar {Capability}.", capability);
-            Capabilities.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Error,
-                $"{_serviceLabel}: erro inesperado nesta leitura."));
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] UMA classificação para tudo: HTTP, tempo do pipeline, circuito aberto,
+            // transporte, contrato e defeito interno — sem "erro inesperado" atribuído ao provedor.
+            Record(capability, KnightFailureClassifier.Classify(ex, _serviceLabel, "read", ElapsedMs(started), CorrelationId));
+            if (ex is not EntraGraphException) _log?.LogDebug(ex, "Exceção original da capacidade {Capability}.", capability);
         }
     }
+
+    /// <summary>Milissegundos desde um carimbo do relógio desta coleta.</summary>
+    public long ElapsedMs(long started) => (long)_time.GetElapsedTime(started).TotalMilliseconds;
+
+    private void Log(KnightCapability capability, KnightFailure f) =>
+        _log?.LogWarning(
+            "Falha classificada em {Source}/{Capability}: Outcome={Outcome}, Tipo={Kind}, Estagio={Stage}, DuracaoMs={DurationMs}, "
+            + "HttpStatus={HttpStatus}, Codigo={Code}, Endpoint={Endpoint}, Correlacao={CorrelationId}, RequisicaoServico={RequestId}",
+            _serviceLabel, capability, f.Outcome, f.Diagnostic.Kind, f.Diagnostic.Stage, f.Diagnostic.DurationMs,
+            f.Diagnostic.HttpStatus, f.Diagnostic.Code ?? "n/a", f.Diagnostic.Endpoint ?? "n/a", CorrelationId,
+            f.Diagnostic.ServiceRequestId ?? "n/a");
 
     /// <summary>Desfecho e motivo CONTROLADO de uma falha HTTP sanitizada.</summary>
     public static (KnightCapabilityOutcome Outcome, string Reason) Classify(EntraGraphException ex, string serviceLabel)
     {
-        var (outcome, baseReason) = ex.Kind switch
-        {
-            _ when MentionsLicense(ex.GraphErrorCode) =>
-                (KnightCapabilityOutcome.LimitedByLicense, "O locatário não tem a licença que este recurso exige."),
-            EntraGraphErrorKind.InsufficientPermission =>
-                (KnightCapabilityOutcome.InsufficientPermission, "Autorização recusada para esta leitura."),
-            EntraGraphErrorKind.Throttled =>
-                (KnightCapabilityOutcome.Throttled, "Limite de taxa atingido nesta leitura."),
-            EntraGraphErrorKind.AuthFailure =>
-                (KnightCapabilityOutcome.AuthenticationFailure, "Falha de autenticação nesta leitura."),
-            _ => (KnightCapabilityOutcome.Unavailable, "Serviço indisponível para esta leitura."),
-        };
-
-        var parts = new List<string>();
-        if (ex.HttpStatusCode is { } status) parts.Add($"HTTP {status}");
-        if (!string.IsNullOrWhiteSpace(ex.GraphErrorCode)) parts.Add($"código: {ex.GraphErrorCode}");
-        if (!string.IsNullOrWhiteSpace(ex.EndpointPath)) parts.Add($"endpoint: {ex.EndpointPath}");
-        var reason = $"{serviceLabel}: {baseReason}" + (parts.Count == 0 ? "" : " " + string.Join(" · ", parts));
-        return (outcome, reason.Length > 460 ? reason[..459] + "…" : reason);
+        var f = KnightFailureClassifier.FromHttp(ex, serviceLabel, "read");
+        return (f.Outcome, f.Reason);
     }
-
-    private static bool MentionsLicense(string? code) =>
-        code is not null && (code.Contains("licen", StringComparison.OrdinalIgnoreCase)
-            || code.Contains("NotLicensed", StringComparison.OrdinalIgnoreCase)
-            || code.Contains("PremiumLicense", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Resultado da coleta a partir do que foi registrado.</summary>
     public KnightCollectionResult Result(KnightSourceType source, string label, DateTimeOffset collectedAt, string? detail = null)
@@ -120,9 +112,10 @@ public sealed class KnightCapabilityRecorder
     /// <summary>Falha ANTES de qualquer leitura (token, adaptador): todas as capacidades ficam com o mesmo motivo.</summary>
     public static KnightCollectionResult Failure(
         KnightSourceType source, string label, IEnumerable<KnightCapability> capabilities,
-        KnightSourceState state, KnightCapabilityOutcome outcome, string reason, DateTimeOffset at)
+        KnightSourceState state, KnightCapabilityOutcome outcome, string reason, DateTimeOffset at,
+        KnightCapabilityDiagnostic? diagnostic = null)
     {
-        var caps = capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason)).ToList();
+        var caps = capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason, diagnostic)).ToList();
         return new KnightCollectionResult(source, state, label, KnightFactSet.Empty, caps, at, reason,
             TenantConfiguration: new KnightTenantConfiguration(Array.Empty<KnightConfigurationDocument>(), caps));
     }
@@ -132,6 +125,17 @@ public sealed class KnightCapabilityRecorder
         EntraGraphErrorKind.AuthFailure => KnightSourceState.AuthenticationFailure,
         EntraGraphErrorKind.Throttled => KnightSourceState.Throttled,
         EntraGraphErrorKind.InsufficientPermission => KnightSourceState.InsufficientPermission,
+        EntraGraphErrorKind.Contract or EntraGraphErrorKind.Incomplete => KnightSourceState.Error,
+        _ => KnightSourceState.Unavailable,
+    };
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Estado da fonte a partir do desfecho de uma falha classificada.</summary>
+    public static KnightSourceState StateFor(KnightCapabilityOutcome outcome) => outcome switch
+    {
+        KnightCapabilityOutcome.AuthenticationFailure => KnightSourceState.AuthenticationFailure,
+        KnightCapabilityOutcome.Throttled => KnightSourceState.Throttled,
+        KnightCapabilityOutcome.InsufficientPermission => KnightSourceState.InsufficientPermission,
+        KnightCapabilityOutcome.Error => KnightSourceState.Error,
         _ => KnightSourceState.Unavailable,
     };
 

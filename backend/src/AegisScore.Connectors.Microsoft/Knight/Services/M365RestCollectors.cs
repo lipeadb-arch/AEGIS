@@ -43,26 +43,32 @@ public abstract class KnightRestCollectorBase : IKnightCollector
         if (context.Configuration is not IMicrosoftGraphCredentials credentials || context.Configuration.Source != Source)
             return KnightCollectionResult.NotConfigured(Source, Label);
 
-        var recorder = new KnightCapabilityRecorder(Label, Log);
+        var recorder = new KnightCapabilityRecorder(Label, Log, Time);
+        var started = Time.GetTimestamp();
         try
         {
             await CollectCoreAsync(credentials, context.Configuration, recorder, ct);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
             throw;
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex)
         {
-            // Falha ANTES das leituras (token): nenhuma capacidade foi tentada, e todas carregam o mesmo motivo.
-            var state = KnightCapabilityRecorder.StateFor(ex.Kind);
-            var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            Log?.LogWarning("Falha ao obter o token de aplicativo para {Source}: Kind={Kind}, HttpStatus={Status}.", Source, ex.Kind, ex.HttpStatusCode);
-            var remaining = Capabilities.Where(c => recorder.Capabilities.All(r => r.Capability != c));
-            var failure = KnightCapabilityRecorder.Failure(Source, Label, remaining, state, KnightCapabilityRecorder.OutcomeFor(state),
-                reason, Time.GetUtcNow());
-            if (recorder.Capabilities.Count == 0) return failure;
-            recorder.Capabilities.AddRange(failure.Capabilities);
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha FORA de uma capacidade (token, descoberta): as capacidades ainda sem
+            // desfecho recebem o mesmo motivo classificado — tempo esgotado, circuito aberto e transporte inclusive. As já
+            // registradas (e os documentos delas) são preservadas: uma falha posterior não apaga leituras concluídas.
+            var stage = recorder.Capabilities.Count == 0 ? "token" : "collector";
+            var failure = KnightFailureClassifier.Classify(ex, Label, stage, recorder.ElapsedMs(started), recorder.CorrelationId);
+            Log?.LogWarning(
+                "Falha fora das capacidades em {Source}: Outcome={Outcome}, Tipo={Kind}, Estagio={Stage}, HttpStatus={Status}, Correlacao={CorrelationId}.",
+                Source, failure.Outcome, failure.Diagnostic.Kind, stage, failure.Diagnostic.HttpStatus, recorder.CorrelationId);
+            var state = KnightCapabilityRecorder.StateFor(failure.Outcome);
+            var remaining = Capabilities.Where(c => recorder.Capabilities.All(r => r.Capability != c)).ToList();
+            var result = KnightCapabilityRecorder.Failure(Source, Label, remaining, state, failure.Outcome,
+                failure.Reason, Time.GetUtcNow(), failure.Diagnostic);
+            if (recorder.Capabilities.Count == 0) return result;
+            recorder.Capabilities.AddRange(result.Capabilities);
         }
 
         return recorder.Result(Source, Label, Time.GetUtcNow());

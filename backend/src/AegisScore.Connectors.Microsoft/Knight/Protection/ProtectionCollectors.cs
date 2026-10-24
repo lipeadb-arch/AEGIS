@@ -25,11 +25,44 @@ public sealed class ProtectionPowerShellOptions : PowerShellAdapterOptions
 }
 
 /// <summary>Saída do adaptador de proteção: a do Exchange mais o desfecho da sessão do Security &amp; Compliance.</summary>
-public sealed record ProtectionAdminOutput(ExchangeAdminOutput Exchange, bool ComplianceConnected, string? ComplianceErrorCategory);
+/// <param name="ComplianceErrorId">
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Identificador técnico (já sanitizado) da falha da sessão do Security &amp; Compliance.
+/// O script sempre o produziu; o contrato C# o descartava, e o diagnóstico de DLP/rótulos ficava só com a categoria.
+/// </param>
+public sealed record ProtectionAdminOutput(
+    ExchangeAdminOutput Exchange, bool ComplianceConnected, string? ComplianceErrorCategory, string? ComplianceErrorId = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Plataforma da sessão do Security &amp; Compliance PowerShell. A Microsoft documenta que
+/// <c>Connect-IPPSSession</c> — e portanto o Security &amp; Compliance PowerShell — NÃO está disponível no PowerShell 7 em Linux
+/// nem em macOS (página do módulo Exchange Online PowerShell V3, seções de suporte a Linux e macOS). O AEGIS roda em Linux:
+/// a sessão não é tentada, o token dela não é pedido e DLP/rótulos ficam como LIMITAÇÃO DE PLATAFORMA — não como falha do
+/// serviço, nem como falta de permissão. Não há leitura oficial equivalente dessas políticas no Microsoft Graph.
+/// </summary>
+public static class ComplianceSessionPlatform
+{
+    public static bool Supported => OperatingSystem.IsWindows();
+
+    public const string Reference =
+        "https://learn.microsoft.com/powershell/exchange/exchange-online-powershell-v2#linux-support-for-the-module";
+
+    public const string UnsupportedReason =
+        "Limitação de plataforma: a Microsoft documenta que o Security & Compliance PowerShell (Connect-IPPSSession) não está "
+        + "disponível no PowerShell 7 em Linux, o ambiente em que o AEGIS executa, e não há leitura oficial equivalente destas "
+        + "políticas no Microsoft Graph. A sessão não foi tentada; os controles que dependem desta leitura ficam não avaliados. "
+        + "Não é falta de permissão e nenhuma concessão resolve; a verificação feita no portal do Purview pode ser registrada "
+        + "como resultado manual.";
+}
 
 /// <summary>Pedido ao adaptador: perfil, organização e tokens (o do Security &amp; Compliance só no Purview).</summary>
 public sealed record ProtectionAdminRequest(string Profile, string Organization, string AccessToken, string? ComplianceToken)
 {
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] <c>connect</c> só com token do Security &amp; Compliance; sem ele o script não tenta a
+    /// sessão (o coletor já decidiu o desfecho dessas leituras: limitação de plataforma ou falha do token).
+    /// </summary>
+    public string ComplianceMode => ComplianceToken is null ? "skip" : "connect";
+
     public const string Defender = "defender";
     public const string Purview = "purview";
 
@@ -73,26 +106,37 @@ public sealed class PowerShellProtectionAdminReader : IProtectionAdminReader
     private async Task<ProtectionAdminOutput> RunAsync(string mode, ProtectionAdminRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var payload = JsonSerializer.Serialize(new
+        string Payload(string workDir) => JsonSerializer.Serialize(new
         {
             mode,
             profile = request.Profile,
             organization = request.Organization,
             accessToken = request.AccessToken,
             complianceToken = request.ComplianceToken,
+            complianceMode = request.ComplianceMode,
             enumerationLimit = _options.EnumerationLimit,
+            workDir,
         });
 
         PowerShellAdapterRun run;
         try
         {
-            run = await _process.RunAsync(payload, [request.AccessToken, request.ComplianceToken], ct);
+            run = await _process.RunAsync(Payload, [request.AccessToken, request.ComplianceToken], ct);
         }
         catch (PowerShellAdapterException ex) when (ex is not ExchangeAdminTransportException)
         {
             throw new ExchangeAdminTransportException(ex.Message, ex.InnerException);
         }
-        return Parse(run.StandardOutput);
+        return Interpret(run);
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Documento dos quadros (quando houver) e relatório do processo.</summary>
+    internal static ProtectionAdminOutput Interpret(PowerShellAdapterRun run)
+    {
+        if (run.Document is not { } doc)
+            return new ProtectionAdminOutput(PowerShellExchangeAdminReader.Interpret(run), false, null);
+        var parsed = Parse(doc);
+        return parsed with { Exchange = parsed.Exchange with { Process = run.Report } };
     }
 
     internal static ProtectionAdminOutput Parse(string json)
@@ -102,7 +146,10 @@ public sealed class PowerShellProtectionAdminReader : IProtectionAdminReader
         var root = doc.RootElement;
         return new ProtectionAdminOutput(exchange,
             root.TryGetProperty("complianceConnected", out var c) && c.ValueKind == JsonValueKind.True,
-            root.TryGetProperty("complianceConnectionErrorCategory", out var cat) && cat.ValueKind == JsonValueKind.String ? cat.GetString() : null);
+            root.TryGetProperty("complianceConnectionErrorCategory", out var cat) && cat.ValueKind == JsonValueKind.String ? cat.GetString() : null,
+            root.TryGetProperty("complianceConnectionErrorId", out var cid) && cid.ValueKind == JsonValueKind.String
+                ? PowerShellDiagnosticScrubber.ScrubIdentifier(cid.GetString())
+                : null);
     }
 }
 
@@ -138,29 +185,56 @@ public abstract class ProtectionCollectorBase : IKnightCollector
 
     protected virtual Task<string?> ComplianceTokenAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct) => Task.FromResult<string?>(null);
 
+    /// <summary>Este perfil usa a sessão do Security &amp; Compliance (só o Purview).</summary>
+    protected virtual bool UsesComplianceSession => false;
+
     public async Task<KnightCollectionResult> CollectAsync(KnightCollectionContext context, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (context.Configuration is not IMicrosoftGraphCredentials cfg || context.Configuration.Source != Source)
             return KnightCollectionResult.NotConfigured(Source, Label);
 
+        var correlation = KnightRunCorrelation.New();
+        var recorder = new KnightCapabilityRecorder(Label, Log, Time, correlation);
         ExchangeAdminCredentials credentials;
-        string? complianceToken;
         try
         {
             credentials = await ExchangeTokens.AcquireAsync(cfg, ct);
-            complianceToken = await ComplianceTokenAsync(cfg, ct);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            throw;
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Qualquer falha do token (HTTP, tempo, circuito, transporte): nenhuma leitura
+            // foi tentada, e isso está demonstrado — o processo nem foi iniciado.
+            var failure = KnightFailureClassifier.Classify(ex, Label, "token", null, correlation);
+            Log?.LogWarning("Token do Exchange Online não obtido para {Source}: Outcome={Outcome}, Tipo={Kind}, Correlacao={CorrelationId}.",
+                Source, failure.Outcome, failure.Diagnostic.Kind, correlation);
+            return KnightCapabilityRecorder.Failure(Source, Label, Capabilities, KnightCapabilityRecorder.StateFor(failure.Outcome),
+                failure.Outcome, failure.Reason + " Nenhuma leitura foi tentada.", Time.GetUtcNow(), failure.Diagnostic);
         }
-        catch (EntraGraphException ex)
+
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Sessão do Security & Compliance: decidida ANTES do processo. Na plataforma em que
+        // ela não existe, nem o token é pedido; uma falha do token dela não derruba mais as leituras da sessão do Exchange.
+        string? complianceToken = null;
+        KnightFailure? complianceDecision = null;
+        if (UsesComplianceSession)
         {
-            var state = KnightCapabilityRecorder.StateFor(ex.Kind);
-            var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            return KnightCapabilityRecorder.Failure(Source, Label, Capabilities, state, KnightCapabilityRecorder.OutcomeFor(state),
-                reason, Time.GetUtcNow());
+            if (!ComplianceSessionPlatform.Supported)
+            {
+                complianceDecision = new KnightFailure(KnightCapabilityOutcome.PlatformUnsupported, ComplianceSessionPlatform.UnsupportedReason,
+                    new KnightCapabilityDiagnostic("platform", KnightFailureKind.PlatformUnsupported, Code: "ConnectIPPSSessionUnavailableOnLinux",
+                        CorrelationId: correlation));
+            }
+            else
+            {
+                try
+                {
+                    complianceToken = await ComplianceTokenAsync(cfg, ct);
+                }
+                catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
+                {
+                    complianceDecision = KnightFailureClassifier.Classify(ex, Label + " (Security & Compliance)", "token", null, correlation);
+                }
+            }
         }
 
         ProtectionAdminOutput output;
@@ -174,14 +248,24 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         }
         catch (ExchangeAdminTransportException ex)
         {
-            Log?.LogWarning(ex, "O adaptador de proteção do Microsoft 365 não pôde ser executado.");
-            var reason = $"O adaptador de coleta de {Label} não pôde ser executado neste ambiente: o runtime do PowerShell ou o módulo "
-                + "oficial não respondeu como esperado. Nenhuma leitura foi tentada.";
+            // Só chega aqui o que impediu o processo de começar (runtime ausente, recurso do script): aí, sim, está demonstrado
+            // que nenhuma leitura foi tentada.
+            Log?.LogWarning(ex, "O adaptador de proteção do Microsoft 365 não pôde ser iniciado (correlação {CorrelationId}).", correlation);
+            var reason = $"O adaptador de coleta de {Label} não pôde ser iniciado neste ambiente (o runtime do PowerShell não executou). "
+                + "Nenhuma leitura foi tentada.";
             return KnightCapabilityRecorder.Failure(Source, Label, Capabilities, KnightSourceState.Unavailable,
-                KnightCapabilityOutcome.Unavailable, reason, Time.GetUtcNow());
+                KnightCapabilityOutcome.Unavailable, reason, Time.GetUtcNow(),
+                new KnightCapabilityDiagnostic("process-start", KnightFailureKind.RuntimeUnavailable, CorrelationId: correlation));
         }
 
-        var recorder = new KnightCapabilityRecorder(Label, Log);
+        var process = output.Exchange.Process;
+        if (!output.Exchange.Connected && PowerShellRunInterpretation.FailedBeforeConnect(process))
+        {
+            // O script nem tentou conectar (pedido ilegível, módulo que não carregou): a categoria devolvida não é de conexão.
+            var before = PowerShellRunInterpretation.BeforeConnect(Label, process!, output.Exchange.ConnectionErrorId, correlation);
+            return KnightCapabilityRecorder.Failure(Source, Label, Capabilities, KnightCapabilityRecorder.StateFor(before.Outcome),
+                before.Outcome, before.Detail, Time.GetUtcNow(), before.Diagnostic);
+        }
         var reads = output.Exchange.Reads
             .GroupBy(r => r.Capability, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
@@ -189,22 +273,47 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         foreach (var capability in Capabilities)
         {
             var compliance = ComplianceCapabilities.Contains(capability);
+            if (compliance && complianceDecision is { } decided && !reads.ContainsKey(capability.ToString()))
+            {
+                recorder.Record(capability, decided);
+                continue;
+            }
+
             if (!reads.TryGetValue(capability.ToString(), out var read))
             {
+                // Processo sem integridade: o motivo vem do estágio e da terminação, nunca de uma suposição.
+                if (process is { Clean: false } && !(compliance ? output.ComplianceErrorCategory is not null : output.Exchange.ConnectionErrorCategory is not null))
+                {
+                    var missing = PowerShellRunInterpretation.FailedBeforeReads(process)
+                        ? PowerShellRunInterpretation.BeforeReads(Label, process, correlation)
+                        : PowerShellRunInterpretation.Missing(capability, Label, process, correlation);
+                    recorder.Record(capability, missing.Outcome, missing.Detail, missing.Diagnostic);
+                    continue;
+                }
+
                 // Leitura ausente: o motivo é a conexão da sessão dela, quando ela não conectou.
                 var category = compliance ? output.ComplianceErrorCategory : output.Exchange.ConnectionErrorCategory;
                 var connected = compliance ? output.ComplianceConnected : output.Exchange.Connected;
                 var outcome = connected ? KnightCapabilityOutcome.NotAttempted : ParseOutcome(category) ?? KnightCapabilityOutcome.AuthenticationFailure;
                 recorder.Record(capability, outcome, connected
                     ? "O adaptador não registrou esta leitura nesta execução."
-                    : ConnectionReason(outcome, compliance, cfg.ClientCertificate is not null));
+                    : outcome == KnightCapabilityOutcome.PlatformUnsupported && compliance
+                        ? ComplianceSessionPlatform.UnsupportedReason
+                        : ConnectionReason(outcome, compliance, cfg.ClientCertificate is not null),
+                    connected ? null : new KnightCapabilityDiagnostic("connect",
+                        outcome == KnightCapabilityOutcome.PlatformUnsupported ? KnightFailureKind.PlatformUnsupported : KnightFailureKind.Connection,
+                        Code: compliance ? output.ComplianceErrorId : output.Exchange.ConnectionErrorId, CorrelationId: correlation));
                 continue;
             }
 
             if (!read.Ok)
             {
                 var outcome = ParseOutcome(read.ErrorCategory) ?? KnightCapabilityOutcome.Error;
-                recorder.Record(capability, outcome, ReadReason(outcome, read));
+                recorder.Record(capability, outcome,
+                    outcome == KnightCapabilityOutcome.PlatformUnsupported && compliance ? ComplianceSessionPlatform.UnsupportedReason : ReadReason(outcome, read),
+                    new KnightCapabilityDiagnostic(outcome == KnightCapabilityOutcome.PlatformUnsupported ? "platform" : "read",
+                        outcome == KnightCapabilityOutcome.PlatformUnsupported ? KnightFailureKind.PlatformUnsupported : KnightFailureKind.Command,
+                        read.DurationMs, Code: read.ErrorId, CorrelationId: correlation));
                 continue;
             }
 
@@ -225,7 +334,8 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         }
 
         await AfterReadsAsync(recorder, ct);
-        return recorder.Result(Source, Label, Time.GetUtcNow());
+        var result = recorder.Result(Source, Label, Time.GetUtcNow());
+        return PowerShellRunInterpretation.Qualify(result, process, Label);
     }
 
     /// <summary>Leituras complementares FORA do PowerShell (ex.: DNS), depois das leituras do adaptador.</summary>
@@ -260,6 +370,7 @@ public abstract class ProtectionCollectorBase : IKnightCollector
                 + $"aplicação e se o token foi emitido para o recurso deste serviço; {method}.",
             KnightCapabilityOutcome.Throttled => $"O {service} aplicou limite de taxa ao conectar. Nenhuma leitura desta sessão foi tentada.",
             KnightCapabilityOutcome.LimitedByLicense => $"A conexão de aplicativo com o {service} foi recusada por licença do locatário.",
+            KnightCapabilityOutcome.PlatformUnsupported => ComplianceSessionPlatform.UnsupportedReason,
             _ => $"A conexão de aplicativo com o {service} não foi estabelecida. Nenhuma leitura desta sessão foi tentada.",
         };
     }
@@ -507,6 +618,8 @@ public sealed class PurviewKnightCollector : ProtectionCollectorBase
 
     protected override IReadOnlySet<KnightCapability> ComplianceCapabilities { get; } =
         new HashSet<KnightCapability> { KnightCapability.PurviewDlpPolicies, KnightCapability.PurviewLabelPolicies };
+
+    protected override bool UsesComplianceSession => true;
 
     protected override async Task<string?> ComplianceTokenAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct) =>
         await _tokens.AcquireAsync(cfg, ComplianceScope, ct);

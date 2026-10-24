@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
+using AegisScore.Connectors.Microsoft.Knight.PowerShell;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 
 namespace AegisScore.Connectors.Microsoft.Knight.Teams;
 
@@ -81,6 +83,7 @@ public sealed class TeamsKnightCollector : IKnightCollector
         if (context.Configuration is not KnightTeamsConfiguration cfg)
             return KnightCollectionResult.NotConfigured(Source, Label);
 
+        var correlation = KnightRunCorrelation.New();
         TeamsAdminCredentials credentials;
         try
         {
@@ -89,6 +92,13 @@ public sealed class TeamsKnightCollector : IKnightCollector
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (Exception ex) when (ex is not EntraGraphException && !KnightFailureClassifier.IsCallerCancellation(ex, ct))
+        {
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempo esgotado, circuito aberto ou transporte ao pedir os tokens: classificado.
+            var failure = KnightFailureClassifier.Classify(ex, Label, "token", null, correlation);
+            var detail = failure.Reason + " Nenhuma leitura foi tentada.";
+            return Failure(StateFor(failure.Outcome), detail, failure.Outcome, detail, diagnostic: failure.Diagnostic);
         }
         catch (EntraGraphException ex)
         {
@@ -102,7 +112,8 @@ public sealed class TeamsKnightCollector : IKnightCollector
                 "Falha ao obter os tokens de aplicativo do Microsoft Teams: Kind={Kind}, HttpStatus={HttpStatus}.",
                 ex.Kind, ex.HttpStatusCode);
             return Failure(tokenState, "Falha ao obter os tokens de aplicativo exigidos pela administração do Microsoft Teams.",
-                OutcomeFor(tokenState), "A aplicação não obteve os tokens exigidos; nenhuma leitura foi tentada.");
+                OutcomeFor(tokenState), "A aplicação não obteve os tokens exigidos; nenhuma leitura foi tentada.",
+                diagnostic: KnightFailureClassifier.FromHttp(ex, Label, "token", null, correlation).Diagnostic);
         }
 
         TeamsAdminOutput output;
@@ -116,15 +127,28 @@ public sealed class TeamsKnightCollector : IKnightCollector
         }
         catch (TeamsAdminTransportException ex)
         {
-            // A mensagem da exceção carrega o diagnóstico SANITIZADO do processo — útil para o operador, e por
-            // isso vai ao log. O que chega ao ADM e ao relatório é a mensagem CONTROLADA abaixo: o que o cliente
-            // lê não depende do que um módulo de terceiro escreveu em erro-padrão.
-            _log?.LogWarning(ex, "O adaptador de coleta do Microsoft Teams não pôde ser executado.");
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Só o que IMPEDIU o processo de começar chega aqui: aí, sim, está demonstrado
+            // que nenhuma leitura foi tentada. O que acontece depois vem no relatório do processo, com estágio e código de saída.
+            _log?.LogWarning(ex, "O adaptador de coleta do Microsoft Teams não pôde ser iniciado (correlação {CorrelationId}).", correlation);
             const string reason =
-                "O adaptador de coleta do Microsoft Teams não pôde ser executado neste ambiente: o runtime do "
-                + "PowerShell ou o módulo oficial não respondeu como esperado. Nenhuma leitura foi tentada — e "
-                + "nenhum controle de Teams foi avaliado a partir de coleta vazia.";
-            return Failure(KnightSourceState.Unavailable, reason, KnightCapabilityOutcome.Unavailable, reason);
+                "O adaptador de coleta do Microsoft Teams não pôde ser iniciado neste ambiente (o runtime do PowerShell não "
+                + "executou). Nenhuma leitura foi tentada — e nenhum controle de Teams foi avaliado a partir de coleta vazia.";
+            return Failure(KnightSourceState.Unavailable, reason, KnightCapabilityOutcome.Unavailable, reason,
+                diagnostic: new KnightCapabilityDiagnostic("process-start", KnightFailureKind.RuntimeUnavailable, CorrelationId: correlation));
+        }
+
+        var process = output.Process;
+        if (output.ConnectionErrorCategory is null && PowerShellRunInterpretation.FailedBeforeReads(process))
+        {
+            var before = PowerShellRunInterpretation.BeforeReads(Label, process!, correlation);
+            return Failure(StateFor(before.Outcome), before.Detail, before.Outcome, before.Detail, output.Runtime, before.Diagnostic);
+        }
+
+        if (!output.Connected && PowerShellRunInterpretation.FailedBeforeConnect(process))
+        {
+            // O script nem tentou conectar (pedido ilegível, módulo que não carregou): a categoria devolvida não é de conexão.
+            var before = PowerShellRunInterpretation.BeforeConnect(Label, process!, output.ConnectionErrorId, correlation);
+            return Failure(StateFor(before.Outcome), before.Detail, before.Outcome, before.Detail, output.Runtime, before.Diagnostic);
         }
 
         if (!output.Connected)
@@ -136,9 +160,11 @@ public sealed class TeamsKnightCollector : IKnightCollector
             // O identificador técnico (já sanitizado) fica só no log do operador.
             var reason = ConnectionReason(outcome);
             _log?.LogWarning(
-                "Conexão do adaptador do Microsoft Teams recusada: Categoria={Categoria}, Diagnostico={Diagnostico}.",
-                output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a");
-            return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime);
+                "Conexão do adaptador do Microsoft Teams recusada: Categoria={Categoria}, Diagnostico={Diagnostico}, Correlacao={CorrelationId}.",
+                output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a", correlation);
+            return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime,
+                new KnightCapabilityDiagnostic("connect", KnightFailureKind.Connection, process?.DurationMs,
+                    Code: output.ConnectionErrorId, CorrelationId: correlation));
         }
 
         var now = _time.GetUtcNow();
@@ -150,6 +176,12 @@ public sealed class TeamsKnightCollector : IKnightCollector
         {
             if (!byCapability.TryGetValue(capability.ToString(), out var read))
             {
+                if (process is { Clean: false })
+                {
+                    var missing = PowerShellRunInterpretation.Missing(capability, Label, process, correlation);
+                    caps.Add(new KnightCapabilityStatus(capability, missing.Outcome, missing.Detail, missing.Diagnostic));
+                    continue;
+                }
                 caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.NotAttempted,
                     "O adaptador não registrou esta leitura nesta execução."));
                 continue;
@@ -158,7 +190,9 @@ public sealed class TeamsKnightCollector : IKnightCollector
             if (!read.Ok)
             {
                 var outcome = ParseOutcome(read.ErrorCategory) ?? KnightCapabilityOutcome.Error;
-                caps.Add(new KnightCapabilityStatus(capability, outcome, Describe(outcome, read)));
+                caps.Add(new KnightCapabilityStatus(capability, outcome, Describe(outcome, read),
+                    new KnightCapabilityDiagnostic("read " + capability, KnightFailureKind.Command, read.DurationMs,
+                        Code: read.ErrorId, CorrelationId: correlation)));
                 continue;
             }
 
@@ -178,9 +212,9 @@ public sealed class TeamsKnightCollector : IKnightCollector
         }
 
         var state = DeriveState(caps);
-        return new KnightCollectionResult(
+        return PowerShellRunInterpretation.Qualify(new KnightCollectionResult(
             Source, state, Label, KnightFactSet.Empty, caps, now, DescribeState(state, output.Runtime),
-            TenantConfiguration: new KnightTenantConfiguration(docs, caps));
+            TenantConfiguration: new KnightTenantConfiguration(docs, caps)), process, Label);
     }
 
     // ---- Tradução: resposta do comando → documento tipado do ADM --------------------------------------
@@ -339,9 +373,9 @@ public sealed class TeamsKnightCollector : IKnightCollector
     /// </summary>
     private KnightCollectionResult Failure(
         KnightSourceState state, string detail, KnightCapabilityOutcome outcome, string reason,
-        TeamsAdminRuntime? runtime = null)
+        TeamsAdminRuntime? runtime = null, KnightCapabilityDiagnostic? diagnostic = null)
     {
-        var caps = Capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason)).ToList();
+        var caps = Capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason, diagnostic)).ToList();
         return new KnightCollectionResult(
             Source, state, Label, KnightFactSet.Empty, caps, _time.GetUtcNow(),
             detail + (runtime?.Module is { Length: > 0 } m ? $" (módulo {m})" : ""),

@@ -51,35 +51,39 @@ public sealed class PowerShellExchangeAdminReader : IExchangeAdminReader
     public Task<ExchangeAdminOutput> ReadAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(credentials);
-        var payload = JsonSerializer.Serialize(new
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] workDir: diretório PRIVADO desta execução para os temporários do módulo
+        // (Connect-ExchangeOnline -EXOModuleBasePath, documentado a partir da versão 3.9.2).
+        string Payload(string workDir) => JsonSerializer.Serialize(new
         {
             mode = "collect",
             organization = credentials.Organization,
             accessToken = credentials.AccessToken,
             enumerationLimit = _options.EnumerationLimit,
+            workDir,
         });
         // O token desta coleta é entregue à sanitização do diagnóstico: se o módulo o repetir num texto de erro,
         // ele é removido por IGUALDADE, sem depender de nenhuma heurística acertar a forma.
-        return RunAsync(payload, [credentials.AccessToken], ct);
+        return RunAsync(Payload, [credentials.AccessToken], ct);
     }
 
     public Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) =>
-        RunAsync(JsonSerializer.Serialize(new { mode = "module-check" }), null, ct);
+        RunAsync(workDir => JsonSerializer.Serialize(new { mode = "module-check", workDir }), null, ct);
 
     public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(credentials);
-        var payload = JsonSerializer.Serialize(new
+        string Payload(string workDir) => JsonSerializer.Serialize(new
         {
             mode = "test",
             organization = credentials.Organization,
             accessToken = credentials.AccessToken,
+            workDir,
         });
-        return RunAsync(payload, [credentials.AccessToken], ct);
+        return RunAsync(Payload, [credentials.AccessToken], ct);
     }
 
     private async Task<ExchangeAdminOutput> RunAsync(
-        string stdinPayload, IReadOnlyList<string?>? knownSecrets, CancellationToken ct)
+        Func<string, string> stdinPayload, IReadOnlyList<string?>? knownSecrets, CancellationToken ct)
     {
         PowerShellAdapterRun run;
         try
@@ -95,7 +99,19 @@ public sealed class PowerShellExchangeAdminReader : IExchangeAdminReader
             throw new ExchangeAdminTransportException(ex.Message, ex.InnerException);
         }
 
-        return Parse(run.StandardOutput);
+        return Interpret(run);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O documento montado dos quadros (quando houver) e o relatório do processo: o coletor
+    /// decide com o estágio e o código de saída — nunca uma exceção que descarta as leituras concluídas.
+    /// </summary>
+    internal static ExchangeAdminOutput Interpret(PowerShellAdapterRun run)
+    {
+        var output = run.Document is { } doc
+            ? Parse(doc)
+            : new ExchangeAdminOutput(new ExchangeAdminRuntime(null, null, null), false, null, null, null, Array.Empty<ExchangeAdminRead>());
+        return output with { Process = run.Report };
     }
 
     // ---- Leitura da saída ------------------------------------------------------------------------------
@@ -136,7 +152,8 @@ public sealed class PowerShellExchangeAdminReader : IExchangeAdminReader
                         Text(r, "errorCategory"),
                         // Segunda barreira: o script já restringe o identificador na origem, mas quem lê a saída
                         // não pode depender disso — o que entra no objeto é sempre o valor sanitizado.
-                        PowerShellDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId"))));
+                        PowerShellDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId")),
+                        Teams.PowerShellTeamsAdminReader.Duration(r)));
                 }
             }
 

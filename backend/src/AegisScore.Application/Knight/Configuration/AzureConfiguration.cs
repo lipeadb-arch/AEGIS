@@ -24,12 +24,18 @@ namespace AegisScore.Application.Knight.Configuration;
 public sealed record AzureFamilyRead(KnightCapability Capability, KnightCapabilityOutcome Outcome, bool Truncated, string? Detail);
 
 /// <summary>Uma assinatura vista pela aplicação e o desfecho de cada família de leitura nela.</summary>
+/// <remarks>
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] <paramref name="Visible"/> = <c>false</c>: assinatura PEDIDA no escopo que a descoberta não
+/// encontrou. Fica no escopo, com as famílias não lidas — o controle não aprova "todas as assinaturas" sem ela. Inventários
+/// anteriores não têm o campo e valem como visíveis (o padrão).
+/// </remarks>
 public sealed record AzureSubscriptionInventory(
     string SubscriptionId,
     string? DisplayName,
     string? State,
     bool InScope,
-    IReadOnlyList<AzureFamilyRead> Reads)
+    IReadOnlyList<AzureFamilyRead> Reads,
+    bool Visible = true)
 {
     public const string SchemaVersion = "aegis-config-azure-subscription-v1";
 

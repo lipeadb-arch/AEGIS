@@ -145,6 +145,8 @@ public sealed class KnightReadOnlyAccessTests : IDisposable
     {
         "ForEach-Object", "Where-Object", "Select-Object", "ConvertTo-Json", "ConvertFrom-Json", "Out-Null", "Set-StrictMode",
         "New-Object", "Import-Module",
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Verificação LOCAL de que o diretório de trabalho privado existe (não toca o locatário).
+        "Test-Path",
     };
 
     /// <summary>Abertura e encerramento das sessões de aplicativo — sem eles não há leitura.</summary>

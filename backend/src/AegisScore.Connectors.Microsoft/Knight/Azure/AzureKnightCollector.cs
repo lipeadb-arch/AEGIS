@@ -93,12 +93,14 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         public bool Truncated;
         public string? Detail;
         public int ChildFailures;
+        public KnightCapabilityDiagnostic? Diagnostic;
 
-        public void Fail(KnightCapabilityOutcome outcome, string detail)
+        public void Fail(KnightCapabilityOutcome outcome, string detail, KnightCapabilityDiagnostic? diagnostic = null)
         {
             if (Outcome != KnightCapabilityOutcome.Collected) return;
             Outcome = outcome;
             Detail = detail;
+            Diagnostic = diagnostic;
         }
     }
 
@@ -119,12 +121,16 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 if (id is not null) visible.Add((id, KnightJson.Str(s, "displayName"), KnightJson.Str(s, "state")));
             }
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            var (outcome, reason) = KnightCapabilityRecorder.Classify(ex, Label);
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Qualquer falha da descoberta (HTTP, tempo, circuito, transporte, contrato) é
+            // classificada; antes só a falha HTTP era reconhecida e as demais derrubavam a sincronização inteira.
+            var failure = KnightFailureClassifier.Classify(ex, Label, "discovery", null, recorder.CorrelationId);
             foreach (var f in Families)
-                recorder.Record(f, f == KnightCapability.AzureSubscriptions ? outcome : KnightCapabilityOutcome.NotAttempted,
-                    f == KnightCapability.AzureSubscriptions ? reason : "A descoberta das assinaturas falhou; nenhuma família foi lida.");
+            {
+                if (f == KnightCapability.AzureSubscriptions) recorder.Record(f, failure);
+                else recorder.Record(f, KnightCapabilityOutcome.NotAttempted, "A descoberta das assinaturas falhou; nenhuma família foi lida.");
+            }
             return;
         }
 
@@ -148,15 +154,12 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 {
                     await ReadFamilyAsync(token, sub.Id, read, resources, outcome, ct);
                 }
-                catch (EntraGraphException ex)
+                catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
                 {
-                    var (o, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-                    outcome.Fail(o, $"{read.Label}: {reason}");
-                }
-                catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or TaskCanceledException or TimeoutException)
-                {
-                    if (ct.IsCancellationRequested) throw;
-                    outcome.Fail(KnightCapabilityOutcome.Unavailable, $"{read.Label}: falha de rede ou tempo esgotado.");
+                    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A falha fica NESTA família desta assinatura; as demais assinaturas e
+                    // famílias seguem, e o que já foi lido nelas é preservado.
+                    var failure = KnightFailureClassifier.Classify(ex, Label, "read", null, recorder.CorrelationId);
+                    outcome.Fail(failure.Outcome, $"{read.Label}: {failure.Reason}", failure.Diagnostic);
                 }
             }
         }
@@ -203,15 +206,48 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 new AzureSubscriptionInventory(s.Id, s.Name, s.State, isIn, reads)));
         }
 
-        var discoveryDetail = inScope.Count == 0
-            ? "Nenhuma assinatura no escopo: a aplicação não enxerga assinatura alguma (papel Leitor não atribuído) ou as pedidas não estão visíveis."
-            : $"{inScope.Count} assinatura(s) no escopo de {visible.Count} visível(is)."
-              + (notVisible.Count > 0 ? $" {notVisible.Count} assinatura(s) pedida(s) não está(ão) visível(is) à aplicação." : "");
+        // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Assinatura PEDIDA e não visível entra no inventário como parte do escopo, com
+        // todas as famílias não lidas. Antes ela simplesmente sumia: o escopo avaliado encolhia sem aviso e um controle podia
+        // ser aprovado "em todas as assinaturas" sem a que faltava. Agora a regra a vê como não lida e não aprova o escopo.
+        const string notVisibleReason =
+            "Assinatura pedida no escopo e não visível à aplicação nesta descoberta: nenhuma família foi consultada nela. Não "
+            + "prova que falte o papel Leitor (a assinatura pode não existir neste locatário, estar em outro diretório ou ter "
+            + "sido digitada errada) e não prova ausência de recursos.";
+        foreach (var id in notVisible)
+        {
+            var reads = Families
+                .Where(f => f is not (KnightCapability.AzureSubscriptions or KnightCapability.AzureTenantDiagnostics))
+                .Select(f => new AzureFamilyRead(f, KnightCapabilityOutcome.NotAttempted, false, notVisibleReason))
+                .ToList();
+            recorder.Documents.Add(KnightTenantConfiguration.Document(id, null,
+                new AzureSubscriptionInventory(id, null, null, true, reads, Visible: false)));
+        }
+
+        // A descoberta CONCLUIU (a lista foi lida). O que ela encontrou é dito com o que prova e o que não prova.
+        var discoveryDetail = inScope.Count == 0 && notVisible.Count == 0
+            ? $"Descoberta concluída: {visible.Count} assinatura(s) visível(is) e nenhuma no escopo"
+              + (visible.Count == 0 ? " — a aplicação não enxerga assinatura alguma neste locatário." : " (todas desabilitadas ou fora do escopo pedido).")
+              + " Isso não prova, sozinho, que falte o papel Leitor, nem que não existam recursos, nem conformidade."
+            : $"Descoberta concluída: {inScope.Count} assinatura(s) consultada(s) de {visible.Count} visível(is)."
+              + (notVisible.Count > 0
+                  ? $" {notVisible.Count} assinatura(s) pedida(s) não está(ão) visível(is) e fica(m) no escopo como não lida(s) — a abrangência é parcial."
+                  : "");
         recorder.Record(KnightCapability.AzureSubscriptions, KnightCapabilityOutcome.Collected, discoveryDetail);
 
         foreach (var family in Families.Where(f => f is not (KnightCapability.AzureSubscriptions or KnightCapability.AzureTenantDiagnostics)))
         {
             var perSub = outcomes.Select(kv => (Sub: kv.Key, O: kv.Value[family])).ToList();
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Sem assinatura consultada, a família NÃO foi lida — antes a lista vazia dava
+            // "nenhuma falha" e a família virava "coletada" sem uma única consulta de recursos.
+            if (perSub.Count == 0)
+            {
+                recorder.Record(family, KnightCapabilityOutcome.NotAttempted,
+                    notVisible.Count > 0
+                        ? "Família não consultada: nenhuma das assinaturas pedidas está visível à aplicação."
+                        : "Família não consultada: nenhuma assinatura no escopo desta coleta.",
+                    new KnightCapabilityDiagnostic("discovery", KnightFailureKind.NoScope));
+                continue;
+            }
             if (family == KnightCapability.AzureAuthorization && policy is { } pf && perSub.All(p => p.O.Outcome == KnightCapabilityOutcome.Collected))
             {
                 // A política de assinaturas é do locatário: a falha dela não reprova a família, mas fica dita.
@@ -235,11 +271,15 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             else
             {
                 var first = failed[0].O;
+                var read = perSub.Count - failed.Count;
                 recorder.Record(family, first.Outcome,
-                    KnightRuleText.Trim($"Falhou em {failed.Count} de {perSub.Count} assinatura(s). {first.Detail}", 480));
+                    KnightRuleText.Trim($"Falhou em {failed.Count} de {perSub.Count} assinatura(s)"
+                        + (read > 0 ? $"; os dados das {read} assinatura(s) lidas foram preservados e a abrangência é parcial" : "")
+                        + $". {first.Detail}", 480),
+                    first.Diagnostic);
             }
         }
-        recorder.Record(KnightCapability.AzureTenantDiagnostics, tenantDiag.Outcome, tenantDiag.Detail);
+        recorder.Record(KnightCapability.AzureTenantDiagnostics, tenantDiag.Outcome, tenantDiag.Detail, tenantDiag.Diagnostic);
     }
 
     // ---- Leituras ------------------------------------------------------------------------------------------
@@ -261,7 +301,7 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             if (read.GetByIdApiVersion is { } byIdApi && KnightJson.Str(item, "id") is { } rid)
             {
                 try { source = await _rest.GetAsync(token, Url(AzureArmPlan.ArmHost + rid, byIdApi), ct); }
-                catch (EntraGraphException) { outcome.ChildFailures++; }
+                catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct)) { outcome.ChildFailures++; }
             }
 
             var b = Start(source, sub, read.Family, null);
@@ -322,6 +362,13 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 parent.Facts[child.Key + ":status"] = JsonSerializer.SerializeToElement(ex.HttpStatusCode == 404 ? "NotFound" : ex.Kind.ToString());
                 if (ex.HttpStatusCode != 404) outcome.ChildFailures++;
             }
+            catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
+            {
+                // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempo esgotado, circuito aberto ou transporte numa filha: o valor fica
+                // desconhecido para a regra (status ≠ coletado) e o recurso pai continua valendo.
+                parent.Facts[child.Key + ":status"] = JsonSerializer.SerializeToElement("Unavailable");
+                outcome.ChildFailures++;
+            }
         }
     }
 
@@ -336,10 +383,10 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         {
             vaultToken = await _tokens.AcquireAsync(cfg, AzureArmPlan.VaultScope, ct);
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            var (o, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            foreach (var f in outcomes.Values) f[KnightCapability.AzureKeyVaultCertificates].Fail(o, reason);
+            var failure = KnightFailureClassifier.Classify(ex, Label, "token", null, null);
+            foreach (var f in outcomes.Values) f[KnightCapability.AzureKeyVaultCertificates].Fail(failure.Outcome, failure.Reason, failure.Diagnostic);
             return;
         }
 
@@ -364,16 +411,17 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 }
                 v.Facts["certs:items"] = JsonSerializer.SerializeToElement(items);
             }
-            catch (EntraGraphException ex)
+            catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
             {
-                v.Facts["certs:status"] = JsonSerializer.SerializeToElement(ex.Kind.ToString());
-                var (o, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-                outcome.Fail(o, $"certificados do cofre {v.Name}: {reason}");
+                v.Facts["certs:status"] = JsonSerializer.SerializeToElement(ex is EntraGraphException g ? g.Kind.ToString() : "Unavailable");
+                var failure = KnightFailureClassifier.Classify(ex, Label, "read", null, null);
+                outcome.Fail(failure.Outcome, $"certificados do cofre {v.Name}: {failure.Reason}", failure.Diagnostic);
             }
         }
     }
 
-    private async Task<(KnightCapabilityOutcome Outcome, string? Detail)> ReadTenantListAsync(string token, ArmRead read, List<Building> resources, CancellationToken ct)
+    private async Task<(KnightCapabilityOutcome Outcome, string? Detail, KnightCapabilityDiagnostic? Diagnostic)> ReadTenantListAsync(
+        string token, ArmRead read, List<Building> resources, CancellationToken ct)
     {
         var url = Url($"{AzureArmPlan.ArmHost}/{read.ListPath}", read.ApiVersion);
         try
@@ -387,12 +435,12 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 n++;
             }
             resources.Add(Marker("aegis:tenant/" + read.Family, "AEGIS/TenantRead", read.Family, "Collected", n));
-            return (KnightCapabilityOutcome.Collected, null);
+            return (KnightCapabilityOutcome.Collected, null, null);
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            var (o, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            return (o, $"{read.Label}: {reason}");
+            var failure = KnightFailureClassifier.Classify(ex, Label, "read", null, null);
+            return (failure.Outcome, $"{read.Label}: {failure.Reason}", failure.Diagnostic);
         }
     }
 
@@ -416,9 +464,9 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 }
                 resources.Add(Marker("aegis:tenant/" + type, "AEGIS/TenantRead", KnightCapability.AzureAppService, "Collected", 0));
             }
-            catch (EntraGraphException ex)
+            catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
             {
-                var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
+                var reason = KnightFailureClassifier.Classify(ex, Label, "read").Reason;
                 resources.Add(Marker("aegis:tenant/" + type, "AEGIS/TenantRead", KnightCapability.AzureAppService, "Failed", 0));
                 failed.Add($"{type}: {reason}");
             }
@@ -469,10 +517,9 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             resources.Add(b);
             return null;
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
-            return $"Política de assinaturas do locatário não lida: {reason}";
+            return $"Política de assinaturas do locatário não lida: {KnightFailureClassifier.Classify(ex, Label, "read").Reason}";
         }
     }
 
@@ -493,9 +540,9 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         {
             graphToken = await _graph.AcquireTokenAsync(cfg, ct);
         }
-        catch (EntraGraphException ex)
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
-            var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
+            var reason = KnightFailureClassifier.Classify(ex, Label, "token").Reason;
             resources.Add(Marker("aegis:tenant/graphUsers", "AEGIS/TenantRead", KnightCapability.AzureAuthorization, "Failed", 0));
             return $"Estado das contas com papel no Azure não lido: {reason}";
         }
@@ -521,9 +568,9 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 b.Facts["status"] = JsonSerializer.SerializeToElement("NotFound");
                 resources.Add(b);
             }
-            catch (EntraGraphException ex)
+            catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
             {
-                var (_, reason) = KnightCapabilityRecorder.Classify(ex, Label);
+                var reason = KnightFailureClassifier.Classify(ex, Label, "read").Reason;
                 resources.Add(Marker("aegis:tenant/graphUsers", "AEGIS/TenantRead", KnightCapability.AzureAuthorization, "Failed", read));
                 return $"Estado das contas com papel no Azure lido em parte ({read} de {ids.Count}): {reason}";
             }

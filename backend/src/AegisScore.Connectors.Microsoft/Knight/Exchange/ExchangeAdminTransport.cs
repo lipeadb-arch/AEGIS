@@ -55,7 +55,8 @@ public sealed record ExchangeAdminRead(
     JsonElement Items,
     bool Truncated,
     string? ErrorCategory,
-    string? ErrorId);
+    string? ErrorId,
+    long? DurationMs = null);
 
 /// <summary>Runtime em que a coleta correu — o que a homologação precisa saber para reproduzir o resultado.</summary>
 public sealed record ExchangeAdminRuntime(string? PowerShell, string? Module, string? Platform);
@@ -73,7 +74,8 @@ public sealed record ExchangeAdminOutput(
     string? ConnectionErrorId,
     string? ConnectionErrorCategory,
     int? EnumerationLimit,
-    IReadOnlyList<ExchangeAdminRead> Reads);
+    IReadOnlyList<ExchangeAdminRead> Reads,
+    PowerShellRunReport? Process = null);
 
 /// <summary>
 /// Falha do TRANSPORTE — antes de qualquer leitura: runtime ausente, processo que não terminou no tempo

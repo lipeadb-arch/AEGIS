@@ -29,11 +29,21 @@ public static class DependencyInjection
     /// (<c>Knight:Exchange</c>): executável do PowerShell, caminho do módulo pré-instalado na imagem, tempo limite
     /// e TETO DE ENUMERAÇÃO. Também é configuração do AMBIENTE DE IMPLANTAÇÃO — nunca do locatário.
     /// </param>
+    /// <param name="http">
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Seção <c>Knight:Http</c>: tempo por tentativa, tempo total, novas tentativas e
+    /// circuito dos clientes HTTP do KNIGHT (ver <see cref="KnightHttpOptions"/>). Ambiente, nunca locatário. Ausente, valem
+    /// os padrões documentados lá.
+    /// </param>
     public static IServiceCollection AddMicrosoftConnectors(
         this IServiceCollection services,
         IConfiguration? teamsPowerShell = null,
-        IConfiguration? exchangePowerShell = null)
+        IConfiguration? exchangePowerShell = null,
+        IConfiguration? http = null)
     {
+        var httpOptions = new KnightHttpOptions();
+        http?.Bind(httpOptions);
+        services.AddSingleton(httpOptions);
+
         // Govern → Provider Pattern de ingestão de documentos: o SharePoint/M365 como fonte de políticas.
         // A DocumentIntegrationFactory resolve esta estratégia por ConnectorProvider.Microsoft.
         services.AddSingleton<IDocumentIntegrationProvider, SharePointProvider>();
@@ -46,7 +56,7 @@ public static class DependencyInjection
         // AEGIS KNIGHT → coletor REAL do Microsoft Entra ID (somente leitura). HttpClient tipado com
         // resiliência padrão (retry/backoff, Retry-After no 429, circuit breaker) — reusa a fachada oficial,
         // sem infra própria. O coletor recebe a configuração DECIFRADA pelo contexto; não toca segredos.
-        services.AddHttpClient<IEntraGraphClient, EntraGraphClient>().AddStandardResilienceHandler();
+        services.AddHttpClient<IEntraGraphClient, EntraGraphClient>().AddKnightResilience(httpOptions);
         services.AddScoped<IKnightCollector, EntraIdKnightCollector>();
 
         // [AEGIS-KNIGHT-COVERAGE-02] AEGIS KNIGHT → coletor REAL do Microsoft Teams (somente leitura). A
@@ -57,7 +67,7 @@ public static class DependencyInjection
         //   • ITeamsAdminReader — executa o script EMBUTIDO num processo isolado e descartável por coleta.
         // As opções do adaptador são do AMBIENTE (executável, caminho do módulo na imagem, tempo limite), nunca
         // do locatário. Singleton nas opções e no leitor: não carregam estado de tenant nem HttpClient.
-        services.AddHttpClient<ITeamsTokenClient, TeamsTokenClient>().AddStandardResilienceHandler();
+        services.AddHttpClient<ITeamsTokenClient, TeamsTokenClient>().AddKnightResilience(httpOptions);
         services.AddSingleton(_ =>
         {
             var options = new TeamsPowerShellOptions();
@@ -76,7 +86,7 @@ public static class DependencyInjection
         //   • IExchangeAdminReader — executa o script EMBUTIDO num processo isolado e descartável por coleta,
         //     pelo MESMO transporte do adaptador do Teams.
         // As opções são do AMBIENTE (executável, caminho do módulo na imagem, tempo limite, teto de enumeração).
-        services.AddHttpClient<IExchangeTokenClient, ExchangeTokenClient>().AddStandardResilienceHandler();
+        services.AddHttpClient<IExchangeTokenClient, ExchangeTokenClient>().AddKnightResilience(httpOptions);
         services.AddSingleton(_ =>
         {
             var options = new ExchangePowerShellOptions();
@@ -95,8 +105,8 @@ public static class DependencyInjection
         //   • IMicrosoftRestClient — GET somente leitura com destino restrito aos hosts oficiais;
         //   • IProtectionAdminReader — o adaptador PowerShell embutido do Defender para Office 365 e do Purview;
         //   • IDnsTxtResolver — registros SPF e DMARC públicos dos domínios aceitos.
-        services.AddHttpClient<IMicrosoftAppTokenClient, MicrosoftAppTokenClient>().AddStandardResilienceHandler();
-        services.AddHttpClient<IMicrosoftRestClient, MicrosoftRestClient>().AddStandardResilienceHandler();
+        services.AddHttpClient<IMicrosoftAppTokenClient, MicrosoftAppTokenClient>().AddKnightResilience(httpOptions);
+        services.AddHttpClient<IMicrosoftRestClient, MicrosoftRestClient>().AddKnightResilience(httpOptions);
         services.AddSingleton(sp =>
         {
             // O adaptador de proteção usa o MESMO runtime do Exchange Online (executável e módulo na imagem).
