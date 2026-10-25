@@ -76,6 +76,7 @@ public static class PostureSnapshotHtmlWriter
           .Append("</div></header>\n<main class=\"wrap\" id=\"app\">\n")
           .Append(Summary(model))
           .Append(charts is null ? "" : Visuals(charts, history!))
+          .Append(Limitations(model))
           .Append("<noscript><div class=\"panel\"><p>O resumo executivo, os riscos prioritários e as limitações acima não dependem de JavaScript. ")
           .Append("A lista completa de controles com filtros, a metodologia e o glossário exigem JavaScript habilitado no navegador. Nenhum recurso externo é carregado.</p></div></noscript>\n")
           .Append("</main>\n<footer class=\"wrap\">Gerado pelo AEGIS a partir da fotografia imutável ")
@@ -89,9 +90,10 @@ public static class PostureSnapshotHtmlWriter
     private static readonly HtmlEncoder Html = HtmlEncoder.Create(UnicodeRanges.All);
 
     /// <summary>
-    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Resumo executivo, riscos e ações prioritárias e limitações, desenhados no servidor a partir do
-    /// MESMO modelo da ilha de dados: legíveis sem JavaScript (e impressos), e o script só os move para a primeira aba. Todo texto vindo da
-    /// fotografia é codificado; nenhum atributo de estilo (a CSP só autoriza o estilo por hash).
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Resumo executivo e riscos e ações prioritárias, desenhados no servidor a partir do MESMO
+    /// modelo da ilha de dados: legíveis sem JavaScript (e impressos), e o script só os move para a primeira aba. Perto da nota fica só o
+    /// aviso essencial da cobertura; limitações detalhadas e interpretação vêm depois dos resultados (<see cref="Limitations"/>). Todo
+    /// texto vindo da fotografia é codificado; nenhum atributo de estilo (a CSP só autoriza o estilo por hash).
     /// </summary>
     internal static string Summary(KnightReportModel m)
     {
@@ -132,12 +134,38 @@ public static class PostureSnapshotHtmlWriter
         if (warning is not null) sb.Append("<p class=\"note\" role=\"note\">").Append(E(warning)).Append("</p>");
         if (m.Header.CollectionSummary is { } summary) sb.Append("<p class=\"sub\">").Append(E(summary)).Append("</p>");
 
+        var groups = m.LimitationGroups ?? Array.Empty<ReportLimitationGroup>();
+        if (groups.Count > 0)
+        {
+            var hurt = groups.SelectMany(g => g.AffectedControls).Distinct(StringComparer.Ordinal).Count();
+            sb.Append("<p class=\"sub\">").Append(groups.Count == 1 ? "1 limitação de coleta registrada" : $"{groups.Count} limitações de coleta registradas")
+              .Append(hurt > 0 ? $" ({hurt} controle(s) sem avaliação por isso)" : "")
+              .Append(". <a href=\"#aegis-limits\">Ver as limitações e a interpretação</a>, depois dos resultados.</p>");
+        }
+        sb.Append("</section>\n");
+        return sb.Append(Risks(m)).ToString();
+
+        static void Kpi(StringBuilder sb, string label, string valueHtml, string note, string help, bool partial) =>
+            sb.Append("<div class=\"kpi").Append(partial ? " partial" : "").Append("\"><div class=\"l\">").Append(E(label)).Append("</div><div class=\"v\">").Append(valueHtml)
+              .Append("</div><div class=\"n\">").Append(note).Append("</div><details><summary>Base de cálculo</summary><span>").Append(help).Append("</span></details></div>");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Limitações detalhadas e interpretação consultiva — depois dos riscos e dos resultados, para
+    /// não empurrar os riscos para baixo. Sem limitação a listar, o texto é o do registro (<see cref="KnightReportModel.NoLimitationText"/>):
+    /// ausência de registro não é coleta comprovada.
+    /// </summary>
+    internal static string Limitations(KnightReportModel m)
+    {
+        static string E(string? s) => Html.Encode(s ?? "");
+        var sb = new StringBuilder("<section id=\"aegis-limits\" class=\"grp\" aria-labelledby=\"lim-h\">");
+        sb.Append("<h2 id=\"lim-h\" class=\"grp-h\">Limitações e interpretação</h2>");
         sb.Append("<h3>Limitações que afetam a conclusão</h3>");
         var groups = m.LimitationGroups ?? Array.Empty<ReportLimitationGroup>();
         if (groups.Count == 0)
-            sb.Append("<p class=\"sub\">").Append(m.LegacyLimitations.Count > 0
+            sb.Append("<p class=\"sub\">").Append(E(m.LegacyLimitations.Count > 0
                 ? "Esta fotografia registra as limitações no formato anterior; elas estão na aba de detalhes técnicos."
-                : "Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.").Append("</p>");
+                : m.NoLimitationText ?? "Não há limitações de coleta registradas nesta fotografia.")).Append("</p>");
         else
         {
             sb.Append("<ul class=\"lims\">");
@@ -165,8 +193,22 @@ public static class PostureSnapshotHtmlWriter
             List(sb, "Lacunas de coleta", a.CollectionGaps);
         }
         else sb.Append("<p class=\"sub\">Nenhuma interpretação registrada nesta fotografia. Os resultados acima são determinísticos e não dependem dela.</p>");
-        sb.Append("</section>\n");
+        return sb.Append("</section>\n").ToString();
 
+        static void List(StringBuilder sb, string title, IReadOnlyList<string> items)
+        {
+            if (items.Count == 0) return;
+            sb.Append("<h4>").Append(E(title)).Append("</h4><ol>");
+            foreach (var x in items) sb.Append("<li>").Append(E(x)).Append("</li>");
+            sb.Append("</ol>");
+        }
+    }
+
+    private static string Risks(KnightReportModel m)
+    {
+        static string E(string? s) => Html.Encode(s ?? "");
+        var k = m.Kpis;
+        var sb = new StringBuilder();
         sb.Append("<section id=\"aegis-risks\" class=\"grp\" aria-labelledby=\"risk-h\"><h2 id=\"risk-h\" class=\"grp-h\">Riscos e ações prioritárias</h2>")
           .Append("<p class=\"sub\">Até cinco controles reprovados, por severidade e, depois, pela quantidade afetada. Risco, impacto e orientação são os registrados para cada controle nesta fotografia.</p>");
         if (m.Priorities.Count == 0)
@@ -190,18 +232,6 @@ public static class PostureSnapshotHtmlWriter
                 sb.Append("<p class=\"sub\"><a href=\"#tab-controls\" data-filter=\"status=Exposed\">Ver os ").Append(k.Failed).Append(" controles reprovados</a></p>");
         }
         return sb.Append("</section>\n").ToString();
-
-        static void Kpi(StringBuilder sb, string label, string valueHtml, string note, string help, bool partial) =>
-            sb.Append("<div class=\"kpi").Append(partial ? " partial" : "").Append("\"><div class=\"l\">").Append(E(label)).Append("</div><div class=\"v\">").Append(valueHtml)
-              .Append("</div><div class=\"n\">").Append(note).Append("</div><details><summary>Base de cálculo</summary><span>").Append(help).Append("</span></details></div>");
-
-        static void List(StringBuilder sb, string title, IReadOnlyList<string> items)
-        {
-            if (items.Count == 0) return;
-            sb.Append("<h4>").Append(E(title)).Append("</h4><ol>");
-            foreach (var x in items) sb.Append("<li>").Append(E(x)).Append("</li>");
-            sb.Append("</ol>");
-        }
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ import {
   approvalBasis,
   findingQuery,
   limitationGroups,
+  noLimitationText,
   priorityViews,
   scoreCoverage,
   sourceInclusion,
@@ -208,6 +209,17 @@ test('limitações equivalentes agrupadas, diferentes separadas, sem perder a ca
     { capability: 'PurviewSensitivityLabels', outcome: 'LimitedByLicense', detail: null },
   ];
   eq(limitationGroups(a).length, 4, 'tempo esgotado ≠ circuito aberto; permissão ≠ licença');
+});
+
+test('sem limitação listada: ausência de registro não vira coleta comprovada', () => {
+  const semRegistro = assessment([ind('A', 'Passed'), ind('B', 'NotEvaluated'), ind('C', 'Error')]);
+  const t = noLimitationText(semRegistro);
+  ok(!t.includes('foram lidas'), 'sem capacidades registradas não se afirma leitura completa');
+  eq(t, 'Não há limitações de coleta registradas nesta avaliação. Isso não comprova coleta completa: 2 controles aplicáveis ficaram sem avaliação.', 'texto fiel ao registro');
+  eq(noLimitationText(assessment([ind('A', 'Passed')])), 'Não há limitações de coleta registradas nesta avaliação.', 'sem controle pendente, sem ressalva');
+  const lidas = assessment([ind('A', 'Passed')], { capabilities: [
+    { capability: 'EntraPolicies', outcome: 'Collected', detail: null }, { capability: 'EntraUsers', outcome: 'Collected', detail: null }] as KnightCapability[] });
+  eq(noLimitationText(lidas), 'Todas as 2 capacidades de coleta registradas nesta avaliação foram lidas.', 'só com registro explícito de coleta');
 });
 
 // ---- (5) interpretação ----------------------------------------------------------------------------

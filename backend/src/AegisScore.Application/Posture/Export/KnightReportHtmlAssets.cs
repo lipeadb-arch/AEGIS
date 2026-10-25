@@ -10,10 +10,10 @@ internal static class KnightReportHtmlAssets
 {
     public const string Css = """
 :root{--bg:#f5f7fb;--panel:#fff;--ink:#14213d;--ink2:#46536b;--muted:#6b778c;--line:#dde3ec;--accent:#0a7ea4;--accent-bg:#e6f4f9;
---ok:#1b7f3b;--ok-bg:#e7f5ec;--fail:#b3261e;--fail-bg:#fbe9e7;--warn:#9a5b00;--warn-bg:#fff4e0;--ne:#56627a;--ne-bg:#eef1f6;--err:#6b3fa0;--err-bg:#f1eafa;
+--ok:#006b7d;--ok-bg:#e3f6fa;--fail:#c2185b;--fail-bg:#fce4ec;--warn:#9a5b00;--warn-bg:#fff4e0;--ne:#56627a;--ne-bg:#eef1f6;--na:#b7c0cf;--err:#6b3fa0;--err-bg:#f1eafa;
 --crit:#8e1b12;--high:#c2410c;--med:#a16207;--low:#1d5fb8;--info:#56627a;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--ink);}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1422;--panel:#141d2e;--ink:#e7ecf5;--ink2:#b8c2d6;--muted:#8e9ab2;--line:#26324a;--accent:#38c5ec;--accent-bg:#0f2a38;
---ok:#57c27a;--ok-bg:#12301f;--fail:#ff7a70;--fail-bg:#3a1714;--warn:#f0b24a;--warn-bg:#35270d;--ne:#a6b1c6;--ne-bg:#1d2638;--err:#c7a6f5;--err-bg:#2a1f3d;
+--ok:#26e0ff;--ok-bg:#0e3440;--fail:#ff5c8a;--fail-bg:#3a1424;--warn:#f0b24a;--warn-bg:#35270d;--ne:#a6b1c6;--ne-bg:#1d2638;--na:#4a5468;--err:#c7a6f5;--err-bg:#2a1f3d;
 --crit:#ff8a80;--high:#ff9f5a;--med:#f0c04a;--low:#7fb2ff;--info:#a6b1c6;}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);line-height:1.5;font-size:14px}
 a{color:var(--accent)}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
@@ -42,7 +42,7 @@ h1{margin:4px 0 2px;font-size:24px}h2{font-size:17px;margin:0 0 10px}h3{font-siz
 .bars{display:flex;flex-direction:column;gap:6px}.bar{display:grid;grid-template-columns:150px minmax(0,1fr) 44px;gap:8px;align-items:center;
 background:none;border:0;padding:3px 0;font:inherit;color:var(--ink);text-align:left;cursor:pointer;width:100%}
 .bar:hover .track{outline:1px solid var(--accent)}.track{height:16px;background:var(--ne-bg);border-radius:4px;overflow:hidden;display:flex}
-.seg{height:100%}.seg.Passed{background:var(--ok)}.seg.Exposed{background:var(--fail)}.seg.Mitigated{background:var(--warn)}.seg.NotEvaluated,.seg.NotApplicable{background:var(--ne)}.seg.Error{background:var(--err)}
+.seg{height:100%}.seg.Passed{background:var(--ok)}.seg.Exposed{background:var(--fail)}.seg.Mitigated{background:var(--warn)}.seg.NotEvaluated{background:var(--ne)}.seg.NotApplicable{background:var(--na)}.seg.Error{background:var(--err)}
 .seg.sev-Critical{background:var(--crit)}.seg.sev-High{background:var(--high)}.seg.sev-Medium{background:var(--med)}.seg.sev-Low{background:var(--low)}.seg.sev-Informational{background:var(--info)}
 .kpi details{color:var(--muted);font-size:12px;margin-top:6px}.kpi summary{cursor:pointer;width:fit-content}.bar .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar .num{text-align:right;font-weight:700}
 .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ink2);margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
@@ -83,6 +83,7 @@ table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::befo
 .pdl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;margin:0;font-size:13px}.pdl dt{color:var(--muted)}.pdl dd{margin:0;overflow-wrap:anywhere}
 .tech{font-size:12px;color:var(--muted)}.tech summary{cursor:pointer}.tech ul{margin:4px 0 0;padding-left:16px}
 @media (max-width:600px){.pdl{grid-template-columns:minmax(0,1fr)}.pdl dd{margin-bottom:4px}}
+@media (prefers-color-scheme:dark){.chart .in-ok,.chart .in-bad{fill:#0d1422}}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
 
@@ -125,7 +126,7 @@ var h=document.getElementById('tab-controls');if(open){var c=document.getElement
 // ---------- Visão geral ----------
 function help(t,body){return el('details',null,[el('summary',{text:t}),el('span',{text:body})]);}
 // [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Primeira aba: resumo executivo, riscos e ações prioritárias (desenhados no servidor e legíveis
-// sem JavaScript — aqui só são movidos) e, em seguida, resultados e composição. Detalhes técnicos e metodologia ficam nas outras abas.
+// sem JavaScript — aqui só são movidos), resultados e composição e, por fim, limitações detalhadas e interpretação (também do servidor). Detalhes técnicos e metodologia ficam nas outras abas.
 function overview(){var k=D.kpis,box=el('div',{id:'tab-overview',role:'tabpanel','aria-labelledby':'t-overview'});
 ['aegis-summary','aegis-risks'].forEach(function(id){var s=document.getElementById(id);if(s)box.appendChild(s);});
 var res=el('section',{cls:'grp','aria-labelledby':'res-h'},[el('h2',{id:'res-h',cls:'grp-h',text:'Resultados e composição'})]);
@@ -147,6 +148,7 @@ el('td',{'data-l':H[3]},[ctlRefs(o.controls||refsOf(o.controlIds),3)])]));});
 to.appendChild(el('p',{cls:'sub',text:'Cada controle relacionado mostra o título registrado nesta fotografia e o código; clique para abrir o detalhe.'}));
 to.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[el('thead',null,[el('tr',null,H.map(function(x){return el('th',{text:x});}))]),tb])]));}
 res.appendChild(to);box.appendChild(res);
+var lim=document.getElementById('aegis-limits');if(lim)box.appendChild(lim);
 return box;}
 // Contagens por resultado (detalhes técnicos): cada botão abre a lista já filtrada.
 function countsPanel(){var k=D.kpis,cp=el('div',{cls:'panel'},[el('h2',{text:'Controles por resultado'})]),cs=el('div',{cls:'counts'});
@@ -179,7 +181,7 @@ p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fonte'}),el('span',{
 el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),
 h.collectionStateLabel?el('span',{cls:'k',text:'Estado da coleta'}):null,h.collectionStateLabel?el('span',{text:h.collectionStateLabel+' — '+h.collectionSummary}):null,el('span',{cls:'k',text:'Fotografia publicada em'}),el('span',{text:dt(h.capturedAt)}),
 el('span',{cls:'k',text:'Escopo desta avaliação'}),el('span',{text:'Controles avaliados a partir de '+h.sourceLabel+'. Serviços ainda não coletados não aparecem como avaliados; o que falta está na cobertura do catálogo de referência.'})]));
-if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:'Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.'}));
+if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:D.noLimitationText||'Não há limitações de coleta registradas nesta fotografia.'}));
 if(D.limitations.length){var tb=el('tbody');D.limitations.forEach(function(l){tb.appendChild(el('tr',null,[el('td',{text:l.capabilityLabel}),el('td',{text:l.causeLabel}),
 el('td',null,[el('div',{text:l.detail||'—'}),l.requiredPermission?el('div',{cls:'mono',text:'Permissão exigida pela chamada implementada: '+l.requiredPermission}):null,
 (l.technical&&l.technical.length)?el('details',{cls:'tech'},[el('summary',{text:'Detalhe técnico'}),el('ul',null,l.technical.map(function(t){return el('li',{cls:'mono',text:t});}))]):null]),

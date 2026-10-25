@@ -22,7 +22,7 @@ import {
   statusLabel,
   threeMeasures,
 } from '../../models/knight.models';
-import { approvalBasis, limitationGroups, priorityViews, scoreCoverage, sourceInclusion } from '../../models/knight-summary.models';
+import { approvalBasis, limitationGroups, noLimitationText, priorityViews, scoreCoverage, sourceInclusion } from '../../models/knight-summary.models';
 import { KnightControlRefsComponent } from './knight-control-refs.component';
 
 /** A mesma ordem (e as mesmas cores) dos estados nos gráficos do painel e do relatório: o que pede atenção primeiro. */
@@ -199,7 +199,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
       <div class="hd"><h3 id="ov-lim">Limitações relevantes</h3>
         @if (limitationCount()) { <span class="hint">{{ limitationCount() }} capacidade(s) não coletada(s) em {{ groups().length }} grupo(s)</span> }</div>
       @if (groups().length === 0) {
-        <p class="muted small">Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.</p>
+        <p class="muted small">{{ noLimitation() }}</p>
       } @else {
         <ul class="lim-groups">
           @for (g of groups(); track g.key) {
@@ -511,6 +511,7 @@ export class KnightOverviewComponent {
   readonly approval = computed(() => approvalBasis(this.assessment()));
   readonly groups = computed(() => limitationGroups(this.assessment()));
   readonly limitationCount = computed(() => this.groups().reduce((n, g) => n + g.items.length, 0));
+  readonly noLimitation = computed(() => noLimitationText(this.assessment()));
   /** Serviços: os primeiros na visão inicial e todos a um clique, dizendo quantos ficaram de fora. */
   readonly serviceLimit = 8;
   readonly allServices = signal(false);

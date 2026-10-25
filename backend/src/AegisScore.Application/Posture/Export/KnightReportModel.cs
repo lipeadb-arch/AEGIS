@@ -134,7 +134,9 @@ public sealed record KnightReportModel(
     IReadOnlyList<KnightGlossaryTerm>? Glossary = null,
     string? IdentifierExplanation = null,
     ReportSourceInclusion? Sources = null,
-    IReadOnlyList<ReportLimitationGroup>? LimitationGroups = null);
+    IReadOnlyList<ReportLimitationGroup>? LimitationGroups = null,
+    /// <summary>[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que dizer quando não há limitação a listar — fiel ao registro da fotografia.</summary>
+    string? NoLimitationText = null);
 
 public static class KnightReportModelBuilder
 {
@@ -286,7 +288,25 @@ public static class KnightReportModelBuilder
             KnightGlossary.UsedIn(controls.SelectMany(GlossaryTexts)),
             KnightGlossary.IdentifierExplanation,
             Inclusion(composition, header.SourceLabel, evaluated),
-            GroupLimitations(limitations, controls));
+            GroupLimitations(limitations, controls),
+            NoLimitationText(KnightCapabilitiesJson.Deserialize(s.CapabilitiesJson), kpis));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Ausência de registro não é coleta comprovada: só se afirma que todas as capacidades foram
+    /// lidas quando a fotografia as registra e TODAS saíram coletadas. Sem esse registro (fotografia antiga, consolidada ou sem
+    /// capacidades), diz-se apenas que nada foi registrado — e, havendo controle sem avaliação, que isso não comprova coleta completa.
+    /// </summary>
+    public static string NoLimitationText(IReadOnlyList<KnightCapabilityStatus> capabilities, ReportKpis k)
+    {
+        if (capabilities.Count > 0 && capabilities.All(c => c.Outcome == KnightCapabilityOutcome.Collected))
+            return capabilities.Count == 1
+                ? "A única capacidade de coleta registrada nesta fotografia foi lida."
+                : $"Todas as {capabilities.Count} capacidades de coleta registradas nesta fotografia foram lidas.";
+        var unevaluated = k.NotEvaluated + k.Errors;
+        return "Não há limitações de coleta registradas nesta fotografia." + (unevaluated == 0 ? ""
+            : unevaluated == 1 ? " Isso não comprova coleta completa: 1 controle aplicável ficou sem avaliação."
+            : $" Isso não comprova coleta completa: {unevaluated} controles aplicáveis ficaram sem avaliação.");
     }
 
     private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();

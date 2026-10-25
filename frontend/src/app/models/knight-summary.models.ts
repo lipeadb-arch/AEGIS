@@ -185,6 +185,22 @@ export function limitationGroups(a: KnightAssessment): LimitationGroup[] {
   );
 }
 
+/**
+ * Texto para quando não há limitação a listar. Ausência de registro não é coleta comprovada: só se afirma que tudo foi lido quando
+ * a avaliação registra capacidades e TODAS saíram coletadas; sem esse registro, diz-se apenas que nada foi registrado.
+ */
+export function noLimitationText(a: KnightAssessment): string {
+  if (a.capabilities.length > 0 && a.capabilities.every((c) => c.outcome === 'Collected'))
+    return a.capabilities.length === 1
+      ? 'A única capacidade de coleta registrada nesta avaliação foi lida.'
+      : `Todas as ${a.capabilities.length} capacidades de coleta registradas nesta avaliação foram lidas.`;
+  const k = overviewKpis(a);
+  const unevaluated = k.notEvaluated + k.errors;
+  return 'Não há limitações de coleta registradas nesta avaliação.' + (unevaluated > 0
+    ? ` Isso não comprova coleta completa: ${plural(unevaluated, 'controle aplicável ficou', 'controles aplicáveis ficaram')} sem avaliação.`
+    : '');
+}
+
 // ---- Interpretação -----------------------------------------------------------------------------------------------------
 
 /**

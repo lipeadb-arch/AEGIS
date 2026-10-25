@@ -101,6 +101,67 @@ public sealed class KnightResultsReportTests
     }
 
     [Fact]
+    public void SemRegistroDeCapacidades_ComControlesNaoAvaliados_NaoAfirmaColetaCompleta()
+    {
+        var s = AssessmentVisualsFixtures.Knight(withHistory: false);
+        s.CapabilitiesJson = null;
+        var model = KnightReportModelBuilder.Build(s, true);
+        var pending = model.Kpis.NotEvaluated + model.Kpis.Errors;
+        var html = Html(s);
+
+        using var _ = new AssertionScope();
+        pending.Should().BePositive("o cenário tem controles não avaliados");
+        model.Limitations.Should().BeEmpty();
+        model.NoLimitationText.Should().Be($"Não há limitações de coleta registradas nesta fotografia. Isso não comprova coleta completa: {pending} controles aplicáveis ficaram sem avaliação.");
+        Static(html).Should().Contain(model.NoLimitationText!, "caminho desenhado no servidor");
+        html.Should().NotContain("foram lidas", "nem o servidor nem o script afirmam leitura completa sem registro")
+            .And.Contain("D.noLimitationText", "o caminho montado por JavaScript usa o mesmo texto da ilha de dados");
+
+        // Só com registro explícito, e TODO coletado, afirma-se a leitura completa.
+        s.CapabilitiesJson = JsonSerializer.Serialize(new List<KnightCapabilityStatus>
+        {
+            new(KnightCapability.DirectoryUsers, KnightCapabilityOutcome.Collected),
+            new(KnightCapability.GuestAccounts, KnightCapabilityOutcome.Collected),
+        }, KnightCapabilitiesJson.Options);
+        KnightReportModelBuilder.Build(s, true).NoLimitationText.Should().Be("Todas as 2 capacidades de coleta registradas nesta fotografia foram lidas.");
+    }
+
+    [Fact]
+    public void Hierarquia_ResumoRiscosResultadosELimitacoesNoFim_ComAvisoCompactoPertoDaNota()
+    {
+        var s = AssessmentVisualsFixtures.Knight(withHistory: true);
+        s.CapabilitiesJson = JsonSerializer.Serialize(new List<KnightCapabilityStatus>
+        {
+            new(KnightCapability.DirectoryUsers, KnightCapabilityOutcome.Error, null, new KnightCapabilityDiagnostic("read", KnightFailureKind.Timeout, 30000)),
+        }, KnightCapabilitiesJson.Options);
+        var html = Html(s);
+        var stat = Static(html);
+        int At(string id) => stat.IndexOf($"id=\"{id}\"", StringComparison.Ordinal);
+
+        using var _ = new AssertionScope();
+        new[] { At("aegis-summary"), At("aegis-risks"), At("aegis-visuals"), At("aegis-limits"), stat.IndexOf("<noscript>", StringComparison.Ordinal) }
+            .Should().BeInAscendingOrder("resumo → riscos → resultados → limitações e interpretação, também sem JavaScript").And.NotContain(-1);
+        var summary = stat[At("aegis-summary")..At("aegis-risks")];
+        summary.Should().Contain("1 limitação de coleta registrada").And.Contain("href=\"#aegis-limits\"")
+            .And.NotContain("Limitações que afetam a conclusão", "o detalhamento não fica entre a nota e os riscos")
+            .And.NotContain("Interpretação consultiva");
+        stat[At("aegis-limits")..].Should().Contain("Limitações que afetam a conclusão").And.Contain("Interpretação consultiva");
+        html.Should().Contain("getElementById('aegis-limits')", "com JavaScript o bloco vai para o fim da primeira aba, depois dos resultados");
+    }
+
+    [Fact]
+    public void CoresDosEstados_MesmaCorrespondenciaDoKnight_NosDoisTemas()
+    {
+        var html = Html(AssessmentVisualsFixtures.Knight(withHistory: true));
+
+        using var _ = new AssertionScope();
+        // Aprovado = ciano e reprovado = vermelho-rosado, como na aplicação; mitigado âmbar, erro violeta, não avaliado e não aplicável cinzas distintos.
+        html.Should().Contain("--ok:#006b7d;").And.Contain("--fail:#c2185b;").And.Contain("--ok:#26e0ff;").And.Contain("--fail:#ff5c8a;");
+        html.Should().NotContain("--ok:#1b7f3b").And.NotContain("--ok:#57c27a").And.NotContain("--fail:#b3261e").And.NotContain("--fail:#ff7a70");
+        html.Should().Contain(".seg.NotApplicable{background:var(--na)}").And.Contain("--na:#b7c0cf;").And.Contain("--na:#4a5468;");
+    }
+
+    [Fact]
     public void ResumoExecutivo_LegivelSemJavaScript_ComNotaAoLadoDaCoberturaEAvisoDeParcial()
     {
         var s = AssessmentVisualsFixtures.Knight(withHistory: false);
