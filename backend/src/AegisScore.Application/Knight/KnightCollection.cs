@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Domain;
@@ -395,10 +396,93 @@ public enum KnightCapabilityOutcome
     /// recurso não está licenciado. NUNCA vira coleção vazia nem "conforme".
     /// </summary>
     LimitedByLicense = 7,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A leitura oficial NÃO está disponível no ambiente em que o AEGIS executa
+    /// (a Microsoft documenta que Security &amp; Compliance PowerShell não existe no PowerShell 7 em Linux, por exemplo).
+    /// Não é falha da fonte, nem recusa de autorização, nem licença: nenhuma concessão resolve. A capacidade fica
+    /// NÃO coletada — os controles que dependem dela ficam não avaliados, nunca aprovados.
+    /// </summary>
+    PlatformUnsupported = 8,
 }
 
-/// <summary>Estado por capacidade — o que a fonte conseguiu (ou não) coletar, com detalhe sanitizado.</summary>
-public sealed record KnightCapabilityStatus(KnightCapability Capability, KnightCapabilityOutcome Outcome, string? Detail = null);
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Natureza TÉCNICA da falha de uma leitura, separada do desfecho exibido. O
+/// desfecho diz ao avaliador o que aconteceu com o dado; o tipo diz ao operador onde procurar. Nenhum deles carrega texto
+/// da fonte.
+/// </summary>
+public enum KnightFailureKind
+{
+    /// <summary>A fonte respondeu com um status HTTP de erro (401, 403, 404, 429, 5xx…).</summary>
+    HttpStatus = 0,
+
+    /// <summary>A leitura não terminou no tempo previsto (tempo da tentativa, tempo total ou tempo do processo).</summary>
+    Timeout = 1,
+
+    /// <summary>O circuito do cliente HTTP estava aberto depois de falhas recentes: a leitura nem foi enviada.</summary>
+    CircuitOpen = 2,
+
+    /// <summary>Falha de rede ou de transporte (DNS, conexão, TLS) antes de haver resposta.</summary>
+    Transport = 3,
+
+    /// <summary>A resposta chegou, mas não segue o contrato documentado da versão lida.</summary>
+    Contract = 4,
+
+    /// <summary>Defeito interno do AEGIS ao processar a leitura — não é atribuído ao provedor, à rede nem à permissão.</summary>
+    Internal = 5,
+
+    /// <summary>O processo do adaptador terminou com código diferente de zero.</summary>
+    ProcessExit = 6,
+
+    /// <summary>O processo do adaptador terminou sem emitir o documento de resultado.</summary>
+    ProcessNoResult = 7,
+
+    /// <summary>A saída do processo do adaptador ultrapassou o limite aceito e o processo foi encerrado.</summary>
+    OutputLimit = 8,
+
+    /// <summary>O runtime do adaptador não pôde ser iniciado neste ambiente.</summary>
+    RuntimeUnavailable = 9,
+
+    /// <summary>A leitura oficial não está disponível nesta plataforma de execução.</summary>
+    PlatformUnsupported = 10,
+
+    /// <summary>A sessão do serviço não foi estabelecida (o motivo é a categoria declarada pelo adaptador).</summary>
+    Connection = 11,
+
+    /// <summary>O comando de leitura falhou dentro de uma sessão estabelecida.</summary>
+    Command = 12,
+
+    /// <summary>A leitura parou antes do fim (teto, orçamento de tempo, interrupção) — o que foi lido é parcial.</summary>
+    Incomplete = 13,
+
+    /// <summary>Não havia o que consultar (ex.: nenhuma assinatura no escopo) — não é falha nem ausência comprovada.</summary>
+    NoScope = 14,
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Diagnóstico TÉCNICO e seguro de uma capacidade: onde parou, quanto durou, o
+/// tipo sanitizado da falha, o status/código quando existem e o identificador de correlação da execução. Nunca carrega
+/// token, segredo, certificado, corpo de resposta nem mensagem livre da fonte — só valores de vocabulário fechado ou já
+/// restritos a um conjunto fixo de caracteres.
+/// </summary>
+public sealed record KnightCapabilityDiagnostic(
+    string Stage,
+    KnightFailureKind Kind,
+    long? DurationMs = null,
+    int? HttpStatus = null,
+    string? Code = null,
+    string? Endpoint = null,
+    string? CorrelationId = null,
+    string? ServiceRequestId = null);
+
+/// <summary>
+/// Estado por capacidade — o que a fonte conseguiu (ou não) coletar, com detalhe sanitizado.
+/// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] <paramref name="Diagnostic"/> é opcional e só técnico: coletas anteriores
+/// a este pacote não o têm, e a avaliação nunca depende dele.
+/// </summary>
+public sealed record KnightCapabilityStatus(
+    KnightCapability Capability, KnightCapabilityOutcome Outcome, string? Detail = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnightCapabilityDiagnostic? Diagnostic = null);
 
 // ---- Configuração de fonte (tipada por fonte; sem dicionário de strings) --------------------------------
 

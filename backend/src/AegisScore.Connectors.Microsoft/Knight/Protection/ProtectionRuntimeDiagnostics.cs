@@ -96,6 +96,7 @@ public static class ProtectionRuntimeDiagnostics
             output.WriteLine("FALHA: comandos de conexão ausentes nesta versão do módulo: " + string.Join(", ", absent.Concat(missing).Distinct()));
             return 1;
         }
+        if (!PowerShell.PowerShellRunInterpretation.CheckProcess(output, check.Exchange.Process, "module-check")) return 1;
         output.WriteLine("module-check=OK");
 
         foreach (var profile in new[] { ProtectionAdminRequest.Defender, ProtectionAdminRequest.Purview })
@@ -136,6 +137,25 @@ public static class ProtectionRuntimeDiagnostics
             if (purview && !e.Reads.Any(r => !r.Ok && r.Capability == "PurviewDlpPolicies"))
             {
                 output.WriteLine("FALHA (purview): a leitura de DLP não registrou o motivo da conexão do Security & Compliance.");
+                return 1;
+            }
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Fora do Windows o Security & Compliance PowerShell não existe (documentação
+            // oficial): a limitação tem de ser detectada ANTES da sessão — Connect-IPPSSession nunca é chamado aqui.
+            // (Só com o leitor real, que devolve o relatório do processo; um substituto de teste não tem estágios.)
+            if (purview && !OperatingSystem.IsWindows() && e.Process is { } run)
+            {
+                var platformDetected = string.Equals(result.ComplianceErrorCategory, "PlatformUnsupported", StringComparison.Ordinal)
+                    && !run.Reached("compliance-connect");
+                if (!platformDetected)
+                {
+                    output.WriteLine("FALHA (purview): a limitação de plataforma do Security & Compliance não foi detectada antes da sessão.");
+                    return 1;
+                }
+                output.WriteLine("security-compliance=limitação de plataforma detectada antes da sessão (Connect-IPPSSession não foi chamado)");
+            }
+            if (e.Process is { Clean: false } unclean)
+            {
+                output.WriteLine($"FALHA ({profile}): o processo do adaptador terminou sem integridade: {PowerShell.PowerShellRunInterpretation.How(unclean)}.");
                 return 1;
             }
 

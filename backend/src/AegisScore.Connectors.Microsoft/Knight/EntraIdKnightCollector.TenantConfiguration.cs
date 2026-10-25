@@ -83,8 +83,9 @@ public sealed partial class EntraIdKnightCollector
 
     private async Task CollectTenantConfigurationAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator privileged,
-        List<KnightObservation> obs, List<KnightCapabilityStatus> caps, List<KnightConfigurationDocument> docs, CancellationToken ct)
+        List<KnightObservation> obs, List<KnightCapabilityStatus> caps, List<KnightConfigurationDocument> docs, EntraRun run)
     {
+        var ct = run.Ct;
         var none = Array.Empty<KnightSignalKey>();
 
         await RunConfigAsync(KnightCapability.AuthorizationPolicy, docs, async add =>
@@ -99,7 +100,7 @@ public sealed partial class EntraIdKnightCollector
                     ArrayStrings(perms, "permissionGrantPoliciesAssigned"),
                     Bool(root, "allowEmailVerifiedUsersToJoinOrganization"), Bool(root, "allowUserConsentForRiskyApps"),
                     Bool(root, "blockMsolPowerShell"))));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.AdminConsentPolicy, docs, async add =>
         {
@@ -110,7 +111,7 @@ public sealed partial class EntraIdKnightCollector
                     Bool(root, "isEnabled"),
                     reviewers.ValueKind == JsonValueKind.Array ? reviewers.GetArrayLength() : 0,
                     Bool(root, "notifyReviewers"), Bool(root, "remindersEnabled"), Int(root, "requestDurationInDays"))));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.AppManagementPolicy, docs, async add =>
         {
@@ -121,7 +122,7 @@ public sealed partial class EntraIdKnightCollector
                     Bool(root, "isEnabled"),
                     Restrictions(restrictions, "passwordCredentials"),
                     Restrictions(restrictions, "keyCredentials"))));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.AuthenticationMethodsPolicy, docs, async add =>
         {
@@ -147,7 +148,7 @@ public sealed partial class EntraIdKnightCollector
             var campaign = Obj(Obj(root, "registrationEnforcement"), "authenticationMethodsRegistrationCampaign");
             add(KnightTenantConfiguration.Document(EntraAuthenticationMethodsConfiguration.ExternalId, "Política de métodos de autenticação",
                 new EntraAuthenticationMethodsConfiguration(Str(root, "policyMigrationState"), Str(campaign, "state"), methods, app, location)));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.DirectorySettings, docs, async add =>
         {
@@ -192,7 +193,7 @@ public sealed partial class EntraIdKnightCollector
                 add(KnightTenantConfiguration.Document(templateId, template.Name,
                     new EntraDirectorySettingConfiguration(templateId, template.Name, custom is not null, effective, defaulted)));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.Domains, docs, async add =>
         {
@@ -204,7 +205,7 @@ public sealed partial class EntraIdKnightCollector
                     new EntraDomainConfiguration(id!, Bool(d, "isVerified"), Bool(d, "isDefault"), Bool(d, "isInitial"),
                         Str(d, "authenticationType"), Int(d, "passwordValidityPeriodInDays"), ArrayStrings(d, "supportedServices"))));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.DirectorySynchronization, docs, async add =>
         {
@@ -229,7 +230,7 @@ public sealed partial class EntraIdKnightCollector
             }
             add(KnightTenantConfiguration.Document(EntraDirectorySynchronizationConfiguration.ExternalId, "Sincronização com o diretório local",
                 new EntraDirectorySynchronizationConfiguration(hybrid, Date(org, "onPremisesLastSyncDateTime"), phs, limitation)));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.DeviceRegistrationPolicy, docs, async add =>
         {
@@ -246,7 +247,7 @@ public sealed partial class EntraIdKnightCollector
                     ArrayStrings(registering, "users").Count, ArrayStrings(registering, "groups").Count,
                     Bool(Obj(root, "localAdminPassword"), "isEnabled"),
                     Membership(Obj(Obj(root, "azureADRegistration"), "allowedToRegister")))));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.GroupVisibility, docs, async add =>
         {
@@ -263,7 +264,7 @@ public sealed partial class EntraIdKnightCollector
             }
             add(KnightTenantConfiguration.Document(EntraGroupVisibilityInventory.ExternalId, "Visibilidade dos grupos do Microsoft 365",
                 new EntraGroupVisibilityInventory(total, publicTotal, listed, publicTotal <= EntraGroupVisibilityInventory.MaxListed)));
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         // Perfil das contas privilegiadas: depende do inventário de papéis da MESMA coleta.
         if (!privileged.Collected)
@@ -310,7 +311,7 @@ public sealed partial class EntraIdKnightCollector
                                 Bool(u, "accountEnabled"), parts.Distinct(StringComparer.OrdinalIgnoreCase).ToList(), productivity.ToList(), resolved)));
                     }
                 }
-            }, obs, caps, none);
+            }, obs, caps, none, run);
         }
 
         await RunConfigAsync(KnightCapability.PrivilegedIdentityManagement, docs, async add =>
@@ -374,7 +375,7 @@ public sealed partial class EntraIdKnightCollector
                         eligible.TryGetValue(templateId, out var count) ? count : 0,
                         approval, approvers, mfa, limitation)));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.AccessReviews, docs, async add =>
         {
@@ -411,7 +412,7 @@ public sealed partial class EntraIdKnightCollector
                         applyActions.Any(a => string.Equals(Str(a, "@odata.type"), "#microsoft.graph.removeAccessApplyAction", StringComparison.OrdinalIgnoreCase)),
                         Bool(settings, "justificationRequiredOnApproval"), Bool(settings, "mailNotificationsEnabled"))));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.NamedLocations, docs, async add =>
         {
@@ -425,7 +426,7 @@ public sealed partial class EntraIdKnightCollector
                         isCountry ? false : Bool(l, "isTrusted"), Items(l, "ipRanges").Count(),
                         ArrayStrings(l, "countriesAndRegions").Count, Bool(l, "includeUnknownCountriesAndRegions"))));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
 
         await RunConfigAsync(KnightCapability.ServicePrincipalSettings, docs, async add =>
         {
@@ -443,7 +444,7 @@ public sealed partial class EntraIdKnightCollector
                 add(KnightTenantConfiguration.Document(appId, null,
                     new EntraServicePrincipalState(appId, null, Present: false, AccountEnabled: null)));
             }
-        }, obs, caps, none);
+        }, obs, caps, none, run);
     }
 
     private async Task<(bool? Approval, int Approvers, bool? Mfa)> ReadActivationRulesAsync(
@@ -477,14 +478,14 @@ public sealed partial class EntraIdKnightCollector
     private Task RunConfigAsync(
         KnightCapability capability, List<KnightConfigurationDocument> docs,
         Func<Action<KnightConfigurationDocument>, Task> collect,
-        List<KnightObservation> obs, List<KnightCapabilityStatus> caps, KnightSignalKey[] keys)
+        List<KnightObservation> obs, List<KnightCapabilityStatus> caps, KnightSignalKey[] keys, EntraRun run)
     {
         var pending = new List<KnightConfigurationDocument>();
         return RunCapabilityAsync(capability, keys, async () =>
         {
             await collect(pending.Add);
             docs.AddRange(pending);
-        }, obs, caps);
+        }, obs, caps, run);
     }
 
     // ---- Normalização --------------------------------------------------------------------------------

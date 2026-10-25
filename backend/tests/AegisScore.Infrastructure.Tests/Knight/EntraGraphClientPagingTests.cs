@@ -16,7 +16,7 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 /// (<see cref="EntraGraphClient.GetPagedAsync"/>): uma resposta 200 OK com corpo error/{}/raiz array/<c>value</c>
 /// de tipo errado, ou <c>@odata.nextLink</c> de tipo inesperado, NÃO é uma página completa — nunca produz coleção
 /// vazia em silêncio nem deixa <c>InvalidOperationException</c>/<c>JsonException</c> escapar. Sempre uma
-/// <see cref="EntraGraphException"/>(<see cref="EntraGraphErrorKind.Unavailable"/>) SANITIZADA.
+/// <see cref="EntraGraphException"/>(<see cref="EntraGraphErrorKind.Contract"/>) SANITIZADA.
 /// </summary>
 public sealed class EntraGraphClientPagingTests
 {
@@ -36,7 +36,7 @@ public sealed class EntraGraphClientPagingTests
     private static async Task AssertFailsClosed(string pageBody)
     {
         var act = async () => await DrainAsync(pageBody);
-        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Unavailable);
+        (await act.Should().ThrowAsync<EntraGraphException>()).Which.Kind.Should().Be(EntraGraphErrorKind.Contract, "página fora do contrato não é indisponibilidade do serviço");
     }
 
     [Fact]

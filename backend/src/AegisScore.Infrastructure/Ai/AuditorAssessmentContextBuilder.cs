@@ -133,7 +133,7 @@ public sealed class AuditorAssessmentContextBuilder : IAuditorAssessmentContextB
                 reg.Add("K", "KNIGHT", AuditorSourceNature.Indicator, "Resultado KNIGHT consolidado",
                     $"Nota {Score(consolidated.Score)} (fórmula {consolidated.FormulaVersion}); cobertura {Pct(consolidated.Coverage)} dos controles aplicáveis; " +
                     $"{consolidated.PassedCount} aprovado(s), {consolidated.ExposedCount} reprovado(s), {consolidated.MitigatedCount} mitigado(s), " +
-                    $"{consolidated.NotEvaluatedCount} não avaliado(s), {consolidated.ErrorCount} com erro de leitura; fontes incluídas: {string.Join(", ", included)}.",
+                    $"{consolidated.NotEvaluatedCount} não avaliado(s), {consolidated.ErrorCount} com erro na avaliação (falha de coleta não entra nesta contagem: está nas limitações de cada fonte); fontes incluídas: {string.Join(", ", included)}.",
                     Date(consolidated.DataRecency),
                     assessed.Any(x => consolidated.IncludedSources.Contains(x.Source) && x.Assessment!.Mode == KnightAssessmentMode.Demo),
                     "Nota técnica de configuração (0–100), não é maturidade organizacional. Fonte sem avaliação concluída não entra e não é aprovação.",
@@ -145,7 +145,7 @@ public sealed class AuditorAssessmentContextBuilder : IAuditorAssessmentContextB
                 reg.Add("K", "KNIGHT", AuditorSourceNature.Indicator, $"Avaliação KNIGHT — {s.Label}",
                     $"Nota {Score(a.Score)}; cobertura {Pct(a.Coverage)}; estado da coleta {a.SourceState}; catálogo {a.CatalogVersion}; " +
                     $"{a.PassedCount} aprovado(s), {a.ExposedCount} reprovado(s), {a.MitigatedCount} mitigado(s), {a.NotEvaluatedCount} não avaliado(s), " +
-                    $"{a.ErrorCount} com erro, {a.NotApplicableCount} não se aplica(m)." +
+                    $"{a.ErrorCount} com erro na avaliação, {a.NotApplicableCount} não se aplica(m); {CollectionGaps(a)}." +
                     (s.UnfinishedAttempt is { } u ? $" Há tentativa posterior não concluída ({u.Status}, iniciada em {Date(u.StartedAt)})." : ""),
                     Date(a.CompletedAt ?? a.StartedAt), a.Mode == KnightAssessmentMode.Demo,
                     KnightLimitation(a), new AuditorSourceLink("/knight", Q(("run", a.Id.ToString("D")))));
@@ -194,6 +194,18 @@ public sealed class AuditorAssessmentContextBuilder : IAuditorAssessmentContextB
             $"{(i.AffectedComposition ?? $"{i.AffectedObjectCount} objeto(s) afetado(s)")}; fonte {sourceLabel}" +
             (i.Presentation is { } p ? $"; domínio {p.DomainLabel}; serviço {p.Service}" : "") +
             (i.NistCodes.Count == 0 ? "" : $"; mapeado no catálogo para {string.Join(", ", i.NistCodes.Take(6))}") + ".", MaxDetail);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha de COLETA (capacidade não lida) é distinta de erro na AVALIAÇÃO (controle com
+    /// status Error): o auditor recebe as duas contagens, cada uma com o próprio nome.
+    /// </summary>
+    private static string CollectionGaps(KnightAssessment a)
+    {
+        var gaps = a.Capabilities.Count(c => c.Outcome != KnightCapabilityOutcome.Collected);
+        return gaps == 0
+            ? "todas as capacidades de coleta lidas"
+            : $"{gaps} de {a.Capabilities.Count} capacidade(s) de coleta não lida(s) (falha ou limitação de coleta, distinta de erro na avaliação)";
+    }
 
     private static string KnightLimitation(KnightAssessment a) =>
         "Leitura técnica de configuração: não comprova processo, política nem atendimento completo de requisito NIST." +

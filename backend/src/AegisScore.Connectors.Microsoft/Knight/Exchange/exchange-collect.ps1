@@ -39,6 +39,43 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# ---- [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Protocolo de quadros na saída padrão ------------------------------
+#
+# Tudo o que o AEGIS interpreta sai em linhas prefixadas por '##aegis:', escritas DIRETAMENTE na saída padrão e
+# descarregadas na hora (um processo encerrado no meio ainda deixa o que já foi escrito):
+#   ##aegis:stage <estágio>   — gravado ANTES de cada passo (é o que diz até onde o processo chegou);
+#   ##aegis:read <json>       — UMA leitura concluída, emitida assim que termina (sobrevive a uma falha posterior);
+#   ##aegis:result <json>     — o resumo final (runtime, conexão, categorias de falha).
+# Qualquer outra linha (aviso de módulo, saída de host) é ignorada pelo AEGIS — não contamina o resultado.
+
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+
+function Write-AegisFrame {
+    param([string]$Kind, [string]$Payload)
+    [Console]::Out.WriteLine('##aegis:' + $Kind + ' ' + $Payload)
+    [Console]::Out.Flush()
+}
+
+function Write-AegisStage {
+    param([string]$Name)
+    Write-AegisFrame 'stage' $Name
+}
+
+function Add-AegisRead {
+    <# Registra a leitura no documento e a EMITE imediatamente como quadro próprio. #>
+    param($Record)
+    $script:Reads.Add($Record)
+    Write-AegisFrame 'read' ($Record | ConvertTo-Json -Depth 12 -Compress)
+}
+
+function Write-AegisResult {
+    <# Resumo final. As leituras já saíram em quadros próprios: o resumo não as repete. #>
+    param($Result)
+    Write-AegisStage 'result'
+    $Result.reads = @()
+    Write-AegisFrame 'result' ($Result | ConvertTo-Json -Depth 12 -Compress)
+}
+
 # ---- Contrato de comandos --------------------------------------------------------------------------------
 #
 # Dois conjuntos, e a distinção é o ponto: os comandos do MÓDULO existem assim que ele é importado; os
@@ -178,12 +215,16 @@ function Invoke-Read {
         leitura parcial aprove a organização inteira.
     #>
     param([string]$Capability, [string]$Command, [scriptblock]$Body, [bool]$Enumerated = $false)
+    Write-AegisStage ('read ' + $Capability)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $produced = & $Body
         # `@()` sobre uma List[object] com hashtables lança "Argument types do not match" no PowerShell 7.6.5.
         # Materializar com .ToArray()/cast explícito é o caminho que funciona nas duas famílias de versão.
-        $items = if ($null -eq $produced) { @() } elseif ($produced -is [System.Array]) { $produced } else { , $produced }
-        $script:Reads.Add(@{
+        # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Atribuição em cada ramo: a saída de um `if` passa pelo pipeline e DESEMBRULHA o array de
+        # um item (`, $produced` virava o objeto) — leituras de objeto único saíam como objeto e o AEGIS as lia como lista vazia.
+        if ($null -eq $produced) { $items = @() } elseif ($produced -is [System.Array]) { $items = $produced } else { $items = , $produced }
+        Add-AegisRead @{
             capability    = $Capability
             command       = $Command
             ok            = $true
@@ -191,10 +232,11 @@ function Invoke-Read {
             truncated     = ($Enumerated -and ($items.Count -ge $script:EnumerationLimit))
             errorCategory = $null
             errorId       = $null
-        })
+            durationMs    = [long]$sw.ElapsedMilliseconds
+        }
     }
     catch {
-        $script:Reads.Add(@{
+        Add-AegisRead @{
             capability    = $Capability
             command       = $Command
             ok            = $false
@@ -202,7 +244,8 @@ function Invoke-Read {
             truncated     = $false
             errorCategory = (Get-ErrorCategory $_)
             errorId       = (Get-ErrorId $_)
-        })
+            durationMs    = [long]$sw.ElapsedMilliseconds
+        }
     }
 }
 
@@ -406,14 +449,18 @@ $result = @{
 }
 
 try {
+    Write-AegisStage 'start'
     $result.runtime.powerShell = [string]$PSVersionTable.PSVersion
     $result.runtime.platform = [string]$PSVersionTable.Platform
 
+    Write-AegisStage 'input'
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Nenhuma credencial recebida na entrada padrão.' }
     $request = $raw | ConvertFrom-Json
 
+    Write-AegisStage 'import'
     Import-Module ExchangeOnlineManagement -ErrorAction Stop
+    Write-AegisStage 'imported'
     $module = Get-Module ExchangeOnlineManagement
     if ($null -ne $module) { $result.runtime.module = [string]$module.Version }
 
@@ -436,19 +483,18 @@ try {
         $result.connected = $false
         foreach ($n in $script:ModuleCommands) {
             $found = $null -ne (Get-Command $n -Module ExchangeOnlineManagement -ErrorAction SilentlyContinue)
-            $script:Reads.Add(@{
+            Add-AegisRead @{
                 capability = 'ModuleCheck'; command = $n; ok = $found; items = @(); truncated = $false
                 errorCategory = $(if ($found) { $null } else { 'Unavailable' })
                 errorId = $(if ($found) { $null } else { 'CommandNotFound' })
-            })
+            }
         }
-        $script:Reads.Add(@{
+        Add-AegisRead @{
             capability = 'SessionCommandContract'; command = '(importados pela conexão)'; ok = $true
             items = @($script:SessionCommands | ForEach-Object { @{ command = $_ } })
             truncated = $false; errorCategory = $null; errorId = $null
-        })
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        }
+        Write-AegisResult $result
         exit 0
     }
 
@@ -470,21 +516,32 @@ try {
         # dele com "comando não encontrado" — e essa leitura é declarada, não silenciada.
         # -ShowBanner:$false e -SkipLoadingFormatData evitam saída decorativa e download de formatação: o
         # adaptador lê propriedades, não formata nada.
-        Connect-ExchangeOnline `
-            -AccessToken $accessToken `
-            -Organization $organization `
-            -CommandName $commandsToImport `
-            -ShowBanner:$false `
-            -SkipLoadingFormatData `
-            -ErrorAction Stop | Out-Null
+        $connect = @{
+            AccessToken           = $accessToken
+            Organization          = $organization
+            CommandName           = $commandsToImport
+            ShowBanner            = $false
+            SkipLoadingFormatData = $true
+            ErrorAction           = 'Stop'
+        }
+        # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Módulo temporário da conexão no diretório PRIVADO desta execução
+        # (-EXOModuleBasePath, documentado a partir da 3.9.2), quando a versão instalada o aceita.
+        $workDir = [string](Get-Prop $request 'workDir')
+        if (-not [string]::IsNullOrWhiteSpace($workDir) -and (Test-Path -LiteralPath $workDir) -and
+            (Get-Command Connect-ExchangeOnline).Parameters.ContainsKey('EXOModuleBasePath')) {
+            $connect['EXOModuleBasePath'] = $workDir
+        }
+        Write-AegisStage 'connect'
+        Connect-ExchangeOnline @connect | Out-Null
         $result.connected = $true
+        Write-AegisStage 'connected'
     }
     catch {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $_
         $result.connectionErrorId = Get-ErrorId $_
-        $result.reads = @()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        Write-AegisStage 'connect-failed'
+        Write-AegisResult $result
         exit 0
     }
 
@@ -510,11 +567,11 @@ try {
     finally {
         # A sessão é encerrada SEMPRE: o processo é descartável, mas a conexão com o locatário não pode
         # sobreviver à coleta nem ser reaproveitada por outra.
+        Write-AegisStage 'disconnect'
         try { Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
     }
 
-    $result.reads = $script:Reads.ToArray()
-    $result | ConvertTo-Json -Depth 12 -Compress
+    Write-AegisResult $result
     exit 0
 }
 catch {
@@ -524,15 +581,23 @@ catch {
     # sem categoria nem motivo. Por isso a montagem do documento é protegida e, no pior caso, um documento
     # MÍNIMO é escrito à mão: o contrato de saída é sempre honrado.
     $registro = $_
+    # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha DEPOIS da conexão não é falha de conexão: as leituras já emitidas valem,
+    # e o processo sai com código 1 para o AEGIS não declarar a coleta íntegra. Antes da conexão, a falha é classificada
+    # (o estágio declarado diz onde ela aconteceu) e o processo sai com 0, como sempre.
+    $depoisDaConexao = $false
+    try { $depoisDaConexao = [bool]$result.connected } catch { }
     try {
-        $result.connected = $false
-        $result.connectionErrorCategory = Get-ErrorCategory $registro
-        $result.connectionErrorId = Get-ErrorId $registro
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        if (-not $depoisDaConexao) {
+            $result.connected = $false
+            $result.connectionErrorCategory = Get-ErrorCategory $registro
+            $result.connectionErrorId = Get-ErrorId $registro
+        }
+        Write-AegisResult $result
     }
     catch {
-        '{"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}'
+        [Console]::Out.WriteLine('##aegis:result {"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}')
+        [Console]::Out.Flush()
     }
+    if ($depoisDaConexao) { exit 1 }
     exit 0
 }

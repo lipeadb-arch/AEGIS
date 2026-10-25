@@ -201,7 +201,9 @@ builder.Services.AddSingleton<IAuthorizationHandler, FederatedExchangeHandler>()
 // (executável do PowerShell, módulo pré-instalado na imagem, tempo limite). É do AMBIENTE, não do locatário.
 builder.Services.AddMicrosoftConnectors(
     builder.Configuration.GetSection("Knight:Teams"),
-    builder.Configuration.GetSection("Knight:Exchange"));
+    builder.Configuration.GetSection("Knight:Exchange"),
+    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempos e repetições dos clientes HTTP do KNIGHT (ambiente, não locatário).
+    builder.Configuration.GetSection("Knight:Http"));
 builder.Services.AddGoogleConnectors();
 
 // Document Hub: worker que lê os documentos enfileirados e mapeia os controles NIST.

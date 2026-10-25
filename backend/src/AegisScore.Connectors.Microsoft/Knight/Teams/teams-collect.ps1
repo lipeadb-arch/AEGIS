@@ -30,6 +30,43 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# ---- [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Protocolo de quadros na saída padrão ------------------------------
+#
+# Tudo o que o AEGIS interpreta sai em linhas prefixadas por '##aegis:', escritas DIRETAMENTE na saída padrão e
+# descarregadas na hora (um processo encerrado no meio ainda deixa o que já foi escrito):
+#   ##aegis:stage <estágio>   — gravado ANTES de cada passo (é o que diz até onde o processo chegou);
+#   ##aegis:read <json>       — UMA leitura concluída, emitida assim que termina (sobrevive a uma falha posterior);
+#   ##aegis:result <json>     — o resumo final (runtime, conexão, categorias de falha).
+# Qualquer outra linha (aviso de módulo, saída de host) é ignorada pelo AEGIS — não contamina o resultado.
+
+try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+
+function Write-AegisFrame {
+    param([string]$Kind, [string]$Payload)
+    [Console]::Out.WriteLine('##aegis:' + $Kind + ' ' + $Payload)
+    [Console]::Out.Flush()
+}
+
+function Write-AegisStage {
+    param([string]$Name)
+    Write-AegisFrame 'stage' $Name
+}
+
+function Add-AegisRead {
+    <# Registra a leitura no documento e a EMITE imediatamente como quadro próprio. #>
+    param($Record)
+    $script:Reads.Add($Record)
+    Write-AegisFrame 'read' ($Record | ConvertTo-Json -Depth 12 -Compress)
+}
+
+function Write-AegisResult {
+    <# Resumo final. As leituras já saíram em quadros próprios: o resumo não as repete. #>
+    param($Result)
+    Write-AegisStage 'result'
+    $Result.reads = @()
+    Write-AegisFrame 'result' ($Result | ConvertTo-Json -Depth 12 -Compress)
+}
+
 # ---- Utilitários -----------------------------------------------------------------------------------------
 
 function Get-Prop {
@@ -126,26 +163,30 @@ $script:Reads = New-Object System.Collections.Generic.List[object]
 function Invoke-Read {
     <# Executa UMA leitura fixa e registra o desfecho. Uma falha aqui nunca interrompe as demais. #>
     param([string]$Capability, [string]$Command, [scriptblock]$Body)
+    Write-AegisStage ('read ' + $Capability)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $items = @(& $Body)
-        $script:Reads.Add(@{
+        Add-AegisRead @{
             capability    = $Capability
             command       = $Command
             ok            = $true
             items         = $items
             errorCategory = $null
             errorId       = $null
-        })
+            durationMs    = [long]$sw.ElapsedMilliseconds
+        }
     }
     catch {
-        $script:Reads.Add(@{
+        Add-AegisRead @{
             capability    = $Capability
             command       = $Command
             ok            = $false
             items         = @()
             errorCategory = (Get-ErrorCategory $_)
             errorId       = (Get-ErrorId $_)
-        })
+            durationMs    = [long]$sw.ElapsedMilliseconds
+        }
     }
 }
 
@@ -302,14 +343,18 @@ $result = @{
 }
 
 try {
+    Write-AegisStage 'start'
     $result.runtime.powerShell = [string]$PSVersionTable.PSVersion
     $result.runtime.platform = [string]$PSVersionTable.Platform
 
+    Write-AegisStage 'input'
     $raw = [Console]::In.ReadToEnd()
     if ([string]::IsNullOrWhiteSpace($raw)) { throw 'Nenhuma credencial recebida na entrada padrão.' }
     $request = $raw | ConvertFrom-Json
 
+    Write-AegisStage 'import'
     Import-Module MicrosoftTeams -ErrorAction Stop
+    Write-AegisStage 'imported'
     $module = Get-Module MicrosoftTeams
     if ($null -ne $module) { $result.runtime.module = [string]$module.Version }
 
@@ -324,14 +369,13 @@ try {
             'Get-CsTeamsAppPermissionPolicy', 'Get-CsGroupPolicyAssignment')
         foreach ($n in $names) {
             $found = $null -ne (Get-Command $n -Module MicrosoftTeams -ErrorAction SilentlyContinue)
-            $script:Reads.Add(@{
+            Add-AegisRead @{
                 capability = 'ModuleCheck'; command = $n; ok = $found; items = @()
                 errorCategory = $(if ($found) { $null } else { 'Unavailable' })
                 errorId = $(if ($found) { $null } else { 'CommandNotFound' })
-            })
+            }
         }
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        Write-AegisResult $result
         exit 0
     }
 
@@ -342,15 +386,17 @@ try {
     }
 
     try {
+        Write-AegisStage 'connect'
         Connect-MicrosoftTeams -AccessTokens @($graphToken, $teamsToken) -ErrorAction Stop | Out-Null
         $result.connected = $true
+        Write-AegisStage 'connected'
     }
     catch {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $_
         $result.connectionErrorId = Get-ErrorId $_
-        $result.reads = @()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        Write-AegisStage 'connect-failed'
+        Write-AegisResult $result
         exit 0
     }
 
@@ -374,11 +420,11 @@ try {
     finally {
         # A sessão é encerrada SEMPRE: o processo é descartável, mas a conexão com o locatário não pode
         # sobreviver à coleta nem ser reaproveitada por outra.
+        Write-AegisStage 'disconnect'
         try { Disconnect-MicrosoftTeams -Confirm:$false -ErrorAction SilentlyContinue | Out-Null } catch { }
     }
 
-    $result.reads = $script:Reads.ToArray()
-    $result | ConvertTo-Json -Depth 12 -Compress
+    Write-AegisResult $result
     exit 0
 }
 catch {
@@ -388,15 +434,23 @@ catch {
     # sem categoria nem motivo. Por isso a montagem do documento é protegida e, no pior caso, um documento
     # MÍNIMO é escrito à mão: o contrato de saída é sempre honrado.
     $registro = $_
+    # [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Falha DEPOIS da conexão não é falha de conexão: as leituras já emitidas valem,
+    # e o processo sai com código 1 para o AEGIS não declarar a coleta íntegra. Antes da conexão, a falha é classificada
+    # (o estágio declarado diz onde ela aconteceu) e o processo sai com 0, como sempre.
+    $depoisDaConexao = $false
+    try { $depoisDaConexao = [bool]$result.connected } catch { }
     try {
-        $result.connected = $false
-        $result.connectionErrorCategory = Get-ErrorCategory $registro
-        $result.connectionErrorId = Get-ErrorId $registro
-        $result.reads = $script:Reads.ToArray()
-        $result | ConvertTo-Json -Depth 12 -Compress
+        if (-not $depoisDaConexao) {
+            $result.connected = $false
+            $result.connectionErrorCategory = Get-ErrorCategory $registro
+            $result.connectionErrorId = Get-ErrorId $registro
+        }
+        Write-AegisResult $result
     }
     catch {
-        '{"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}'
+        [Console]::Out.WriteLine('##aegis:result {"runtime":{},"connected":false,"connectionErrorCategory":"Error","connectionErrorId":"DocumentoDeResultadoIndisponivel","reads":[]}')
+        [Console]::Out.Flush()
     }
+    if ($depoisDaConexao) { exit 1 }
     exit 0
 }

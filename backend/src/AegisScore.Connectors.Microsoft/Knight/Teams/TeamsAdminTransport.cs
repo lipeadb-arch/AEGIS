@@ -41,7 +41,8 @@ public sealed record TeamsAdminRead(
     bool Ok,
     JsonElement Items,
     string? ErrorCategory,
-    string? ErrorId);
+    string? ErrorId,
+    long? DurationMs = null);
 
 /// <summary>Runtime em que a coleta correu — o que a homologação precisa saber para reproduzir o resultado.</summary>
 public sealed record TeamsAdminRuntime(string? PowerShell, string? Module, string? Platform);
@@ -55,7 +56,8 @@ public sealed record TeamsAdminOutput(
     bool Connected,
     string? ConnectionErrorId,
     string? ConnectionErrorCategory,
-    IReadOnlyList<TeamsAdminRead> Reads);
+    IReadOnlyList<TeamsAdminRead> Reads,
+    AegisScore.Connectors.Microsoft.Knight.PowerShell.PowerShellRunReport? Process = null);
 
 /// <summary>
 /// Falha do TRANSPORTE — antes de qualquer leitura: runtime ausente, processo que não terminou no tempo

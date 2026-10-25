@@ -18,6 +18,15 @@ public enum EntraGraphErrorKind
     InsufficientPermission,
     Throttled,
     Unavailable,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A resposta chegou, mas não segue o contrato documentado (corpo que não é
+    /// JSON, página sem a lista <c>value</c>, próximo link inválido ou fora do host). Não é indisponibilidade do serviço.
+    /// </summary>
+    Contract,
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] A leitura parou no teto de paginação do AEGIS com páginas restantes.</summary>
+    Incomplete,
 }
 
 /// <summary>
@@ -32,17 +41,39 @@ public sealed class EntraGraphException : Exception
     public string? GraphErrorCode { get; }
     public string? EndpointPath { get; }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Identificador da requisição devolvido pelo serviço (<c>request-id</c> do
+    /// Graph, <c>x-ms-request-id</c> do Resource Manager): só um GUID, útil para o suporte do fornecedor, nunca um segredo.
+    /// </summary>
+    public string? ServiceRequestId { get; }
+
     public EntraGraphException(
         EntraGraphErrorKind kind,
         string? detail = null,
         int? httpStatusCode = null,
         string? graphErrorCode = null,
-        string? endpointPath = null) : base(detail)
+        string? endpointPath = null,
+        string? serviceRequestId = null) : base(detail)
     {
         Kind = kind;
         HttpStatusCode = httpStatusCode;
         GraphErrorCode = SanitizeCode(graphErrorCode);
         EndpointPath = SanitizePath(endpointPath);
+        ServiceRequestId = SanitizeRequestId(serviceRequestId);
+    }
+
+    /// <summary>Só um GUID passa; qualquer outro valor de cabeçalho é descartado.</summary>
+    internal static string? SanitizeRequestId(string? value) =>
+        Guid.TryParse(value?.Trim(), out var id) ? id.ToString("D") : null;
+
+    /// <summary>O identificador da requisição nos cabeçalhos da resposta (Graph, Resource Manager, Fabric).</summary>
+    internal static string? RequestIdOf(HttpResponseMessage response)
+    {
+        foreach (var name in new[] { "request-id", "x-ms-request-id", "RequestId" })
+            if (response.Headers.TryGetValues(name, out var values))
+                foreach (var v in values)
+                    if (SanitizeRequestId(v) is { } id) return id;
+        return null;
     }
 
     private static string? SanitizeCode(string? value)
@@ -120,14 +151,19 @@ public sealed class EntraGraphClient : IEntraGraphClient
 
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var resp = await _http.SendAsync(req, ct);
+        var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O endpoint de token devolve 400 para credencial recusada (invalid_client,
+            // unauthorized_client): é falha de AUTENTICAÇÃO, não indisponibilidade — os outros clientes de token já tratavam
+            // assim. O código OAuth curto acompanha o diagnóstico; a descrição (que cita a aplicação) nunca.
             throw new EntraGraphException(
-                Classify(resp.StatusCode),
+                ClassifyToken(resp.StatusCode),
                 $"token endpoint retornou {(int)resp.StatusCode}",
                 (int)resp.StatusCode,
-                endpointPath: "/oauth2/v2.0/token");
+                TryReadOAuthErrorCode(body),
+                endpointPath: "/oauth2/v2.0/token",
+                serviceRequestId: EntraGraphException.RequestIdOf(resp));
 
-        var body = await resp.Content.ReadAsStringAsync(ct);
         JsonDocument doc;
         try
         {
@@ -135,7 +171,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
         catch (JsonException)
         {
-            throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, "resposta do token não é JSON válido");
+            throw new EntraGraphException(EntraGraphErrorKind.Contract, "resposta do token não é JSON válido", (int)resp.StatusCode,
+                endpointPath: "/oauth2/v2.0/token");
         }
 
         using (doc)
@@ -146,7 +183,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
                 && t.GetString() is { Length: > 0 } token)
                 return token;
         }
-        throw new EntraGraphException(EntraGraphErrorKind.AuthFailure, "resposta do token sem access_token válido");
+        throw new EntraGraphException(EntraGraphErrorKind.Contract, "resposta do token sem access_token válido", (int)resp.StatusCode,
+            endpointPath: "/oauth2/v2.0/token");
     }
 
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(
@@ -157,7 +195,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
         while (!string.IsNullOrEmpty(next))
         {
             if (pages >= _maxPages)
-                throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "limite de paginação atingido com páginas restantes");
+                throw new EntraGraphException(EntraGraphErrorKind.Incomplete, "limite de paginação atingido com páginas restantes",
+                    endpointPath: PathOf(next));
 
             ValidateGraphUrl(next!);
             var body = await SendGetAsync(token, next!, ct);
@@ -165,14 +204,14 @@ public sealed class EntraGraphClient : IEntraGraphClient
 
             var pageItems = new List<JsonElement>();
             string? nextLink;
-            using (var doc = ParseOrThrow(body))
+            using (var doc = ParseOrThrow(body, next!))
             {
                 var root = doc.RootElement;
                 if (root.ValueKind != JsonValueKind.Object
                     || !root.TryGetProperty("value", out var arr)
                     || arr.ValueKind != JsonValueKind.Array)
-                    throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
-                        "pagina do Graph sem o array value esperado");
+                    throw new EntraGraphException(EntraGraphErrorKind.Contract,
+                        "pagina do Graph sem o array value esperado", 200, endpointPath: PathOf(next));
 
                 foreach (var item in arr.EnumerateArray())
                     pageItems.Add(item.Clone());
@@ -183,8 +222,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
                     {
                         JsonValueKind.String => nl.GetString(),
                         JsonValueKind.Null => null,
-                        _ => throw new EntraGraphException(EntraGraphErrorKind.Unavailable,
-                            "@odata.nextLink com tipo invalido"),
+                        _ => throw new EntraGraphException(EntraGraphErrorKind.Contract,
+                            "@odata.nextLink com tipo invalido", 200, endpointPath: PathOf(next)),
                     };
                 }
                 else
@@ -204,7 +243,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         var url = BuildGraphUrl(relativeUrl);
         ValidateGraphUrl(url);
         var body = await SendGetAsync(token, url, ct);
-        using var doc = ParseOrThrow(body);
+        using var doc = ParseOrThrow(body, url);
         return doc.RootElement.Clone();
     }
 
@@ -221,7 +260,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
             || !uri.IsDefaultPort
             || !string.IsNullOrEmpty(uri.UserInfo))
         {
-            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "destino de requisicao reprovado pela allowlist do Microsoft Graph");
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Um próximo link fora do host oficial é resposta fora do contrato.
+            throw new EntraGraphException(EntraGraphErrorKind.Contract, "destino de requisicao reprovado pela allowlist do Microsoft Graph");
         }
     }
 
@@ -240,7 +280,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
                 $"graph retornou {(int)resp.StatusCode}",
                 (int)resp.StatusCode,
                 TryReadGraphErrorCode(body),
-                endpointPath);
+                endpointPath,
+                EntraGraphException.RequestIdOf(resp));
         }
         return body;
     }
@@ -266,7 +307,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
     }
 
-    private static JsonDocument ParseOrThrow(string body)
+    private static JsonDocument ParseOrThrow(string body, string url)
     {
         try
         {
@@ -274,9 +315,36 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
         catch (JsonException)
         {
-            throw new EntraGraphException(EntraGraphErrorKind.Unavailable, "resposta do Graph nao e JSON valido");
+            throw new EntraGraphException(EntraGraphErrorKind.Contract, "resposta do Graph nao e JSON valido", 200, endpointPath: PathOf(url));
         }
     }
+
+    private static string? PathOf(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsolutePath : null;
+
+    /// <summary>Código OAuth curto do endpoint de token (<c>error</c>), nunca a descrição.</summary>
+    internal static string? TryReadOAuthErrorCode(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 64_000) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                   && doc.RootElement.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String
+                ? e.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Endpoint de token: 400 e 401 são credencial recusada; 429 é limite; o resto, indisponibilidade.</summary>
+    internal static EntraGraphErrorKind ClassifyToken(HttpStatusCode code) => code switch
+    {
+        HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized => EntraGraphErrorKind.AuthFailure,
+        _ => Classify(code),
+    };
 
     private static EntraGraphErrorKind Classify(HttpStatusCode code) => code switch
     {

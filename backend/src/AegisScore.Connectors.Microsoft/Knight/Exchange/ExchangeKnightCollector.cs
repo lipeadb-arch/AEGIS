@@ -8,6 +8,8 @@ using Microsoft.Extensions.Logging;
 using AegisScore.Application.Knight;
 using AegisScore.Application.Knight.Configuration;
 using AegisScore.Domain;
+using AegisScore.Connectors.Microsoft.Knight.PowerShell;
+using AegisScore.Connectors.Microsoft.Knight.Services;
 
 namespace AegisScore.Connectors.Microsoft.Knight.Exchange;
 
@@ -91,6 +93,7 @@ public sealed class ExchangeKnightCollector : IKnightCollector
         if (context.Configuration is not KnightExchangeOnlineConfiguration cfg)
             return KnightCollectionResult.NotConfigured(Source, Label);
 
+        var correlation = KnightRunCorrelation.New();
         ExchangeAdminCredentials credentials;
         try
         {
@@ -99,6 +102,13 @@ public sealed class ExchangeKnightCollector : IKnightCollector
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (Exception ex) when (ex is not EntraGraphException && !KnightFailureClassifier.IsCallerCancellation(ex, ct))
+        {
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Tempo esgotado, circuito aberto ou transporte ao pedir o token: classificado.
+            var failure = KnightFailureClassifier.Classify(ex, Label, "token", null, correlation);
+            var detail = failure.Reason + " Nenhuma leitura foi tentada.";
+            return Failure(StateFor(failure.Outcome), detail, failure.Outcome, detail, diagnostic: failure.Diagnostic);
         }
         catch (EntraGraphException ex)
         {
@@ -117,7 +127,8 @@ public sealed class ExchangeKnightCollector : IKnightCollector
                 ? "O domínio principal do locatário não pôde ser lido, e a conexão de aplicativo com o Exchange Online exige esse "
                   + "valor. Confira a permissão Organization.Read.All da aplicação. Nenhuma leitura foi tentada."
                 : "Falha ao obter o token de aplicativo do recurso do Exchange Online. Nenhuma leitura foi tentada.";
-            return Failure(tokenState, detail, OutcomeFor(tokenState), detail);
+            return Failure(tokenState, detail, OutcomeFor(tokenState), detail,
+                diagnostic: KnightFailureClassifier.FromHttp(ex, Label, "token", null, correlation).Diagnostic);
         }
 
         ExchangeAdminOutput output;
@@ -131,14 +142,29 @@ public sealed class ExchangeKnightCollector : IKnightCollector
         }
         catch (ExchangeAdminTransportException ex)
         {
-            // A mensagem da exceção carrega o diagnóstico SANITIZADO do processo — útil para o operador, e por
-            // isso vai ao log. O que chega ao ADM e ao relatório é a mensagem CONTROLADA abaixo.
-            _log?.LogWarning(ex, "O adaptador de coleta do Exchange Online não pôde ser executado.");
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Só o que IMPEDIU o processo de começar chega aqui (runtime ausente, recurso
+            // do script): aí, sim, está demonstrado que nenhuma leitura foi tentada. O que acontece depois que o processo começa
+            // vem no relatório do processo — com estágio, código de saída e as leituras já concluídas.
+            _log?.LogWarning(ex, "O adaptador de coleta do Exchange Online não pôde ser iniciado (correlação {CorrelationId}).", correlation);
             const string reason =
-                "O adaptador de coleta do Exchange Online não pôde ser executado neste ambiente: o runtime do "
-                + "PowerShell ou o módulo oficial não respondeu como esperado. Nenhuma leitura foi tentada — e "
-                + "nenhum controle de Exchange Online foi avaliado a partir de coleta vazia.";
-            return Failure(KnightSourceState.Unavailable, reason, KnightCapabilityOutcome.Unavailable, reason);
+                "O adaptador de coleta do Exchange Online não pôde ser iniciado neste ambiente (o runtime do PowerShell não "
+                + "executou). Nenhuma leitura foi tentada — e nenhum controle de Exchange Online foi avaliado a partir de coleta vazia.";
+            return Failure(KnightSourceState.Unavailable, reason, KnightCapabilityOutcome.Unavailable, reason,
+                diagnostic: new KnightCapabilityDiagnostic("process-start", KnightFailureKind.RuntimeUnavailable, CorrelationId: correlation));
+        }
+
+        var process = output.Process;
+        if (output.ConnectionErrorCategory is null && PowerShellRunInterpretation.FailedBeforeReads(process))
+        {
+            var before = PowerShellRunInterpretation.BeforeReads(Label, process!, correlation);
+            return Failure(StateFor(before.Outcome), before.Detail, before.Outcome, before.Detail, output.Runtime, before.Diagnostic);
+        }
+
+        if (!output.Connected && PowerShellRunInterpretation.FailedBeforeConnect(process))
+        {
+            // O script nem tentou conectar (pedido ilegível, módulo que não carregou): a categoria devolvida não é de conexão.
+            var before = PowerShellRunInterpretation.BeforeConnect(Label, process!, output.ConnectionErrorId, correlation);
+            return Failure(StateFor(before.Outcome), before.Detail, before.Outcome, before.Detail, output.Runtime, before.Diagnostic);
         }
 
         if (!output.Connected)
@@ -146,9 +172,11 @@ public sealed class ExchangeKnightCollector : IKnightCollector
             var outcome = ParseOutcome(output.ConnectionErrorCategory) ?? KnightCapabilityOutcome.AuthenticationFailure;
             var reason = ConnectionReason(outcome);
             _log?.LogWarning(
-                "Conexão do adaptador do Exchange Online recusada: Categoria={Categoria}, Diagnostico={Diagnostico}.",
-                output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a");
-            return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime);
+                "Conexão do adaptador do Exchange Online recusada: Categoria={Categoria}, Diagnostico={Diagnostico}, Correlacao={CorrelationId}.",
+                output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a", correlation);
+            return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime,
+                new KnightCapabilityDiagnostic("connect", KnightFailureKind.Connection, process?.DurationMs,
+                    Code: output.ConnectionErrorId, CorrelationId: correlation));
         }
 
         var now = _time.GetUtcNow();
@@ -161,6 +189,14 @@ public sealed class ExchangeKnightCollector : IKnightCollector
         {
             if (!byCapability.TryGetValue(capability.ToString(), out var read))
             {
+                if (process is { Clean: false })
+                {
+                    // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Iniciada e não concluída, não alcançada ou indeterminável — pelo que o
+                    // processo declarou antes de terminar.
+                    var missing = PowerShellRunInterpretation.Missing(capability, Label, process, correlation);
+                    caps.Add(new KnightCapabilityStatus(capability, missing.Outcome, missing.Detail, missing.Diagnostic));
+                    continue;
+                }
                 caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.NotAttempted,
                     "O adaptador não registrou esta leitura nesta execução."));
                 continue;
@@ -169,7 +205,9 @@ public sealed class ExchangeKnightCollector : IKnightCollector
             if (!read.Ok)
             {
                 var outcome = ParseOutcome(read.ErrorCategory) ?? KnightCapabilityOutcome.Error;
-                caps.Add(new KnightCapabilityStatus(capability, outcome, Describe(outcome, read)));
+                caps.Add(new KnightCapabilityStatus(capability, outcome, Describe(outcome, read),
+                    new KnightCapabilityDiagnostic("read " + capability, KnightFailureKind.Command, read.DurationMs,
+                        Code: read.ErrorId, CorrelationId: correlation)));
                 continue;
             }
 
@@ -191,13 +229,15 @@ public sealed class ExchangeKnightCollector : IKnightCollector
             // com motivo, e os controles que dependem delas ficam não avaliados.
             _log?.LogWarning(ex, "Resposta do Exchange Online ilegível para o contrato desta versão.");
             const string reason = "A resposta desta leitura não pôde ser interpretada pelo contrato desta versão.";
-            return Failure(KnightSourceState.Error, reason, KnightCapabilityOutcome.Error, reason, output.Runtime);
+            return Failure(KnightSourceState.Error, reason, KnightCapabilityOutcome.Error, reason, output.Runtime,
+                new KnightCapabilityDiagnostic("parse", KnightFailureKind.Contract, Code: KnightFailureClassifier.SafeTypeName(ex),
+                    CorrelationId: correlation));
         }
 
         var state = DeriveState(caps);
-        return new KnightCollectionResult(
+        return PowerShellRunInterpretation.Qualify(new KnightCollectionResult(
             Source, state, Label, KnightFactSet.Empty, caps, now, DescribeState(state, output),
-            TenantConfiguration: new KnightTenantConfiguration(docs, caps));
+            TenantConfiguration: new KnightTenantConfiguration(docs, caps)), process, Label);
     }
 
     // ---- Tradução: resposta do comando → documento tipado do ADM --------------------------------------
@@ -558,9 +598,9 @@ public sealed class ExchangeKnightCollector : IKnightCollector
     /// </summary>
     private KnightCollectionResult Failure(
         KnightSourceState state, string detail, KnightCapabilityOutcome outcome, string reason,
-        ExchangeAdminRuntime? runtime = null)
+        ExchangeAdminRuntime? runtime = null, KnightCapabilityDiagnostic? diagnostic = null)
     {
-        var caps = Capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason)).ToList();
+        var caps = Capabilities.Select(c => new KnightCapabilityStatus(c, outcome, reason, diagnostic)).ToList();
         return new KnightCollectionResult(
             Source, state, Label, KnightFactSet.Empty, caps, _time.GetUtcNow(),
             detail + (runtime?.Module is { Length: > 0 } m ? $" (módulo {m})" : ""),

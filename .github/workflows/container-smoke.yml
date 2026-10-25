@@ -48,13 +48,40 @@ jobs:
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
           -c Release --filter "FullyQualifiedName~PostureSnapshotExportTests"
 
+      - name: Runner PowerShell version (used by PowerShellFixtureModuleTests below)
+        run: pwsh -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
+
       - name: KNIGHT, NIST, documents and asset context tests on Linux
+        env:
+          # PowerShellFixtureModuleTests executa o pwsh REAL do runner: sem ele o teste FALHA (nunca vira verde vazio).
+          AEGIS_PWSH_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightReadOnlyAccessTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests|FullyQualifiedName~ProductConnectorScopeTests|FullyQualifiedName~RetiredFeaturesTests|FullyQualifiedName~DocumentEvidenceReconcilerTests"
+          -c Release --filter "FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightReadOnlyAccessTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests|FullyQualifiedName~ProductConnectorScopeTests|FullyQualifiedName~RetiredFeaturesTests|FullyQualifiedName~DocumentEvidenceReconcilerTests|FullyQualifiedName~KnightCollectionReliabilityTests|FullyQualifiedName~PowerShellAdapterProtocolTests|FullyQualifiedName~PowerShellFixtureModuleTests"
 
       - name: Build homologation image
         run: docker build -t "$IMAGE" .
+
+      - name: PowerShell adapter scripts on the image's PowerShell runtime (fixture modules, non-root)
+        env:
+          AEGIS_PWSH_GATE_REQUIRED: 'true'
+        run: |
+          set -euo pipefail
+          # Prova o código e o protocolo do AEGIS (scripts embutidos, quadros, interpretação) com os MESMOS binários do pwsh da
+          # imagem; os módulos do fornecedor são substituídos por módulos de FIXTURE. Não prova o módulo oficial (gates abaixo)
+          # nem autenticação/autorização em locatário real.
+          DEST="$RUNNER_TEMP/image-pwsh"
+          rm -rf "$DEST"; mkdir -p "$DEST"
+          CID="$(docker create "$IMAGE")"
+          docker cp "$CID:/opt/microsoft/powershell/." "$DEST/"
+          docker rm "$CID" >/dev/null
+          PWSH="$(find "$DEST" -maxdepth 2 -name pwsh -type f | head -n1)"
+          test -n "$PWSH" || { echo "pwsh da imagem NAO encontrado"; exit 1; }
+          chmod +x "$PWSH"
+          echo "usuario efetivo: $(id -u)"; test "$(id -u)" -ne 0 || { echo "este passo deve rodar sem privilegios"; exit 1; }
+          echo "pwsh da imagem: $("$PWSH" -NoLogo -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()')"
+          AEGIS_TEST_PWSH="$PWSH" dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj \
+            -c Release --no-build --filter "FullyQualifiedName~PowerShellFixtureModuleTests" --logger "console;verbosity=normal"
 
       - name: Teams collection runtime inside the image (real adapter path, non-root, offline)
         run: |
@@ -71,7 +98,7 @@ jobs:
           set -e
           echo "$OUT"
           if [ "$CODE" -ne 0 ]; then echo "runtime do Teams NAO validado (codigo $CODE)"; exit 1; fi
-          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador=OK"; do
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador=OK" "processo (module-check): terminação=Completed" "processo (cenário sintético): terminação=Completed"; do
             case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Teams NAO validado: falta $MARCA"; exit 1;; esac
           done
 
@@ -92,7 +119,7 @@ jobs:
           set -e
           echo "$OUT"
           if [ "$CODE" -ne 0 ]; then echo "runtime do Exchange NAO validado (codigo $CODE)"; exit 1; fi
-          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-exchange=OK"; do
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-exchange=OK" "processo (module-check): terminação=Completed" "processo (cenário sintético): terminação=Completed"; do
             case "$OUT" in *"$MARCA"*) ;; *) echo "runtime do Exchange NAO validado: falta $MARCA"; exit 1;; esac
           done
 
@@ -123,7 +150,7 @@ jobs:
           set -e
           echo "$OUT"
           if [ "$CODE" -ne 0 ]; then echo "runtime de protecao NAO validado (codigo $CODE)"; exit 1; fi
-          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-protecao=OK" "alcance-do-gate: offline, sem locatário" "NÃO PROVADO:"; do
+          for MARCA in "module-check=OK" "coleta-sintetica=OK" "adaptador-protecao=OK" "alcance-do-gate: offline, sem locatário" "NÃO PROVADO:" "processo (module-check): terminação=Completed" "security-compliance=limitação de plataforma detectada antes da sessão"; do
             case "$OUT" in *"$MARCA"*) ;; *) echo "runtime de protecao NAO validado: falta $MARCA"; exit 1;; esac
           done
           case "$OUT" in

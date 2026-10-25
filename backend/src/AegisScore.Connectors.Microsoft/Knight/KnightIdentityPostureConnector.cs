@@ -257,6 +257,8 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         try
         {
             var output = await _teamsReader.TestConnectionAsync(credentials, ct);
+            if (!output.Connected && output.Process is { Clean: false } teamsRun && output.ConnectionErrorCategory is null)
+                return new Probe(false, $"{label}: {ProcessFailureReason(teamsRun)}");
             if (!output.Connected)
                 return new Probe(false, $"{label}: {TeamsConnectionFailureReason(output.ConnectionErrorCategory)}");
 
@@ -303,6 +305,8 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         try
         {
             var output = await _exchangeReader.TestConnectionAsync(credentials, ct);
+            if (!output.Connected && output.Process is { Clean: false } exchangeRun && output.ConnectionErrorCategory is null)
+                return new Probe(false, $"{label}: {ProcessFailureReason(exchangeRun)}");
             if (!output.Connected)
                 return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.ConnectionErrorCategory, cfg.ClientCertificate is not null)}");
 
@@ -434,11 +438,24 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         {
             var exo = await _exchangeTokens.AcquireAsync(cfg, ct);
             string? complianceToken = null;
-            if (purview && _appTokens is not null)
+            // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Sem Security & Compliance PowerShell nesta plataforma: o token nem é pedido.
+            var complianceSupported = _protection!.ComplianceSessionSupported;
+            if (purview && complianceSupported && _appTokens is not null)
                 complianceToken = await _appTokens.AcquireAsync(cfg, ProtectionCollectorBase.ComplianceScope, ct);
             var output = await _protection!.TestConnectionAsync(new ProtectionAdminRequest(profile, exo.Organization, exo.AccessToken, complianceToken), ct);
+            if (!output.Exchange.Connected && output.Exchange.Process is { Clean: false } protectionRun && output.Exchange.ConnectionErrorCategory is null)
+                return new Probe(false, $"{label}: {ProcessFailureReason(protectionRun)}");
             if (!output.Exchange.Connected)
                 return new Probe(false, $"{label}: {ExchangeConnectionFailureReason(output.Exchange.ConnectionErrorCategory, cfg.ClientCertificate is not null)}");
+            if (purview && !complianceSupported)
+            {
+                var exoFailed = output.Exchange.Reads.FirstOrDefault(r => !r.Ok && r.Capability != "PurviewDlpPolicies" && r.Capability != "PurviewLabelPolicies");
+                if (exoFailed is not null)
+                    return new Probe(false, $"{label}: conexão estabelecida, mas a leitura de verificação ({exoFailed.Command}) foi {ExchangeReadFailureReason(exoFailed.ErrorCategory)}");
+                // A credencial foi aceita pela sessão do Exchange Online; DLP e rótulos são uma limitação da plataforma, não da credencial.
+                return new Probe(true, $"{label}: conexão do Exchange Online estabelecida e leitura de verificação confirmada. "
+                    + "DLP e rótulos de confidencialidade: " + ComplianceSessionPlatform.UnsupportedReason);
+            }
             if (purview && !output.ComplianceConnected)
                 return new Probe(false, $"{label}: {ProtectionCollectorBase.ConnectionReason(
                     ProtectionCollectorBase.ParseOutcome(output.ComplianceErrorCategory) ?? KnightCapabilityOutcome.AuthenticationFailure,
@@ -465,6 +482,14 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             return FailedProbe(label, ex);
         }
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O processo do adaptador terminou sem integridade antes de conectar: diz como e em que
+    /// estágio — e que nada se conclui sobre a credencial.
+    /// </summary>
+    private static string ProcessFailureReason(PowerShell.PowerShellRunReport run) =>
+        $"o processo do adaptador {PowerShell.PowerShellRunInterpretation.How(run)}, no estágio "
+        + $"«{PowerShell.PowerShellRunInterpretation.StageLabel(run.LastStage)}». Nenhuma conclusão sobre a credencial é possível.";
 
     private static string GraphFailureReason(EntraGraphException ex) => ex.Kind switch
     {
