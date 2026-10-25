@@ -97,6 +97,8 @@ public static class PowerShellRunInterpretation
         PowerShellTermination.OutputLimit => KnightFailureKind.OutputLimit,
         PowerShellTermination.NonZeroExit => KnightFailureKind.ProcessExit,
         PowerShellTermination.NoResult => KnightFailureKind.ProcessNoResult,
+        PowerShellTermination.OutputIncomplete => KnightFailureKind.Incomplete,
+        PowerShellTermination.Completed when !report.OutputComplete || !report.ResultEmitted => KnightFailureKind.Incomplete,
         _ => KnightFailureKind.Contract,
     };
 
@@ -114,6 +116,11 @@ public static class PowerShellRunInterpretation
                 $"não terminou no tempo limite e foi encerrado pelo AEGIS após {report.DurationMs / 1000} s",
             PowerShellTermination.OutputLimit => "a saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS",
             PowerShellTermination.NoResult => "terminou com código 0 sem emitir o documento de resultado",
+            PowerShellTermination.OutputIncomplete =>
+                "terminou com código 0, mas a saída dele não foi recebida até o fim (a leitura falhou ou o cano não fechou no prazo); "
+                + "só vale o que chegou",
+            PowerShellTermination.Completed when !report.OutputComplete || !report.ResultEmitted =>
+                "não teve a saída recebida por inteiro",
             PowerShellTermination.NonZeroExit => ExitText(report.ExitCode),
             _ => "emitiu registro(s) fora do protocolo do adaptador",
         };

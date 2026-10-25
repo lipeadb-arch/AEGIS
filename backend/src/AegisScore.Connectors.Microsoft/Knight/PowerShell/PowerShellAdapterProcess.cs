@@ -33,6 +33,12 @@ public abstract class PowerShellAdapterOptions
     /// o recebimento: ao alcançá-lo o processo é encerrado e o restante é drenado e descartado.
     /// </summary>
     public int MaxOutputBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>
+    /// Prazo para os canos fecharem depois que o processo terminou (um filho que herdou o cano pode mantê-lo aberto). Passado o
+    /// prazo, a saída é declarada INCOMPLETA. Interno: só os testes o encurtam.
+    /// </summary>
+    internal TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
 }
 
 /// <summary>
@@ -63,6 +69,12 @@ public enum PowerShellTermination
 
     /// <summary>A saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS.</summary>
     OutputLimit = 4,
+
+    /// <summary>
+    /// Código 0, mas a saída padrão NÃO foi recebida até o fim (a leitura falhou ou o cano não fechou no prazo). O que chegou
+    /// vale; o que não chegou não pode ser confirmado — inclusive o próprio resultado.
+    /// </summary>
+    OutputIncomplete = 5,
 }
 
 /// <summary>
@@ -84,7 +96,19 @@ public sealed record PowerShellRunReport(
     string SafeDiagnostics)
 {
     /// <summary>Terminou íntegro: código 0, resultado emitido, saída completa e nenhum quadro malformado.</summary>
-    public bool Clean => Termination == PowerShellTermination.Completed && MalformedFrames == 0;
+    public bool Clean => Termination == PowerShellTermination.Completed && OutputComplete && ResultEmitted && MalformedFrames == 0;
+
+    /// <summary>
+    /// Terminação a partir do que se observou. Saída incompleta vem antes de "sem resultado": sem o fim da saída, a ausência do
+    /// resultado não é conhecida. Só código 0, resultado e saída completa produzem <see cref="PowerShellTermination.Completed"/>.
+    /// </summary>
+    public static PowerShellTermination TerminationOf(bool limitExceeded, bool timedOut, int? exitCode, bool resultEmitted, bool outputComplete) =>
+        limitExceeded ? PowerShellTermination.OutputLimit
+        : timedOut ? PowerShellTermination.TimedOut
+        : exitCode is not 0 ? PowerShellTermination.NonZeroExit
+        : !outputComplete ? PowerShellTermination.OutputIncomplete
+        : !resultEmitted ? PowerShellTermination.NoResult
+        : PowerShellTermination.Completed;
 
     /// <summary>Último estágio declarado pelo script (nulo quando o script não chegou a declarar nenhum).</summary>
     public string? LastStage => Stages.Count == 0 ? null : Stages[^1];
@@ -307,30 +331,30 @@ public sealed class PowerShellAdapterProcess
         {
             // Depois de encerrado (pelo fim normal, pelo tempo ou pelo limite de saída), o processo fecha os canos e os
             // leitores terminam. A espera é limitada para nunca prender a coleta num filho que herdou o cano.
-            await process.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
+            await process.WaitForExitAsync(CancellationToken.None).WaitAsync(_options.DrainTimeout, CancellationToken.None);
         }
         catch (TimeoutException)
         {
             KillTree(process);
         }
 
-        var errors = await stderr.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None).ContinueWith(
+        var errors = await stderr.WaitAsync(_options.DrainTimeout, CancellationToken.None).ContinueWith(
             t => t.IsCompletedSuccessfully ? t.Result : "", TaskScheduler.Default);
-        await stdout.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
+        // Leitura da saída que falhou ou não terminou no prazo: congela o que chegou (nada mais é aceito depois daqui) e a saída
+        // fica INCOMPLETA — nunca vira execução íntegra.
+        await stdout.WaitAsync(_options.DrainTimeout, CancellationToken.None).ContinueWith(_ => { }, TaskScheduler.Default);
+        frames.Freeze();
 
         int? exitCode = process.HasExited ? process.ExitCode : null;
         var safe = PowerShellDiagnosticScrubber.Scrub(errors.Trim(), knownSecrets);
         var noise = PowerShellDiagnosticScrubber.Scrub(frames.NoiseSample.Trim(), knownSecrets);
 
-        var termination = frames.LimitExceeded ? PowerShellTermination.OutputLimit
-            : timedOut ? PowerShellTermination.TimedOut
-            : exitCode is not 0 ? PowerShellTermination.NonZeroExit
-            : frames.Result is null ? PowerShellTermination.NoResult
-            : PowerShellTermination.Completed;
+        var outputComplete = !frames.LimitExceeded && frames.ReachedEnd;
+        var termination = PowerShellRunReport.TerminationOf(frames.LimitExceeded, timedOut, exitCode, frames.Result is not null, outputComplete);
 
         var report = new PowerShellRunReport(
             termination, exitCode, frames.Stages, frames.StartedReads, frames.FinishedReads, frames.Result is not null,
-            OutputComplete: !frames.LimitExceeded && frames.ReachedEnd,
+            OutputComplete: outputComplete,
             (long)clock.Elapsed.TotalMilliseconds, frames.NoiseLines, frames.Malformed, safe);
 
         if (safe.Length > 0)
@@ -411,8 +435,10 @@ public sealed class PowerShellAdapterProcess
         private readonly List<JsonObject> _reads = new();
         private readonly StringBuilder _noise = new();
         private readonly MemoryStream _line = new();
+        private readonly object _gate = new();
         private bool _lineIsNoise;
         private bool _streamStart = true;
+        private bool _frozen;
         private long _total;
 
         public FrameCollector(int maxBytes, Action kill)
@@ -431,6 +457,16 @@ public sealed class PowerShellAdapterProcess
         public bool ReachedEnd { get; private set; }
         public string NoiseSample => _noise.ToString();
 
+        /// <summary>
+        /// Encerra a aceitação: o que chegou até aqui é o que vale, e um leitor que ainda esteja ativo (cano mantido aberto por
+        /// um filho) não altera mais o estado enquanto o relatório e o documento são montados. Sem fim alcançado, a saída fica
+        /// incompleta.
+        /// </summary>
+        public void Freeze()
+        {
+            lock (_gate) _frozen = true;
+        }
+
         public async Task ReadAsync(Stream stream)
         {
             var buffer = new byte[ChunkBytes];
@@ -439,37 +475,44 @@ public sealed class PowerShellAdapterProcess
                 int read;
                 try { read = await stream.ReadAsync(buffer.AsMemory()); }
                 catch (Exception ex) when (ex is IOException or ObjectDisposedException) { return; }
-                if (read == 0)
+                lock (_gate)
                 {
-                    if (!LimitExceeded)
+                    if (_frozen) { if (read == 0) return; continue; } // relatório já montado: drena e descarta
+                    if (read == 0)
                     {
-                        if (_line.Length > 0 || _lineIsNoise) FinishLine(); // última linha sem quebra
-                        ReachedEnd = true;
+                        if (!LimitExceeded)
+                        {
+                            if (_line.Length > 0 || _lineIsNoise) FinishLine(); // última linha sem quebra
+                            ReachedEnd = true;
+                        }
+                        return;
                     }
-                    return;
+                    if (LimitExceeded) continue; // processo já encerrado: drena no mesmo bloco fixo e descarta
+                    Receive(buffer.AsSpan(0, read));
                 }
-                if (LimitExceeded) continue; // processo já encerrado: drena no mesmo bloco fixo e descarta
-
-                var chunk = buffer.AsSpan(0, read);
-                if (_streamStart)
-                {
-                    _streamStart = false;
-                    if (chunk.StartsWith(Bom)) chunk = chunk[Bom.Length..];
-                }
-
-                var room = _maxBytes - _total;
-                _total += chunk.Length;
-                if (chunk.Length > room)
-                {
-                    // Aceita só o que cabe: linhas completas dentro do teto valem; a linha cortada no meio é descartada.
-                    Consume(chunk[..(int)room]);
-                    LimitExceeded = true;
-                    _line.SetLength(0);
-                    _kill();
-                    continue;
-                }
-                Consume(chunk);
             }
+        }
+
+        private void Receive(ReadOnlySpan<byte> chunk)
+        {
+            if (_streamStart)
+            {
+                _streamStart = false;
+                if (chunk.StartsWith(Bom)) chunk = chunk[Bom.Length..];
+            }
+
+            var room = _maxBytes - _total;
+            _total += chunk.Length;
+            if (chunk.Length > room)
+            {
+                // Aceita só o que cabe: linhas completas dentro do teto valem; a linha cortada no meio é descartada.
+                Consume(chunk[..(int)room]);
+                LimitExceeded = true;
+                _line.SetLength(0);
+                _kill();
+                return;
+            }
+            Consume(chunk);
         }
 
         private void Consume(ReadOnlySpan<byte> data)

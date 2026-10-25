@@ -57,7 +57,8 @@ public sealed class PowerShellAdapterProtocolTests
     }
 
     /// <summary>Um "pwsh" auxiliar: escreve as linhas dadas na saída padrão, opcionalmente inunda o erro-padrão, dorme e sai.</summary>
-    private static string Helper(IEnumerable<string> stdout, int exitCode, int stderrLines = 0, int noiseLines = 0, int sleepSeconds = 0)
+    private static string Helper(IEnumerable<string> stdout, int exitCode, int stderrLines = 0, int noiseLines = 0, int sleepSeconds = 0,
+        int holdPipeSeconds = 0)
     {
         var dir = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "aegis-ps-proto-" + Guid.NewGuid().ToString("n"))).FullName;
         var lines = stdout.ToList();
@@ -68,6 +69,7 @@ public sealed class PowerShellAdapterProtocolTests
             if (noiseLines > 0) sb.Append($"for /L %%i in (1,1,{noiseLines}) do echo ruido-de-host-linha-%%i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n");
             if (stderrLines > 0) sb.Append($"for /L %%i in (1,1,{stderrLines}) do echo diagnostico-do-modulo-linha-%%i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx 1>&2\r\n");
             if (sleepSeconds > 0) sb.Append($"ping -n {sleepSeconds + 1} 127.0.0.1 > nul\r\n");
+            if (holdPipeSeconds > 0) sb.Append($"start \"\" /b ping -n {holdPipeSeconds + 1} 127.0.0.1\r\n");
             sb.Append($"exit /b {exitCode}\r\n");
             var cmd = Path.Combine(dir, "pwsh-auxiliar.cmd");
             File.WriteAllText(cmd, sb.ToString(), new UTF8Encoding(false));
@@ -79,6 +81,7 @@ public sealed class PowerShellAdapterProtocolTests
         if (noiseLines > 0) sh.Append($"i=0; while [ $i -lt {noiseLines} ]; do echo \"ruido-de-host-linha-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"; i=$((i+1)); done\n");
         if (stderrLines > 0) sh.Append($"i=0; while [ $i -lt {stderrLines} ]; do echo \"diagnostico-do-modulo-linha-$i-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" >&2; i=$((i+1)); done\n");
         if (sleepSeconds > 0) sh.Append($"sleep {sleepSeconds}\n");
+        if (holdPipeSeconds > 0) sh.Append($"sleep {holdPipeSeconds} &\n");
         sh.Append($"exit {exitCode}\n");
         var path = Path.Combine(dir, "pwsh-auxiliar.sh");
         File.WriteAllText(path, sh.ToString(), new UTF8Encoding(false));
@@ -86,12 +89,13 @@ public sealed class PowerShellAdapterProtocolTests
         return path;
     }
 
-    private static PowerShellTeamsAdminReader Reader(string executable, TimeSpan? timeout = null, int? maxOutput = null) =>
+    private static PowerShellTeamsAdminReader Reader(string executable, TimeSpan? timeout = null, int? maxOutput = null, TimeSpan? drain = null) =>
         new(new TeamsPowerShellOptions
         {
             Executable = executable,
             Timeout = timeout ?? TimeSpan.FromSeconds(60),
             MaxOutputBytes = maxOutput ?? 16 * 1024 * 1024,
+            DrainTimeout = drain ?? TimeSpan.FromSeconds(30),
         });
 
     private static Task<KnightCollectionResult> Collect(PowerShellTeamsAdminReader reader) =>
@@ -391,5 +395,79 @@ public sealed class PowerShellAdapterProtocolTests
             JsonNode.Parse(frames.Document()!)!["reads"]![0]!["items"]![0]!["identity"]!.GetValue<string>()
                 .Should().Be(new string('ç', 300));
         }
+    }
+
+    // ── Saída incompleta nunca é execução íntegra ─────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reprodução: código 0, resultado emitido e terminação "Completed", mas a saída padrão não chegou ao fim. Antes, Clean
+    /// ignorava OutputComplete e devolvia true — coletores e gates tratavam a execução como íntegra.
+    /// </summary>
+    [Fact]
+    public void RelatorioComSaidaIncompleta_NuncaEhIntegro()
+    {
+        var report = new PowerShellRunReport(PowerShellTermination.Completed, 0, new[] { "start", "result" }, Array.Empty<string>(),
+            Array.Empty<string>(), ResultEmitted: true, OutputComplete: false, 10, 0, 0, "");
+
+        report.Clean.Should().BeFalse("a saída não foi recebida por inteiro");
+        PowerShellRunInterpretation.KindOf(report).Should().Be(KnightFailureKind.Incomplete);
+    }
+
+    /// <summary>A terminação só é "Completed" com código 0, resultado E saída completa; o caso positivo continua íntegro.</summary>
+    [Fact]
+    public void Terminacao_SaidaIncompletaVemAntesDeSemResultado_ECasoPositivoPreservado()
+    {
+        PowerShellRunReport.TerminationOf(false, false, 0, resultEmitted: true, outputComplete: false)
+            .Should().Be(PowerShellTermination.OutputIncomplete);
+        PowerShellRunReport.TerminationOf(false, false, 0, resultEmitted: false, outputComplete: false)
+            .Should().Be(PowerShellTermination.OutputIncomplete, "sem o fim da saída, a ausência do resultado não é conhecida");
+        PowerShellRunReport.TerminationOf(false, false, 3, resultEmitted: true, outputComplete: false)
+            .Should().Be(PowerShellTermination.NonZeroExit);
+        PowerShellRunReport.TerminationOf(false, false, 0, resultEmitted: false, outputComplete: true)
+            .Should().Be(PowerShellTermination.NoResult);
+        PowerShellRunReport.TerminationOf(false, false, 0, resultEmitted: true, outputComplete: true)
+            .Should().Be(PowerShellTermination.Completed);
+        PowerShellRunReport.CleanRun().Clean.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Processo REAL que termina com código 0 e resultado, mas um filho herda a saída padrão e a mantém aberta: o cano não fecha
+    /// no prazo de drenagem. A execução é declarada INCOMPLETA (não "terminou normalmente"); a leitura concluída antes vale, as
+    /// demais não são afirmadas e a coleta fica parcial. O gate da imagem reprova a mesma execução.
+    /// </summary>
+    [Fact]
+    public async Task SaidaNaoRecebidaAteOFim_ColetaParcial_LeiturasConcluidasPreservadas_EGateReprova()
+    {
+        var helper = Helper(Connected.Append("##aegis:stage read TeamsClientConfiguration").Append(ReadClient)
+            .Append("##aegis:stage disconnect").Append(Result), 0, holdPipeSeconds: 15);
+        var clock = Stopwatch.StartNew();
+
+        var output = await Reader(helper, drain: TimeSpan.FromSeconds(1)).ReadAsync(new TeamsAdminCredentials("dir", "g", "t"));
+
+        clock.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10), "o prazo de drenagem do teste é de 1 s");
+        var report = output.Process!;
+        report.ExitCode.Should().Be(0);
+        report.ResultEmitted.Should().BeTrue();
+        report.OutputComplete.Should().BeFalse();
+        report.Termination.Should().Be(PowerShellTermination.OutputIncomplete);
+        report.Clean.Should().BeFalse();
+        output.Reads.Should().ContainSingle(r => r.Capability == "TeamsClientConfiguration" && r.Ok);
+
+        var gate = new StringWriter();
+        PowerShellRunInterpretation.CheckProcess(gate, report, "cenário sintético").Should().BeFalse();
+        gate.ToString().Should().Contain("terminação=OutputIncomplete").And.Contain("FALHA").And.Contain("não foi recebida até o fim");
+
+        var result = await Collect(Reader(Helper(Connected.Append("##aegis:stage read TeamsClientConfiguration").Append(ReadClient)
+            .Append("##aegis:stage disconnect").Append(Result), 0, holdPipeSeconds: 15), drain: TimeSpan.FromSeconds(1)));
+
+        Cap(result, KnightCapability.TeamsClientConfiguration).Outcome.Should().Be(KnightCapabilityOutcome.Collected,
+            "a leitura terminou e emitiu o próprio registro antes do corte");
+        var federation = Cap(result, KnightCapability.TeamsFederationConfiguration);
+        federation.Outcome.Should().Be(KnightCapabilityOutcome.Error);
+        federation.Detail.Should().Contain("não é possível determinar").And.Contain("não foi recebida até o fim");
+        federation.Diagnostic!.Kind.Should().Be(KnightFailureKind.Incomplete);
+        result.State.Should().Be(KnightSourceState.PartialCollection, "saída incompleta nunca é coleta concluída");
+        result.Detail.Should().Contain("não foi recebida até o fim").And.Contain("não é declarada íntegra");
+        result.Detail.Should().NotContain("terminou normalmente");
     }
 }
