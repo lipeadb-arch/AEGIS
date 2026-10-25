@@ -36,6 +36,7 @@ import { KnightCoverageComponent } from '../components/knight/knight-coverage.co
 /** [AEGIS-KNIGHT-PRESENTATION-01] Abas da avaliação. */
 type KnightPageTab = 'overview' | 'controls' | 'coverage' | 'glossary';
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
+import { advisoryOrigin } from '../models/knight-summary.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
 import { KnightRunTimeoutError, KnightService } from '../services/knight.service';
 import {
@@ -81,7 +82,7 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
           </h1>
           <p class="page-desc">
             Avaliação determinística das configurações de segurança dos provedores conectados: o que favorece
-            exposição, as contas, aplicações e configurações envolvidas e o que fazer. Vereditos por regras; interpretação assistida por IA.
+            exposição, as contas, aplicativos e configurações envolvidas e o que fazer. Vereditos por regras determinísticas; interpretação consultiva à parte.
           </p>
           <p class="page-meta">
             Fontes: Microsoft Entra ID, Microsoft 365 (Teams, Exchange Online, Defender para Office 365, Purview, SharePoint e
@@ -193,7 +194,7 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
         @if (hasMultipleSources()) {
           <nav class="panel sources" aria-label="Fonte avaliada">
             <div class="sources-hd">
-              <p class="sources-title">Fontes avaliadas</p>
+              <p class="sources-title">Fontes e última avaliação de cada uma</p>
               @if (!consolidatedMode()) {
                 <button type="button" class="btn ghost" (click)="showConsolidated()">Ver relatório consolidado</button>
               } @else {
@@ -349,25 +350,22 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
           @if (tab() === 'overview') {
             <div role="tabpanel" aria-labelledby="knight-tab-overview" class="tabpanel">
               <app-knight-overview [assessment]="a" [summary]="summary()" [summaryState]="summaryState()" [coverage]="referenceCoverage()"
-                                   (filter)="openControls($event)" (open)="openControl($event)" />
+                                   (filter)="openControls($event)" (open)="openControl($event)">
 
-              <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
-                   conta própria — ele NÃO pertence à avaliação aberta acima. -->
-              <app-identity-risk-panel [projection]="riskProjection()" />
-
+              <!-- [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Interpretação consultiva: a origem é a do conteúdo que existe (IA ou resumo
+                   determinístico do AEGIS). Sem conteúdo, um estado vazio curto — nunca um "fallback" anunciado e vazio. -->
+              @let origin = advisoryOrigin(a, !unfinishedView());
               <div class="panel ai">
                 <div class="hd">
-                  <h3>Interpretação e priorização assistidas por IA</h3>
+                  <h3>Interpretação consultiva</h3>
                   @if (unfinishedView()) {
                     <span class="src fallback">Execução não finalizada</span>
-                  } @else {
-                  <span class="src" [class.fallback]="!a.advisoryFromAi">
-                    {{ a.advisoryFromAi ? 'Gerado por IA' : 'Fallback determinístico (IA indisponível)' }}
-                  </span>
+                  } @else if (origin.label) {
+                    <span class="src" [class.fallback]="origin.kind !== 'ai'">{{ origin.label }}</span>
                   }
                 </div>
+                @if (origin.kind !== 'none' && a.advisory; as ai) {
                 <p class="muted ai-note">Consultiva: não altera nota, resultado, severidade nem mapeamento.</p>
-                @if (a.advisory; as ai) {
                   <p class="summary-txt">{{ ai.executiveSummary }}</p>
                   @if (ai.priorityRisks.length) {
                     <div class="ai-block"><h4>Riscos prioritários</h4><ol>
@@ -392,10 +390,15 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
                   <p class="summary-txt muted">
                     {{ unfinishedView()
                       ? 'Nenhuma narrativa consultiva foi registrada: a execução não foi finalizada.'
-                      : 'Sem interpretação disponível para esta avaliação.' }}
+                      : 'Nenhuma interpretação registrada para esta avaliação. Os resultados acima são determinísticos e não dependem dela.' }}
                   </p>
                 }
               </div>
+
+              <!-- [AEGIS-MVP-PRODUCT-02] O painel abaixo lê o snapshot ATUAL da Evidence Fabric e diz isso por
+                   conta própria — ele NÃO pertence à avaliação aberta acima. -->
+              <app-identity-risk-panel [projection]="riskProjection()" />
+              </app-knight-overview>
             </div>
           } @else if (tab() === 'coverage') {
             <div role="tabpanel" aria-labelledby="knight-tab-coverage" class="tabpanel">
@@ -980,6 +983,7 @@ export class AegisKnightComponent implements OnInit {
   // Helpers de apresentação (funções puras do modelo) expostos ao template.
   protected readonly sourceTypeLabel = sourceTypeLabel;
   protected readonly sourceStateLabel = sourceStateLabel;
+  protected readonly advisoryOrigin = advisoryOrigin;
   protected readonly isProblemState = isProblemState;
   protected consolidatedText(sources: KnightConsolidatedSource[]): string {
     return consolidatedCollection(sources).text;

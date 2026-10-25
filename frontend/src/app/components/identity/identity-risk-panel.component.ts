@@ -37,16 +37,18 @@ import {
   template: `
   <!-- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade — SEPARADO dos indicadores pontuáveis.
        Nada aqui altera o AEGIS Score nem o AEGIS KNIGHT Score, e nada aqui identifica uma pessoa. -->
-  <section class="panel risk" aria-labelledby="identity-risk-title">
+  <section class="panel risk current" aria-labelledby="identity-risk-title">
     <div class="hd">
-      <h3 id="identity-risk-title">Risco de identidade</h3>
-      <span class="hint">Microsoft Entra ID Protection · consultivo · leitura ATUAL do snapshot</span>
+      <h3 id="identity-risk-title">Risco de identidade · leitura atual</h3>
+      <span class="hint">Microsoft Entra ID Protection · consultivo · @if (projection()?.collectedAt; as at) { coletado em {{ at | date: 'dd/MM/yyyy HH:mm' }} } @else { sem coleta registrada }</span>
     </div>
 
     <!-- [AEGIS-MVP-PRODUCT-02] Fronteira explícita: esta seção é a fotografia de HOJE, não a avaliação
-         histórica que a tela possa ter aberto acima. Ler uma como prova da outra é o erro que isto evita. -->
+         histórica que a tela possa ter aberto acima. Ler uma como prova da outra é o erro que isto evita.
+         [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Separação também visual (moldura própria) e data no cabeçalho. -->
     <p class="now-line">
-      Leitura <b>ATUAL</b> do snapshot de identidade — não pertence a nenhuma avaliação KNIGHT aberta acima.
+      Leitura <b>ATUAL</b> do snapshot de identidade — não pertence a nenhuma avaliação KNIGHT aberta acima, não entra na nota
+      nem na cobertura, e as limitações dela estão nesta seção.
     </p>
 
     <p class="risk-lead">{{ message() }}</p>
@@ -174,6 +176,7 @@ import {
 :host { display: block; margin-top: 16px; }
 .panel { border: 1px solid var(--line); border-radius: 14px; background: rgba(122, 145, 190, 0.03); padding: 18px; }
 .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.risk.current { border-style: dashed; border-color: color-mix(in srgb, var(--violet-text) 45%, var(--line)); background: color-mix(in srgb, var(--violet-text) 4%, var(--panel)); }
 .now-line { font-family: var(--sans); font-size: var(--fs-meta); color: var(--muted); margin: 0 0 10px; }
 .now-line b { color: var(--cyan); }
 .hd h3 { margin: 0; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--text); }

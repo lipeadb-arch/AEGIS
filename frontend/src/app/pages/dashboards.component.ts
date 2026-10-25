@@ -9,9 +9,6 @@ import { MonthlyEvolutionComponent } from '../components/monthly-evolution.compo
 import {
   ChartSpec,
   knightCoverageDonut,
-  knightDomainBars,
-  knightServiceStacked,
-  knightSeverityColumns,
   nistFunctionColumns,
   nistGapBars,
   nistProgressStacked,
@@ -31,6 +28,7 @@ import {
   scoreText,
 } from '../models/dashboards.models';
 import { KnightAssessment, KnightSourceLatest, KnightSourceType, overviewKpis, sourceTypeLabel } from '../models/knight.models';
+import { IncludedSource, findingQuery, priorityViews, scoreCoverage, sourceInclusion } from '../models/knight-summary.models';
 import {
   NistAssessment,
   NistCorrelationRow,
@@ -134,21 +132,22 @@ function days(iso: string | null | undefined, now: Date): number | null {
               @let r = knightRead();
               @let st = knightState();
               @let k = knightKpis();
-              <div class="metrics">
-                <div class="metric" [class.is-void]="a.score === null" [class.is-partial]="st.tone === 'warn'">
+              @let sc = knightScore()!;
+              @let inc = knightInclusion()!;
+              <!-- [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Resumo do KNIGHT: incluir uma fonte não é avaliá-la; a nota fica ao lado
+                   da cobertura (com aviso quando parcial) e as prioridades são uma síntese com acesso ao detalhe. -->
+              <p class="incl"><strong>{{ inc.text }}</strong>
+                @if (inc.withoutEvaluated.length) { <span class="muted"> · sem controle avaliado: {{ labelsOf(inc.withoutEvaluated) }}</span> }</p>
+              <div class="metrics k3">
+                <div class="metric" [class.is-void]="sc.score === null" [class.is-partial]="sc.score !== null && sc.partial">
                   <span class="metric-label">Nota KNIGHT</span>
-                  <span class="metric-value" [class.is-na]="a.score === null">{{ scoreText(a.score) }}@if (a.score !== null) {<small>/100</small>}</span>
-                  <span class="metric-unit">{{ a.score === null ? 'Sem controle avaliado: não há nota.' : 'Pondera severidade e resultado dos controles avaliados.' }}</span>
-                </div>
-                <div class="metric">
-                  <span class="metric-label">Cobertura da avaliação</span>
-                  <span class="metric-value">{{ pctText(a.coverage) }}</span>
-                  <span class="metric-unit">{{ k!.evaluated }} de {{ k!.evaluated + k!.notEvaluated + k!.errors }} controles aplicáveis avaliados</span>
+                  <span class="metric-value" [class.is-na]="sc.score === null">{{ scoreText(sc.score) }}@if (sc.score !== null) {<small>/100</small>}</span>
+                  <span class="metric-unit">{{ sc.score === null ? 'Sem controle avaliado: não há nota.' : 'Cobertura ' + pctText(sc.coverage) + ' · ' + sc.fraction }}</span>
                 </div>
                 <div class="metric">
                   <span class="metric-label">Controles reprovados</span>
                   <span class="metric-value">{{ k!.failed }}</span>
-                  <span class="metric-unit">{{ k!.mitigated }} mitigado(s) com atenção · {{ k!.total }} controle(s) no escopo</span>
+                  <span class="metric-unit">{{ k!.mitigated }} mitigado(s) com atenção · {{ k!.notEvaluated + k!.errors }} sem avaliação · {{ k!.total }} no escopo</span>
                 </div>
                 <div class="metric" [class.is-partial]="st.tone === 'warn'" [class.is-void]="st.tone === 'neutral'">
                   <span class="metric-label">Avaliação</span>
@@ -157,12 +156,30 @@ function days(iso: string | null | undefined, now: Date): number | null {
                     @for (l of r!.labels; track l) { <span class="metric-src">{{ l }}</span> }</span>
                 </div>
               </div>
+              @if (sc.warning) { <p class="notice warn" role="note">{{ sc.warning }}</p> }
               @if (consolidatedBlock().loading && knightView()!.kind === 'consolidated') {
                 <p class="muted" role="status">Atualizando o consolidado…</p>
               }
               <div class="charts2">
                 <app-chart [spec]="knightCharts()!.coverage" />
-                <app-chart [spec]="knightCharts()!.services" />
+                <div class="prio">
+                  <h3 class="sub-h">Prioridades</h3>
+                  @if (knightPriorities().length === 0) {
+                    <p class="muted">Nenhum controle reprovado.@if (k!.notEvaluated + k!.errors > 0) { {{ k!.notEvaluated + k!.errors }} controle(s) sem avaliação: isso não indica ausência de risco. }</p>
+                  } @else {
+                    <ol class="prio-list">
+                      @for (p of knightPriorities(); track p.id) {
+                        <li>
+                          <span class="sevpill" [class]="p.severity">{{ p.severityLabel }}</span>
+                          <a routerLink="/knight" [queryParams]="p.query">{{ p.title }}</a>
+                          <span class="muted">{{ p.service }}@if (p.affected) { · {{ p.affected }} }</span>
+                        </li>
+                      }
+                    </ol>
+                    <p class="muted note">Controles reprovados por severidade e quantidade afetada · {{ k!.failed }} no total.</p>
+                  }
+                  <a class="linknav" routerLink="/knight" [queryParams]="knightDetailQuery()">Ver o detalhamento no KNIGHT →</a>
+                </div>
               </div>
               <details class="more">
                 <summary>Composição das fontes ({{ compositionRows().length }})</summary>
@@ -387,9 +404,9 @@ function days(iso: string | null | undefined, now: Date): number | null {
 
       <!-- ============================== Atenção ============================== -->
       <section class="panel" aria-labelledby="m-att">
-        <div class="hd"><h3 id="m-att">Necessidades de atenção</h3><span class="hint">critérios do KNIGHT, do NIST e prazo dos planos</span></div>
+        <div class="hd"><h3 id="m-att">Necessidades de atenção</h3><span class="hint">lacunas do NIST e prazo dos planos · prioridades do KNIGHT no bloco acima</span></div>
         @if (attention().length === 0) {
-          <p class="muted">Nada pendente pelos critérios atuais: nenhum controle reprovado, nenhuma lacuna com achado aberto e nenhum plano atrasado.</p>
+          <p class="muted">Nada pendente por estes critérios: nenhuma lacuna com achado aberto e nenhum plano atrasado.</p>
         } @else {
           <ul class="att">
             @for (i of attention(); track $index) {
@@ -399,7 +416,7 @@ function days(iso: string | null | undefined, now: Date): number | null {
               </li>
             }
           </ul>
-          <p class="muted note">KNIGHT: controles reprovados por severidade e itens afetados. NIST: maiores lacunas confirmadas com achado aberto. Planos: prazo vencido.</p>
+          <p class="muted note">NIST: maiores lacunas confirmadas com achado aberto. Planos: prazo vencido. As prioridades do KNIGHT ficam no bloco do KNIGHT.</p>
         }
       </section>
 
@@ -416,15 +433,7 @@ function days(iso: string | null | undefined, now: Date): number | null {
       </section>
 
       <!-- ============================== Detalhes por módulo ============================== -->
-      @if (knightAssessment() && knightCharts(); as kc) {
-        <details class="panel more-section">
-          <summary><h3>KNIGHT · severidades e domínios</h3></summary>
-          <div class="charts2">
-            <app-chart [spec]="kc.severity" />
-            <app-chart [spec]="kc.domains" />
-          </div>
-        </details>
-      }
+      <!-- [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Severidades, domínios e serviços do KNIGHT ficam na própria página do módulo. -->
       @if (nistCharts(); as nc) {
         <details class="panel more-section">
           <summary><h3>NIST · perfil, andamento e lacunas</h3></summary>
@@ -452,6 +461,16 @@ function days(iso: string | null | undefined, now: Date): number | null {
       .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }
       .metric-value small { font-size: 0.5em; color: var(--muted); font-weight: 600; margin-left: 2px; }
       .metric-value.sm { font-size: 22px; }
+      .metrics.k3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+      .incl { margin: 0; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+      .sub-h { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text-2); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+      .prio { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+      .prio-list { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
+      .prio-list li > a { font-weight: 600; overflow-wrap: anywhere; }
+      .prio-list li > .muted { display: block; font-size: var(--fs-meta); overflow-wrap: anywhere; }
+      .sevpill { display: inline-block; margin-right: 6px; padding: 0 8px; border: 1px solid currentColor; border-radius: var(--radius-pill); font-size: var(--fs-caps); font-weight: 600; }
+      .sevpill.Critical { color: var(--red-text); } .sevpill.High { color: #ff9a3d; } .sevpill.Medium { color: var(--amber); }
+      .sevpill.Low { color: var(--cyan); } .sevpill.Informational { color: var(--text-2); }
       .charts2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--sp-4); }
       .more summary, .more-section summary { cursor: pointer; }
       .more-section { margin-top: var(--sp-4); }
@@ -537,7 +556,7 @@ export class DashboardsComponent {
   protected readonly consolidatedOption = computed(() => {
     const d = defaultKnightView(this.knight().value ?? []);
     if (!d || d.view.kind !== 'consolidated') return null;
-    return { key: knightViewKey(d.view), label: `Consolidado — ${d.view.sources.length} fonte(s) elegíveis avaliadas` };
+    return { key: knightViewKey(d.view), label: `Consolidado — ${d.view.sources.length} fonte(s) com avaliação concluída` };
   });
 
   protected readonly knightAssessment = computed<KnightAssessment | null>(() => {
@@ -557,9 +576,29 @@ export class DashboardsComponent {
   protected readonly knightState = computed(() => knightStateLabel(this.knightRead()));
   protected readonly knightCharts = computed(() => {
     const a = this.knightAssessment();
-    return a
-      ? { coverage: knightCoverageDonut(a), services: knightServiceStacked(a), severity: knightSeverityColumns(a), domains: knightDomainBars(a) }
-      : null;
+    return a ? { coverage: knightCoverageDonut(a) } : null;
+  });
+  /** [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Nota ao lado da cobertura, fontes incluídas × avaliadas e síntese das prioridades. */
+  protected readonly knightScore = computed(() => {
+    const a = this.knightAssessment();
+    return a ? scoreCoverage(a) : null;
+  });
+  protected readonly knightInclusion = computed(() => {
+    const a = this.knightAssessment();
+    return a ? sourceInclusion(a) : null;
+  });
+  private readonly runBySource = computed<Partial<Record<KnightSourceType, string>>>(() =>
+    Object.fromEntries((this.knight().value ?? []).filter((s) => s.assessment).map((s) => [s.source, s.assessment!.id])),
+  );
+  protected readonly knightPriorities = computed(() => {
+    const a = this.knightAssessment();
+    return a ? priorityViews(a, 3).map((p) => ({ ...p, query: findingQuery(a, p.id, this.runBySource()) })) : [];
+  });
+  /** O detalhe abre a mesma avaliação (ou o modo consolidado) na visão geral do KNIGHT. */
+  protected readonly knightDetailQuery = computed<Record<string, string | null>>(() => {
+    const a = this.knightAssessment();
+    const consolidated = a?.sourceType === 'Consolidated';
+    return { run: a && !consolidated ? a.id : null, modo: consolidated ? 'consolidado' : null };
   });
 
   /** Composição: as fontes do consolidado (incluídas, disponíveis ou nunca avaliadas) e, à parte, as que não entram nele. */
@@ -613,14 +652,9 @@ export class DashboardsComponent {
   });
 
   protected readonly treatment = computed(() => planTreatment(this.plans().value ?? [], this.planFilter()));
+  /** Lacunas do NIST e planos atrasados; as prioridades do KNIGHT aparecem uma vez só, no bloco do KNIGHT. */
   protected readonly attention = computed(() =>
-    attentionItems(
-      this.knightAssessment(),
-      this.profile().value ? { gaps: this.profile().value!.gaps, query: this.nistQuery() } : null,
-      this.plans().value ?? [],
-      6,
-      Object.fromEntries((this.knight().value ?? []).filter((s) => s.assessment).map((s) => [s.source, s.assessment!.id])),
-    ),
+    attentionItems(null, this.profile().value ? { gaps: this.profile().value!.gaps, query: this.nistQuery() } : null, this.plans().value ?? [], 6),
   );
 
   protected readonly freshness = computed(() => {
@@ -814,6 +848,10 @@ export class DashboardsComponent {
         error: (e: Error) => { if (seq === this.monthlySeq) this.monthly.set({ value: null, error: e.message || 'Não foi possível ler a evolução mensal.', loading: false }); },
       }),
     );
+  }
+
+  protected labelsOf(sources: IncludedSource[]): string {
+    return sources.map((s) => s.label).join(', ');
   }
 
   protected pctText(v: number): string {

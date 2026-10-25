@@ -361,11 +361,26 @@ export function historyLine(series: PostureMonthlySeries, months: string[]): Cha
     categories: months.map(monthShort),
     series: s,
     basis: series.coverageBasis ?? null,
-    notes: breaks,
+    notes: [...breaks, ...trendNotes(cells, s)],
     decimals: maturity ? 1 : 0,
     emptyLabel: 'sem publicação',
     emptyMessage: series.points.length === 0 ? 'Nenhuma publicação desta série no período escolhido.' : null,
   };
+}
+
+/**
+ * [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que a linha NÃO pode sugerir, dito em palavras: um único ponto não é tendência,
+ * pontos sem par vizinho comparável não formam linha e meses sem publicação entre pontos não são continuidade comprovada.
+ */
+export function trendNotes(cells: MonthlyCell[], series: ChartSeries[]): string[] {
+  const withPoint = cells.map((c, i) => (c.point ? i : -1)).filter((i) => i >= 0);
+  if (withPoint.length === 0) return [];
+  if (withPoint.length === 1) return ['Um único mês com publicação: ainda não há tendência.'];
+  const notes: string[] = [];
+  const gaps = withPoint[withPoint.length - 1] - withPoint[0] + 1 - withPoint.length;
+  if (gaps > 0) notes.push(`${gaps} mês(es) sem publicação entre o primeiro e o último ponto: a linha não os atravessa e não indica continuidade.`);
+  if (!series.some((s) => (s.connect ?? []).some(Boolean))) notes.push('Nenhum par de meses vizinhos e comparáveis: os pontos não formam uma linha de tendência.');
+  return notes;
 }
 
 // ---- Geometria --------------------------------------------------------------------------------

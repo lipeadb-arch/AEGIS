@@ -55,7 +55,6 @@ public static class PostureSnapshotHtmlWriter
         // Texto de dado: & < > " ' escapados, acentos preservados. A CSP é constante do código (sem dado externo).
         string E(string? s) => Html.Encode(s ?? "");
         var title = "AEGIS KNIGHT · Relatório de postura" + (string.IsNullOrWhiteSpace(h.ClientName) ? "" : " · " + h.ClientName);
-        var k = model.Kpis;
 
         var sb = new StringBuilder(64 * 1024);
         sb.Append("<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"utf-8\">\n")
@@ -75,13 +74,10 @@ public static class PostureSnapshotHtmlWriter
           .Append("<span>Fotografia ").Append(E(h.SnapshotId.ToString("D"))).Append("</span>")
           .Append("<span>Integridade: ").Append(h.IntegrityVerified ? "hash verificado" : "não verificada").Append("</span></div>")
           .Append("</div></header>\n<main class=\"wrap\" id=\"app\">\n")
+          .Append(Summary(model))
           .Append(charts is null ? "" : Visuals(charts, history!))
-          .Append("<noscript><div class=\"panel\"><h2>Resumo</h2><p>Score KNIGHT: ")
-          .Append(E(k.Score is { } sc ? Math.Round(sc).ToString(CultureInfo.InvariantCulture) : "sem avaliação"))
-          .Append(" · Cobertura: ").Append(E(k.Coverage.ToString("0.#", CultureInfo.InvariantCulture))).Append("% · ")
-          .Append(k.TotalControls).Append(" controle(s): ").Append(k.Passed).Append(" aprovado(s), ").Append(k.Failed)
-          .Append(" reprovado(s), ").Append(k.NotEvaluated).Append(" não avaliado(s).</p>")
-          .Append("<p>Os gráficos, filtros e detalhes exigem JavaScript habilitado no navegador. Nenhum recurso externo é carregado.</p></div></noscript>\n")
+          .Append("<noscript><div class=\"panel\"><p>O resumo executivo, os riscos prioritários e as limitações acima não dependem de JavaScript. ")
+          .Append("A lista completa de controles com filtros, a metodologia e o glossário exigem JavaScript habilitado no navegador. Nenhum recurso externo é carregado.</p></div></noscript>\n")
           .Append("</main>\n<footer class=\"wrap\">Gerado pelo AEGIS a partir da fotografia imutável ")
           .Append(E(h.SnapshotId.ToString("D"))).Append(" (SHA-256 ").Append(E(h.ContentHash)).Append("). Resultados determinísticos; a narrativa consultiva não altera nota, resultado ou severidade.</footer>\n")
           .Append("<script type=\"application/json\" id=\"aegis-data\">").Append(data).Append("</script>\n")
@@ -91,6 +87,122 @@ public static class PostureSnapshotHtmlWriter
     }
 
     private static readonly HtmlEncoder Html = HtmlEncoder.Create(UnicodeRanges.All);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Resumo executivo, riscos e ações prioritárias e limitações, desenhados no servidor a partir do
+    /// MESMO modelo da ilha de dados: legíveis sem JavaScript (e impressos), e o script só os move para a primeira aba. Todo texto vindo da
+    /// fotografia é codificado; nenhum atributo de estilo (a CSP só autoriza o estilo por hash).
+    /// </summary>
+    internal static string Summary(KnightReportModel m)
+    {
+        static string E(string? s) => Html.Encode(s ?? "");
+        string Pct(double? v) => v is { } x ? E(x.ToString("0.#", ReportChart.Pt)) + "%" : "—";
+        var k = m.Kpis;
+        var applicable = k.Evaluated + k.NotEvaluated + k.Errors;
+        var fraction = $"{k.Evaluated} de {applicable} {(applicable == 1 ? "controle aplicável avaliado" : "controles aplicáveis avaliados")}";
+        var problem = m.Header.CollectionState is { } cs && cs != nameof(KnightSourceState.Completed);
+        var warning = k.Score is null
+            ? (applicable == 0 ? "Sem nota: nenhum controle aplicável nesta avaliação."
+                : "Sem nota: nenhum controle pôde ser avaliado. A ausência de resultado não indica conformidade nem ausência de risco.")
+            : k.Evaluated < applicable
+                ? $"Avaliação parcial: a nota considera {k.Evaluated} de {applicable} controles aplicáveis. Os {applicable - k.Evaluated} restantes não foram avaliados e não contam como aprovados."
+                : problem ? "Coleta com limitação: todos os controles aplicáveis foram avaliados, mas alguma leitura de fonte não foi concluída." : null;
+
+        var sb = new StringBuilder("<section id=\"aegis-summary\" class=\"grp\" aria-labelledby=\"sum-h\">");
+        sb.Append("<h2 id=\"sum-h\" class=\"grp-h\">Resumo executivo</h2>");
+        if (m.Sources is { } inc)
+        {
+            sb.Append("<p class=\"incl\"><strong>").Append(E(inc.Text)).Append("</strong>");
+            if (inc.WithoutEvaluated.Count > 0) sb.Append(" · sem controle avaliado: ").Append(E(string.Join(", ", inc.WithoutEvaluated)));
+            sb.Append("</p>");
+        }
+        sb.Append("<div class=\"grid g4\">");
+        Kpi(sb, "Nota KNIGHT", k.Score is { } sc ? E(Math.Round(sc).ToString(CultureInfo.InvariantCulture)) + "<small>/100</small>" : "—",
+            k.Score is null ? "Sem nota: nenhum controle avaliado." : $"Sobre os {k.Evaluated} controles avaliados (cobertura {Pct(k.Coverage)}).",
+            "Pondera a severidade e o resultado de cada controle avaliado (fórmula " + E(m.Header.FormulaVersion) + "). Controles não avaliados ficam fora da nota: nunca contam como zero nem como aprovados.", k.Score is null || warning is not null);
+        Kpi(sb, "Cobertura da avaliação", Pct(k.Coverage), E(fraction),
+            $"Controles avaliados ÷ controles aplicáveis ({k.NotApplicable} não aplicável(is) ficam fora da base). Mostra quanto foi possível verificar, não se o ambiente está conforme.", k.Evaluated < applicable);
+        Kpi(sb, "Controles reprovados", k.Failed.ToString(CultureInfo.InvariantCulture),
+            $"{k.Mitigated} mitigado(s) com atenção · {k.NotEvaluated + k.Errors} sem avaliação.",
+            "Reprovado: a configuração exposta foi comprovada. Mitigado: exposição com controle compensatório comprovado. Não avaliado e erro na avaliação não são aprovação.", false);
+        Kpi(sb, "Aprovação", Pct(k.ApprovalPercent),
+            k.Evaluated == 0 ? "Sem controle avaliado: não há aprovação a calcular." : $"{k.Passed} aprovado(s) de {k.Evaluated} controles avaliados.",
+            "Aprovados ÷ controles avaliados. Não é a nota: a nota também pesa a severidade de cada controle.", false);
+        sb.Append("</div>");
+        if (warning is not null) sb.Append("<p class=\"note\" role=\"note\">").Append(E(warning)).Append("</p>");
+        if (m.Header.CollectionSummary is { } summary) sb.Append("<p class=\"sub\">").Append(E(summary)).Append("</p>");
+
+        sb.Append("<h3>Limitações que afetam a conclusão</h3>");
+        var groups = m.LimitationGroups ?? Array.Empty<ReportLimitationGroup>();
+        if (groups.Count == 0)
+            sb.Append("<p class=\"sub\">").Append(m.LegacyLimitations.Count > 0
+                ? "Esta fotografia registra as limitações no formato anterior; elas estão na aba de detalhes técnicos."
+                : "Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.").Append("</p>");
+        else
+        {
+            sb.Append("<ul class=\"lims\">");
+            foreach (var g in groups)
+            {
+                sb.Append("<li><span class=\"pill ").Append(g.AffectedControls.Count > 0 ? "s-Mitigated" : "s-NotEvaluated").Append("\">")
+                  .Append(E(g.CauseLabel)).Append("</span>");
+                if (g.KindLabel is not null) sb.Append(" <span class=\"muted\">").Append(E(g.KindLabel)).Append("</span>");
+                if (g.Services.Count > 0) sb.Append(" <span class=\"muted\">· ").Append(E(string.Join(", ", g.Services))).Append("</span>");
+                sb.Append("<div>").Append(E(g.Capabilities.Count == 1 ? g.Capabilities[0] : $"{g.Capabilities.Count} capacidades: " + string.Join(", ", g.Capabilities)))
+                  .Append(" · ").Append(g.AffectedControls.Count > 0 ? $"{g.AffectedControls.Count} controle(s) sem avaliação por isso" : "nenhum controle ficou sem avaliação por isso")
+                  .Append("</div><div class=\"sub\">").Append(E(g.Guidance)).Append("</div></li>");
+            }
+            sb.Append("</ul><p class=\"sub\">Cada capacidade, com o detalhe técnico e os controles prejudicados, está na aba de detalhes técnicos.</p>");
+        }
+
+        sb.Append("<h3>Interpretação consultiva</h3>");
+        if (m.Advisory is { } a)
+        {
+            sb.Append("<p class=\"note info\">").Append(a.FromAi ? "Gerada por IA" : "Resumo determinístico do AEGIS")
+              .Append(", congelado nesta fotografia. Não altera nota, resultado, severidade nem mapeamento.</p>")
+              .Append("<p>").Append(E(a.ExecutiveSummary)).Append("</p>");
+            List(sb, "Riscos destacados", a.PriorityRisks);
+            List(sb, "Ações sugeridas", a.RecommendedActions);
+            List(sb, "Lacunas de coleta", a.CollectionGaps);
+        }
+        else sb.Append("<p class=\"sub\">Nenhuma interpretação registrada nesta fotografia. Os resultados acima são determinísticos e não dependem dela.</p>");
+        sb.Append("</section>\n");
+
+        sb.Append("<section id=\"aegis-risks\" class=\"grp\" aria-labelledby=\"risk-h\"><h2 id=\"risk-h\" class=\"grp-h\">Riscos e ações prioritárias</h2>")
+          .Append("<p class=\"sub\">Até cinco controles reprovados, por severidade e, depois, pela quantidade afetada. Risco, impacto e orientação são os registrados para cada controle nesta fotografia.</p>");
+        if (m.Priorities.Count == 0)
+            sb.Append("<p class=\"empty\">Nenhum controle reprovado nesta avaliação.")
+              .Append(k.NotEvaluated + k.Errors > 0 ? $" {k.NotEvaluated + k.Errors} controle(s) não foram avaliados: isso não indica ausência de risco." : "").Append("</p>");
+        else
+        {
+            sb.Append("<ol class=\"prio\">");
+            foreach (var p in m.Priorities)
+            {
+                sb.Append("<li><div class=\"prio-hd\"><span class=\"pill v-").Append(E(p.Severity)).Append("\">").Append(E(p.SeverityLabel)).Append("</span> ")
+                  .Append("<a href=\"#tab-controls\" data-open=\"").Append(E(p.ControlId)).Append("\"><strong>").Append(E(p.Title)).Append("</strong></a></div>")
+                  .Append("<div class=\"meta\">").Append(E(string.Join(" · ", new[] { p.Service, p.ControlId, p.AffectedComposition }.Where(x => !string.IsNullOrWhiteSpace(x)))))
+                  .Append("</div><dl class=\"pdl\">");
+                if (p.Risk is not null) sb.Append("<dt>Risco</dt><dd>").Append(E(p.Risk)).Append("</dd>");
+                if (p.Impact is not null) sb.Append("<dt>Impacto</dt><dd>").Append(E(p.Impact)).Append("</dd>");
+                sb.Append("<dt>O que fazer</dt><dd>").Append(E(p.Guidance ?? "Orientação não registrada nesta fotografia; consulte o detalhe do controle.")).Append("</dd></dl></li>");
+            }
+            sb.Append("</ol>");
+            if (k.Failed > m.Priorities.Count)
+                sb.Append("<p class=\"sub\"><a href=\"#tab-controls\" data-filter=\"status=Exposed\">Ver os ").Append(k.Failed).Append(" controles reprovados</a></p>");
+        }
+        return sb.Append("</section>\n").ToString();
+
+        static void Kpi(StringBuilder sb, string label, string valueHtml, string note, string help, bool partial) =>
+            sb.Append("<div class=\"kpi").Append(partial ? " partial" : "").Append("\"><div class=\"l\">").Append(E(label)).Append("</div><div class=\"v\">").Append(valueHtml)
+              .Append("</div><div class=\"n\">").Append(note).Append("</div><details><summary>Base de cálculo</summary><span>").Append(help).Append("</span></details></div>");
+
+        static void List(StringBuilder sb, string title, IReadOnlyList<string> items)
+        {
+            if (items.Count == 0) return;
+            sb.Append("<h4>").Append(E(title)).Append("</h4><ol>");
+            foreach (var x in items) sb.Append("<li>").Append(E(x)).Append("</li>");
+            sb.Append("</ol>");
+        }
+    }
 
     /// <summary>
     /// [AEGIS-ASSESSMENT-VISUALS-01] Painel visual desenhado no servidor (lê-se sem JavaScript). O script do relatório o move
