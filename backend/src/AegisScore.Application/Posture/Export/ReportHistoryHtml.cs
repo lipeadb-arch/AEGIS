@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -35,6 +36,7 @@ public static class ReportHistoryHtml
           .Append(Dt("Histórico congelado", "na publicação; reexportar não consulta publicações posteriores"))
           .Append("</dl></div>");
         sb.Append(ReportChartSvg.Figure(chart, _ => null));
+        foreach (var note in TrendNotes(h, chart)) sb.Append("<p class=\"note\">").Append(E(note)).Append("</p>");
 
         sb.Append("<div class=\"tw\"><table class=\"hist-t\"><caption>Mês a mês (meses sem publicação ficam sem resultado)</caption><thead><tr>")
           .Append("<th scope=\"col\">Mês</th><th scope=\"col\">").Append(maturity ? "Atual" : "Nota").Append("</th>")
@@ -78,6 +80,23 @@ public static class ReportHistoryHtml
             sb.Append("</ul>");
         }
         sb.Append("<p class=\"muted\">A variação só é calculada entre pontos comparáveis da mesma série; ela não indica, sozinha, a causa (correção, mudança no ambiente ou de cobertura).</p>");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que a linha NÃO pode sugerir, dito em palavras (só no HTML): um único ponto não é tendência,
+    /// meses sem publicação entre pontos não são continuidade comprovada e pontos sem vizinho comparável não formam linha.
+    /// </summary>
+    public static IReadOnlyList<string> TrendNotes(FrozenPostureHistory h, ReportChart chart)
+    {
+        var withPoint = h.Months.Select((m, i) => (m, i)).Where(x => h.Points.Any(p => p.Month == x.m)).Select(x => x.i).ToList();
+        if (withPoint.Count == 0) return Array.Empty<string>();
+        if (withPoint.Count == 1) return new[] { "Um único mês com publicação: ainda não há tendência." };
+        var notes = new List<string>();
+        var gaps = withPoint[^1] - withPoint[0] + 1 - withPoint.Count;
+        if (gaps > 0) notes.Add($"{gaps} mês(es) sem publicação entre o primeiro e o último ponto: a linha não os atravessa e não indica continuidade.");
+        if (!chart.Series.Any(s => s.Connect?.Any(c => c) == true))
+            notes.Add("Nenhum par de meses vizinhos e comparáveis: os pontos não formam uma linha de tendência.");
+        return notes;
     }
 
     private static string Value(double? v, int decimals, string empty) =>

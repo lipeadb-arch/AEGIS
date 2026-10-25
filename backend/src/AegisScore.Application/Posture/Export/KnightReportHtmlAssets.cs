@@ -10,10 +10,10 @@ internal static class KnightReportHtmlAssets
 {
     public const string Css = """
 :root{--bg:#f5f7fb;--panel:#fff;--ink:#14213d;--ink2:#46536b;--muted:#6b778c;--line:#dde3ec;--accent:#0a7ea4;--accent-bg:#e6f4f9;
---ok:#1b7f3b;--ok-bg:#e7f5ec;--fail:#b3261e;--fail-bg:#fbe9e7;--warn:#9a5b00;--warn-bg:#fff4e0;--ne:#56627a;--ne-bg:#eef1f6;--err:#6b3fa0;--err-bg:#f1eafa;
+--ok:#006b7d;--ok-bg:#e3f6fa;--fail:#c2185b;--fail-bg:#fce4ec;--warn:#9a5b00;--warn-bg:#fff4e0;--ne:#56627a;--ne-bg:#eef1f6;--na:#b7c0cf;--err:#6b3fa0;--err-bg:#f1eafa;
 --crit:#8e1b12;--high:#c2410c;--med:#a16207;--low:#1d5fb8;--info:#56627a;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:var(--ink);}
 @media (prefers-color-scheme:dark){:root{--bg:#0d1422;--panel:#141d2e;--ink:#e7ecf5;--ink2:#b8c2d6;--muted:#8e9ab2;--line:#26324a;--accent:#38c5ec;--accent-bg:#0f2a38;
---ok:#57c27a;--ok-bg:#12301f;--fail:#ff7a70;--fail-bg:#3a1714;--warn:#f0b24a;--warn-bg:#35270d;--ne:#a6b1c6;--ne-bg:#1d2638;--err:#c7a6f5;--err-bg:#2a1f3d;
+--ok:#26e0ff;--ok-bg:#0e3440;--fail:#ff5c8a;--fail-bg:#3a1424;--warn:#f0b24a;--warn-bg:#35270d;--ne:#a6b1c6;--ne-bg:#1d2638;--na:#4a5468;--err:#c7a6f5;--err-bg:#2a1f3d;
 --crit:#ff8a80;--high:#ff9f5a;--med:#f0c04a;--low:#7fb2ff;--info:#a6b1c6;}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);line-height:1.5;font-size:14px}
 a{color:var(--accent)}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
@@ -42,7 +42,7 @@ h1{margin:4px 0 2px;font-size:24px}h2{font-size:17px;margin:0 0 10px}h3{font-siz
 .bars{display:flex;flex-direction:column;gap:6px}.bar{display:grid;grid-template-columns:150px minmax(0,1fr) 44px;gap:8px;align-items:center;
 background:none;border:0;padding:3px 0;font:inherit;color:var(--ink);text-align:left;cursor:pointer;width:100%}
 .bar:hover .track{outline:1px solid var(--accent)}.track{height:16px;background:var(--ne-bg);border-radius:4px;overflow:hidden;display:flex}
-.seg{height:100%}.seg.Passed{background:var(--ok)}.seg.Exposed{background:var(--fail)}.seg.Mitigated{background:var(--warn)}.seg.NotEvaluated,.seg.NotApplicable{background:var(--ne)}.seg.Error{background:var(--err)}
+.seg{height:100%}.seg.Passed{background:var(--ok)}.seg.Exposed{background:var(--fail)}.seg.Mitigated{background:var(--warn)}.seg.NotEvaluated{background:var(--ne)}.seg.NotApplicable{background:var(--na)}.seg.Error{background:var(--err)}
 .seg.sev-Critical{background:var(--crit)}.seg.sev-High{background:var(--high)}.seg.sev-Medium{background:var(--med)}.seg.sev-Low{background:var(--low)}.seg.sev-Informational{background:var(--info)}
 .kpi details{color:var(--muted);font-size:12px;margin-top:6px}.kpi summary{cursor:pointer;width:fit-content}.bar .lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bar .num{text-align:right;font-weight:700}
 .legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--ink2);margin-top:8px}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
@@ -75,6 +75,15 @@ th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04
 table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::before{content:attr(data-l);display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .tabs button{padding:8px 10px}}
 .empty{color:var(--muted);font-style:italic}footer{color:var(--muted);font-size:12px;margin-top:24px;overflow-wrap:anywhere}
+.grp{margin-top:22px}.grp-h{font-size:19px;margin:0 0 8px;padding-bottom:6px;border-bottom:2px solid var(--line)}.muted{color:var(--muted)}
+.incl{margin:0 0 10px}.kpi .v small{font-size:.5em;color:var(--muted);margin-left:2px}.kpi.partial{border-top:3px solid var(--warn)}
+.lims,.prio{margin:6px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:10px}.lims{list-style:none;padding-left:0}
+.lims li,.prio li{border-bottom:1px solid var(--line);padding-bottom:10px}.lims li:last-child,.prio li:last-child{border-bottom:0}
+.prio-hd{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline}.prio .meta{color:var(--muted);font-size:12px;margin:2px 0 6px;overflow-wrap:anywhere}
+.pdl{display:grid;grid-template-columns:110px minmax(0,1fr);gap:4px 12px;margin:0;font-size:13px}.pdl dt{color:var(--muted)}.pdl dd{margin:0;overflow-wrap:anywhere}
+.tech{font-size:12px;color:var(--muted)}.tech summary{cursor:pointer}.tech ul{margin:4px 0 0;padding-left:16px}
+@media (max-width:600px){.pdl{grid-template-columns:minmax(0,1fr)}.pdl dd{margin-bottom:4px}}
+@media (prefers-color-scheme:dark){.chart .in-ok,.chart .in-bad{fill:#0d1422}}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
 
@@ -116,51 +125,37 @@ function go(filters,open){ST.f={q:'',status:'',severity:'',platform:'',service:'
 var h=document.getElementById('tab-controls');if(open){var c=document.getElementById('ctl-'+open);if(c){c.scrollIntoView();var b=c.querySelector('button');if(b)b.focus();}}else h.scrollIntoView();}
 // ---------- Visão geral ----------
 function help(t,body){return el('details',null,[el('summary',{text:t}),el('span',{text:body})]);}
+// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Primeira aba: resumo executivo, riscos e ações prioritárias (desenhados no servidor e legíveis
+// sem JavaScript — aqui só são movidos), resultados e composição e, por fim, limitações detalhadas e interpretação (também do servidor). Detalhes técnicos e metodologia ficam nas outras abas.
 function overview(){var k=D.kpis,box=el('div',{id:'tab-overview',role:'tabpanel','aria-labelledby':'t-overview'});
-var g=el('div',{cls:'grid g4'});
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Score de postura KNIGHT'}),el('div',{cls:'v',text:k.score===null?'—':String(Math.round(k.score))}),
-el('div',{cls:'n',text:k.score===null?'Sem controle avaliado, não há nota.':'Escala própria do KNIGHT, de 0 a 100.'}),help('Como é calculado','Pondera a severidade e o resultado de cada controle avaliado (fórmula '+D.header.formulaVersion+'). Controles não avaliados ficam fora da nota: nunca contam como zero nem como aprovados.')]));
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Aprovação'}),el('div',{cls:'v',text:pct(k.approvalPercent)}),el('div',{cls:'n',text:k.passed+' de '+k.evaluated+' controles avaliados foram aprovados.'}),help('O que significa','Proporção de aprovados entre os controles avaliados. Não é a nota: a nota também pesa a severidade.')]));
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Cobertura do assessment'}),el('div',{cls:'v',text:pct(k.coverage)}),el('div',{cls:'n',text:'Parte dos controles que pôde ser verificada.'}),help('O que significa','Controles avaliados ÷ controles aplicáveis. Mostra quanto foi possível verificar, não se o ambiente está conforme.')]));
-var ua=k.uniqueAffected===null?k.occurrences+' ocorrência(s); itens distintos não calculáveis nesta fotografia.':k.occurrences+' ocorrência(s) em '+(k.uniqueAffectedIsFloor?'pelo menos ':'')+(k.uniqueAffectedComposition||(k.uniqueAffected+' item(ns) distinto(s)'))+(k.uniqueAffectedIsFloor?' — a lista de algum controle está incompleta.':'.');
-g.appendChild(el('div',{cls:'kpi'},[el('div',{cls:'l',text:'Controles com achados'}),el('div',{cls:'v',text:String(k.findings)}),el('div',{cls:'n',text:ua}),help('Como contar','Controles reprovados ou mitigados. Uma mesma conta, aplicação, papel ou política pode aparecer em mais de um controle: cada aparição é uma ocorrência; itens distintos contam uma vez.')]));
-box.appendChild(g);
-box.appendChild(el('p',{cls:'sub',text:'O score KNIGHT resume os controles de configuração desta avaliação — desta fonte e desta coleta. O AEGIS Score (NIST) é outra medida; as duas notas não se somam.'}));
-// [AEGIS-ASSESSMENT-VISUALS-01] Painel visual congelado (desenhado no servidor): entra logo após os indicadores e substitui as
-// barras de severidade, domínio e serviço — a mesma distribuição não aparece duas vezes na mesma tela.
-var VIS=document.getElementById('aegis-visuals');if(VIS)box.appendChild(VIS);
-var cp=el('div',{cls:'panel'},[el('h2',{text:'Controles por resultado'})]),cs=el('div',{cls:'counts'});
-[['Passed',k.passed],['Exposed',k.failed],['Mitigated',k.mitigated],['NotEvaluated',k.notEvaluated],['Error',k.errors],['NotApplicable',k.notApplicable]].forEach(function(x){
-cs.appendChild(el('button',{cls:'cbtn',type:'button',onclick:function(){go({status:x[0]});}},[el('b',{text:String(x[1])}),pill('s-'+x[0],lbl(STATUS,x[0]))]));});
-cp.appendChild(cs);cp.appendChild(el('p',{cls:'sub',text:k.totalControls+' controle(s) no escopo desta avaliação. Não avaliado: a evidência faltou, foi insuficiente ou inconclusiva (inclui dado ou permissão ausente) — o motivo aparece em cada controle; reduz a cobertura e nunca aprova. Erro: a regra falhou ao avaliar. Mitigado: exposição com controle compensatório comprovado.'}));
-box.appendChild(cp);
-if(!VIS){var two=el('div',{cls:'grid g2'});
+['aegis-summary','aegis-risks'].forEach(function(id){var s=document.getElementById(id);if(s)box.appendChild(s);});
+var res=el('section',{cls:'grp','aria-labelledby':'res-h'},[el('h2',{id:'res-h',cls:'grp-h',text:'Resultados e composição'})]);
+// [AEGIS-ASSESSMENT-VISUALS-01] Painel visual congelado (desenhado no servidor): substitui as barras de severidade, domínio e serviço —
+// a mesma distribuição não aparece duas vezes.
+var VIS=document.getElementById('aegis-visuals');if(VIS)res.appendChild(VIS);
+else{var two=el('div',{cls:'grid g2'});
 var sp=el('div',{cls:'panel'},[el('h2',{text:'Controles com achados por severidade'}),el('p',{cls:'sub',text:'Controles reprovados ou mitigados. Clique para ver a lista.'})]),sb=el('div',{cls:'bars'});
 var maxS=Math.max.apply(null,k.findingsBySeverity.map(function(x){return x.count;}).concat([1]));
 k.findingsBySeverity.forEach(function(x){var tr=el('span',{cls:'track'}),s=el('span',{cls:'seg sev-'+x.key});s.style.width=(100*x.count/maxS)+'%';tr.appendChild(s);
 sb.appendChild(el('button',{cls:'bar',type:'button','aria-label':x.label+': '+x.count+' controle(s) com achado',onclick:function(){go({status:'findings',severity:x.key});}},[el('span',{cls:'lbl'},[pill('v-'+x.key,x.label)]),tr,el('span',{cls:'num',text:String(x.count)})]));});
-sp.appendChild(sb);two.appendChild(sp);
-two.appendChild(dist('Resultado por domínio de segurança',D.byDomain,'domain'));
-box.appendChild(two);}
-if(D.byPlatform&&D.byPlatform.length)box.appendChild(dist('Resultado por plataforma',D.byPlatform,'platform'));
-if(!VIS)box.appendChild(dist('Resultado por serviço',D.byService,'service'));
-if(D.referenceCoverage)box.appendChild(coverage());
-var pr=el('div',{cls:'panel'},[el('h2',{text:'Riscos prioritários'}),el('p',{cls:'sub',text:'Até cinco controles reprovados, ordenados por severidade e, depois, pela quantidade afetada. Nenhum critério além do que a avaliação comprovou.'})]);
-if(D.priorities.length===0)pr.appendChild(el('p',{cls:'empty',text:'Nenhum controle reprovado nesta avaliação.'}));
-else{var ol=el('ol');D.priorities.forEach(function(p){ol.appendChild(el('li',null,[el('button',{cls:'cbtn',type:'button',onclick:function(){go({},p.controlId);}},[pill('v-'+p.severity,p.severityLabel),' ',el('span',{text:p.title})]),el('div',{cls:'meta',text:p.controlId+' · '+p.criterion})]));});pr.appendChild(ol);}
-box.appendChild(pr);
-var to=el('div',{cls:'panel'},[el('h2',{text:'Contas, aplicações e demais itens mais recorrentes'}),el('p',{cls:'sub',text:'Itens afetados (contas, aplicações, grupos, papéis, políticas…) que aparecem em mais controles reprovados ou mitigados.'})]);
+sp.appendChild(sb);two.appendChild(sp);two.appendChild(dist('Resultado por serviço',D.byService,'service'));res.appendChild(two);}
+if(D.byPlatform&&D.byPlatform.length>1)res.appendChild(dist('Resultado por plataforma',D.byPlatform,'platform'));
+if(D.composition&&D.composition.length)res.appendChild(composition());
+var to=el('div',{cls:'panel'},[el('h2',{text:'Contas, aplicativos e demais itens mais recorrentes'}),el('p',{cls:'sub',text:'Itens afetados (contas, aplicativos, grupos, papéis, políticas…) que aparecem em mais controles reprovados ou mitigados.'})]);
 if(D.topObjects.length===0)to.appendChild(el('p',{cls:'empty',text:D.kpis.uniqueAffected===null?'Esta fotografia não congelou os itens afetados.':'Nenhum item afetado preservado.'}));
 else{var tb=el('tbody'),H=['Conta ou recurso afetado','Tipo','Quantidade de controles','Controles relacionados'];D.topObjects.forEach(function(o){tb.appendChild(el('tr',null,[el('td',{'data-l':H[0]},[el('div',{text:o.label}),el('div',{cls:'mono',text:o.externalId})]),el('td',{'data-l':H[1],text:o.kindLabel}),el('td',{'data-l':H[2],text:String(o.controlCount)}),
 el('td',{'data-l':H[3]},[ctlRefs(o.controls||refsOf(o.controlIds),3)])]));});
 to.appendChild(el('p',{cls:'sub',text:'Cada controle relacionado mostra o título registrado nesta fotografia e o código; clique para abrir o detalhe.'}));
 to.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[el('thead',null,[el('tr',null,H.map(function(x){return el('th',{text:x});}))]),tb])]));}
-box.appendChild(to);
-if(D.composition&&D.composition.length)box.appendChild(composition());
-box.appendChild(sources());
-if(D.advisory)box.appendChild(advisory());
-box.appendChild(integrity());
+res.appendChild(to);box.appendChild(res);
+var lim=document.getElementById('aegis-limits');if(lim)box.appendChild(lim);
 return box;}
+// Contagens por resultado (detalhes técnicos): cada botão abre a lista já filtrada.
+function countsPanel(){var k=D.kpis,cp=el('div',{cls:'panel'},[el('h2',{text:'Controles por resultado'})]),cs=el('div',{cls:'counts'});
+[['Exposed',k.failed],['Mitigated',k.mitigated],['Error',k.errors],['NotEvaluated',k.notEvaluated],['Passed',k.passed],['NotApplicable',k.notApplicable]].forEach(function(x){
+cs.appendChild(el('button',{cls:'cbtn',type:'button',onclick:function(){go({status:x[0]});}},[el('b',{text:String(x[1])}),pill('s-'+x[0],lbl(STATUS,x[0]))]));});
+cp.appendChild(cs);cp.appendChild(el('p',{cls:'sub',text:k.totalControls+' controle(s) no escopo desta avaliação. Não avaliado: a evidência faltou, foi insuficiente ou inconclusiva (inclui dado ou permissão ausente) — o motivo aparece em cada controle; reduz a cobertura e nunca aprova. Erro na avaliação: a regra falhou ao avaliar um dado coletado (diferente de falha de coleta). Mitigado: exposição com controle compensatório comprovado.'}));
+return cp;}
 function dist(title,rows,key){var p=el('div',{cls:'panel'},[el('h2',{text:title}),el('p',{cls:'sub',text:'Clique para ver os controles. Cores sempre acompanhadas do rótulo na legenda.'})]),b=el('div',{cls:'bars'});
 var max=Math.max.apply(null,rows.map(function(r){return r.passed+r.failed+r.mitigated+r.notEvaluated+r.errors+r.notApplicable;}).concat([1]));
 rows.forEach(function(r){var tot=r.passed+r.failed+r.mitigated+r.notEvaluated+r.errors+r.notApplicable,tr=el('span',{cls:'track'});
@@ -181,21 +176,19 @@ el('td',null,(s.collectionLimitations&&s.collectionLimitations.length)?[el('ul',
 if(D.header.collectionSummary)p.appendChild(el('p',{cls:'sub',text:D.header.collectionSummary}));
 p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Fonte','Situação','Nota','Cobertura','Catálogo','Coleta','Estado da coleta','Limitações da fonte'].map(function(x){return el('th',{text:x});}))]),tb])]));
 return p;}
-function sources(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Fontes, datas e limitações de cobertura'})]);
+function sources(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Fontes, datas e limitações de coleta'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fonte'}),el('span',{text:h.sourceLabel+' · provedor '+h.provider+(h.isDemo?' (demonstração sintética)':'')}),
 el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),
 h.collectionStateLabel?el('span',{cls:'k',text:'Estado da coleta'}):null,h.collectionStateLabel?el('span',{text:h.collectionStateLabel+' — '+h.collectionSummary}):null,el('span',{cls:'k',text:'Fotografia publicada em'}),el('span',{text:dt(h.capturedAt)}),
 el('span',{cls:'k',text:'Escopo desta avaliação'}),el('span',{text:'Controles avaliados a partir de '+h.sourceLabel+'. Serviços ainda não coletados não aparecem como avaliados; o que falta está na cobertura do catálogo de referência.'})]));
-if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:'Nenhuma limitação de coleta registrada: todas as capacidades desta fonte foram lidas.'}));
+if(D.limitations.length===0&&D.legacyLimitations.length===0)p.appendChild(el('p',{cls:'sub',text:D.noLimitationText||'Não há limitações de coleta registradas nesta fotografia.'}));
 if(D.limitations.length){var tb=el('tbody');D.limitations.forEach(function(l){tb.appendChild(el('tr',null,[el('td',{text:l.capabilityLabel}),el('td',{text:l.causeLabel}),
-el('td',null,[el('div',{text:l.detail||'—'}),l.requiredPermission?el('div',{cls:'mono',text:'Permissão exigida pela chamada implementada: '+l.requiredPermission}):null]),
+el('td',null,[el('div',{text:l.detail||'—'}),l.requiredPermission?el('div',{cls:'mono',text:'Permissão exigida pela chamada implementada: '+l.requiredPermission}):null,
+(l.technical&&l.technical.length)?el('details',{cls:'tech'},[el('summary',{text:'Detalhe técnico'}),el('ul',null,l.technical.map(function(t){return el('li',{cls:'mono',text:t});}))]):null]),
 el('td',null,[l.affectedControls.length?ctlRefs(refsOf(l.affectedControls),3):el('span',{text:'nenhum controle ficou sem avaliação por isso'})]),el('td',{text:l.guidance}),el('td',{text:dt(l.attemptedAt)})]));});
 p.appendChild(el('h3',{text:'Limitações de coleta'}));p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Capacidade','Causa','Detalhe','Controles prejudicados','O que fazer','Tentativa'].map(function(x){return el('th',{text:x});}))]),tb])]));}
 if(D.legacyLimitations.length){p.appendChild(el('h3',{text:'Limitações de coleta (registro da fotografia)'}));var ul=el('ul');D.legacyLimitations.forEach(function(x){ul.appendChild(el('li',{text:x}));});p.appendChild(ul);}
 return p;}
-function advisory(){var a=D.advisory,p=el('div',{cls:'panel'},[el('h2',{text:'Interpretação consultiva'}),el('p',{cls:'note info',text:(a.fromAi?'Gerada por IA':'Texto determinístico (IA indisponível ou desligada)')+' e congelada nesta fotografia. Não altera nota, resultado, severidade nem mapeamento.'}),el('p',{text:a.executiveSummary})]);
-function lst(t,xs){if(!xs.length)return;p.appendChild(el('h3',{text:t}));var ol=el('ol');xs.forEach(function(x){ol.appendChild(el('li',{text:x}));});p.appendChild(ol);}
-lst('Riscos destacados',a.priorityRisks);lst('Ações sugeridas',a.recommendedActions);lst('Lacunas de coleta',a.collectionGaps);return p;}
 function integrity(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Integridade, versões e reconciliação'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fotografia'}),el('span',{cls:'mono',text:h.snapshotId}),el('span',{cls:'k',text:'Avaliação de origem'}),el('span',{cls:'mono',text:h.runId||'não registrada nesta fotografia'}),
 el('span',{cls:'k',text:'Hash do conteúdo (SHA-256)'}),el('span',{cls:'mono',text:h.contentHash+(h.integrityVerified?' · verificado na exportação':'')}),
@@ -221,6 +214,7 @@ return p;}
 // ---------- Controles e achados ----------
 var listBox,recorte,inputs={};
 function controlsTab(){var box=el('div',{id:'tab-controls',role:'tabpanel','aria-labelledby':'t-controls'});box.hidden=true;
+box.appendChild(countsPanel());
 var f=el('div',{cls:'panel filters',role:'search'});
 function sel(name,label,opts){var s=el('select',{id:'f-'+name,onchange:function(){ST.f[name]=s.value;renderList();}},[el('option',{value:'',text:'Todos'})].concat(opts.map(function(o){return el('option',{value:o[0],text:o[1]});})));inputs[name]=s;return el('label',{'for':'f-'+name},[label,s]);}
 var q=el('input',{id:'f-q',type:'search',placeholder:'Controle, código, conta, aplicação…',oninput:function(){ST.f.q=q.value;renderList();}});inputs.q=q;
@@ -232,7 +226,8 @@ f.appendChild(sel('service','Serviço',uniq(D.controls.map(function(c){return c.
 f.appendChild(sel('domain','Domínio',uniqPairs(D.controls.map(function(c){return[c.domain,c.domainLabel];}))));
 f.appendChild(sel('framework','Framework',D.frameworkOptions.map(function(x){return[x,x];})));
 f.appendChild(el('button',{cls:'btn',type:'button',onclick:function(){go({});}, text:'Limpar filtros'}));
-box.appendChild(f);recorte=el('p',{cls:'recorte',role:'status','aria-live':'polite'});box.appendChild(recorte);listBox=el('div');box.appendChild(listBox);return box;}
+box.appendChild(f);recorte=el('p',{cls:'recorte',role:'status','aria-live':'polite'});box.appendChild(recorte);listBox=el('div');box.appendChild(listBox);
+box.appendChild(sources());if(!document.getElementById('aegis-visuals'))box.appendChild(dist('Resultado por domínio de segurança',D.byDomain,'domain'));return box;}
 function uniq(a){var s={},o=[];a.forEach(function(x){if(x&&!s[x]){s[x]=1;o.push(x);}});return o.sort();}
 function uniqPairs(a){var s={},o=[];a.forEach(function(x){if(!s[x[0]]){s[x[0]]=1;o.push(x);}});return o.sort(function(x,y){return x[1]<y[1]?-1:1;});}
 function syncFilterInputs(){for(var k in inputs)inputs[k].value=ST.f[k]||'';}
@@ -280,6 +275,7 @@ return b;}
 function termList(terms){var dl=el('dl',{cls:'gl'});terms.forEach(function(x){var g=GL[x];dl.appendChild(el('dt',{text:g.term}));dl.appendChild(el('dd',null,[el('span',{cls:'mean',text:g.meaning+'. '}),g.explanation]));});return dl;}
 // ---------- Glossário ----------
 function glossaryTab(){var box=el('div',{id:'tab-glossary',role:'tabpanel','aria-labelledby':'t-glossary'});box.hidden=true;
+if(D.referenceCoverage)box.appendChild(coverage());box.appendChild(integrity());
 var ip=el('div',{cls:'panel'},[el('h2',{text:'Identificadores internos (códigos AK-…)'}),el('p',{cls:'sub',text:D.identifierExplanation||''})]);
 var res=el('div',{role:'status','aria-live':'polite'}),lim=20;
 var iq=el('input',{id:'g-id',type:'search',placeholder:'Ex.: AK-AZ-IAM-004 ou parte do título',oninput:function(){lim=20;find();},
@@ -314,10 +310,12 @@ more.textContent='Mostrar todos ('+rows.length+')';more.hidden=rows.length<=show
 if(q)wrap.appendChild(q);wrap.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Relação','Tipo','Item','Por que está aqui','Configuração encontrada'].map(function(x){return el('th',{text:x});}))]),tb])]));wrap.appendChild(more);draw();return wrap;}
 // ---------- Montagem ----------
 var tabs=el('div',{cls:'tabs',role:'tablist','aria-label':'Seções do relatório'});
-var TABS=[['overview','Visão geral'],['controls','Controles e achados'],['glossary','Glossário']];
+var TABS=[['overview','Resumo e resultados'],['controls','Detalhes técnicos'],['glossary','Metodologia e glossário']];
 TABS.forEach(function(t,i){tabs.appendChild(el('button',{id:'t-'+t[0],type:'button',role:'tab','data-tab':t[0],'aria-controls':'tab-'+t[0],'aria-selected':i===0?'true':'false',text:t[1],
 onclick:function(){setTab(t[0]);},onkeydown:function(e){if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=TABS[(i+(e.key==='ArrowRight'?1:TABS.length-1))%TABS.length][0];setTab(n);document.getElementById('t-'+n).focus();e.preventDefault();}}}));});
 main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());main.appendChild(glossaryTab());renderList();setTab('overview');
+// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Os riscos prioritários (desenhados no servidor) abrem o detalhe do controle.
+Array.prototype.forEach.call(document.querySelectorAll('[data-open]'),function(a){a.addEventListener('click',function(e){e.preventDefault();go({},a.getAttribute('data-open'));});});
 // [AEGIS-ASSESSMENT-VISUALS-01] Links dos gráficos e das tabelas de valores abrem a aba de controles já filtrada.
 Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'),function(a){a.addEventListener('click',function(e){e.preventDefault();var o={};
 a.getAttribute('data-filter').split('&').forEach(function(kv){var i=kv.indexOf('=');if(i>0)o[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1));});go(o);});});

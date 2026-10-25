@@ -80,7 +80,10 @@ public sealed record ReportReferenceCoverage(
     // [AEGIS-KNIGHT-CLOSURE-01] Resultados manuais vigentes na publicação — à parte da cobertura automatizada.
     IReadOnlyList<KnightManualResultEntry>? ManualResults = null);
 
-public sealed record ReportPriority(string ControlId, string Title, string Severity, string SeverityLabel, int AffectedCount, string Criterion);
+/// <param name="Risk">[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Risco, impacto, serviço, afetados e orientação CONGELADOS do controle —
+/// os mesmos do detalhe; nulos quando a fotografia não os tem (nada é inventado para preencher).</param>
+public sealed record ReportPriority(string ControlId, string Title, string Severity, string SeverityLabel, int AffectedCount, string Criterion,
+    string? Service = null, string? Risk = null, string? Impact = null, string? Guidance = null, string? AffectedComposition = null);
 
 /// <summary>
 /// [AEGIS-KNIGHT-PRESENTATION-01] Um controle citado fora do próprio detalhe: o código e o título CONGELADO na fotografia.
@@ -91,9 +94,26 @@ public sealed record ReportControlRef(string Id, string? Title);
 public sealed record ReportTopObject(string ExternalId, string Kind, string KindLabel, string Label, int ControlCount, IReadOnlyList<string> ControlIds,
     IReadOnlyList<ReportControlRef>? Controls = null);
 
+/// <param name="FailureKind">[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Tipo sanitizado da falha (diagnóstico congelado) e o detalhe técnico seguro
+/// em linhas; nulos/vazios em coletas anteriores ao diagnóstico.</param>
 public sealed record ReportLimitation(
     string Capability, string CapabilityLabel, string Outcome, string CauseLabel, string? Detail,
-    string? RequiredPermission, IReadOnlyList<string> AffectedControls, string Guidance, string? AttemptedAt);
+    string? RequiredPermission, IReadOnlyList<string> AffectedControls, string Guidance, string? AttemptedAt,
+    string? FailureKind = null, IReadOnlyList<string>? Technical = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Limitações EQUIVALENTES agrupadas: mesmo desfecho, mesmo tipo de falha, mesma orientação e
+/// mesmos serviços afetados. Falhas diferentes com textos parecidos ficam separadas; cada capacidade continua listada.
+/// </summary>
+public sealed record ReportLimitationGroup(
+    string CauseLabel, string? KindLabel, string Guidance, IReadOnlyList<string> Services, IReadOnlyList<string> Capabilities,
+    IReadOnlyList<string> AffectedControls);
+
+/// <summary>
+/// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Fontes INCLUÍDAS × fontes com controles EFETIVAMENTE avaliados, pelas contagens congeladas
+/// (composição, no consolidado; os indicadores, na fonte única). Incluir uma fonte não é avaliá-la.
+/// </summary>
+public sealed record ReportSourceInclusion(int Included, int WithEvaluated, IReadOnlyList<string> WithoutEvaluated, string Text);
 
 public sealed record ReportAdvisory(bool FromAi, string ExecutiveSummary, IReadOnlyList<string> PriorityRisks,
     IReadOnlyList<string> RecommendedActions, IReadOnlyList<string> CollectionGaps);
@@ -112,7 +132,11 @@ public sealed record KnightReportModel(
     IReadOnlyList<KnightConsolidatedSourceEntry>? Composition = null,
     /// <summary>[AEGIS-KNIGHT-PRESENTATION-01] Termos do glossário único que aparecem nos textos desta fotografia.</summary>
     IReadOnlyList<KnightGlossaryTerm>? Glossary = null,
-    string? IdentifierExplanation = null);
+    string? IdentifierExplanation = null,
+    ReportSourceInclusion? Sources = null,
+    IReadOnlyList<ReportLimitationGroup>? LimitationGroups = null,
+    /// <summary>[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que dizer quando não há limitação a listar — fiel ao registro da fotografia.</summary>
+    string? NoLimitationText = null);
 
 public static class KnightReportModelBuilder
 {
@@ -186,7 +210,8 @@ public static class KnightReportModelBuilder
             .Take(5)
             .Select(c => new ReportPriority(c.Id, c.Title, c.Severity, c.SeverityLabel, c.AffectedCount,
                 $"Severidade {c.SeverityLabel.ToLowerInvariant()} (peso {c.Weight})"
-                + (c.AffectedCount > 0 ? $" · {c.AffectedComposition}" : "")))
+                + (c.AffectedCount > 0 ? $" · {c.AffectedComposition}" : ""),
+                c.Service, Blank(c.Rationale), Blank(c.Impact), Blank(c.Recommendation), c.AffectedCount > 0 ? c.AffectedComposition : null))
             .ToList();
 
         var topObjects = occurrences
@@ -261,7 +286,99 @@ public static class KnightReportModelBuilder
             isV2 ? Array.Empty<string>() : s.CollectionLimitations.ToList(), advisory, notes, frameworks, coverage, byPlatform,
             composition,
             KnightGlossary.UsedIn(controls.SelectMany(GlossaryTexts)),
-            KnightGlossary.IdentifierExplanation);
+            KnightGlossary.IdentifierExplanation,
+            Inclusion(composition, header.SourceLabel, evaluated),
+            GroupLimitations(limitations, controls),
+            NoLimitationText(KnightCapabilitiesJson.Deserialize(s.CapabilitiesJson), kpis));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Ausência de registro não é coleta comprovada: só se afirma que todas as capacidades foram
+    /// lidas quando a fotografia as registra e TODAS saíram coletadas. Sem esse registro (fotografia antiga, consolidada ou sem
+    /// capacidades), diz-se apenas que nada foi registrado — e, havendo controle sem avaliação, que isso não comprova coleta completa.
+    /// </summary>
+    public static string NoLimitationText(IReadOnlyList<KnightCapabilityStatus> capabilities, ReportKpis k)
+    {
+        if (capabilities.Count > 0 && capabilities.All(c => c.Outcome == KnightCapabilityOutcome.Collected))
+            return capabilities.Count == 1
+                ? "A única capacidade de coleta registrada nesta fotografia foi lida."
+                : $"Todas as {capabilities.Count} capacidades de coleta registradas nesta fotografia foram lidas.";
+        var unevaluated = k.NotEvaluated + k.Errors;
+        return "Não há limitações de coleta registradas nesta fotografia." + (unevaluated == 0 ? ""
+            : unevaluated == 1 ? " Isso não comprova coleta completa: 1 controle aplicável ficou sem avaliação."
+            : $" Isso não comprova coleta completa: {unevaluated} controles aplicáveis ficaram sem avaliação.");
+    }
+
+    private static string? Blank(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    /// <summary>Consolidado: as fontes incluídas na composição congelada e as que tiveram algum veredito; fonte única: ela mesma.</summary>
+    public static ReportSourceInclusion Inclusion(IReadOnlyList<KnightConsolidatedSourceEntry>? composition, string sourceLabel, int evaluated)
+    {
+        var included = composition is { Count: > 0 }
+            ? composition.Where(e => e.Included)
+                .Select(e => (e.Label, Evaluated: (e.PassedCount ?? 0) + (e.ExposedCount ?? 0) + (e.MitigatedCount ?? 0))).ToList()
+            : new List<(string Label, int Evaluated)> { (sourceLabel, evaluated) };
+        var with = included.Count(x => x.Evaluated > 0);
+        var head = included.Count == 1 ? "1 fonte incluída" : $"{included.Count} fontes incluídas";
+        var tail = with == 0 ? "nenhuma com controles avaliados" : $"{with} com controles avaliados";
+        return new ReportSourceInclusion(included.Count, with, included.Where(x => x.Evaluated == 0).Select(x => x.Label).ToList(), $"{head} · {tail}");
+    }
+
+    /// <summary>Agrupa por desfecho, tipo de falha, orientação e serviços dos controles prejudicados; mais controles afetados primeiro.</summary>
+    public static IReadOnlyList<ReportLimitationGroup> GroupLimitations(IReadOnlyList<ReportLimitation> limitations, IReadOnlyList<ReportControl> controls)
+    {
+        var serviceOf = controls.ToDictionary(c => c.Id, c => c.Service, StringComparer.Ordinal);
+        return limitations
+            .Select(l => (l, Services: l.AffectedControls.Select(id => serviceOf.TryGetValue(id, out var sv) ? sv : null)
+                .OfType<string>().Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList()))
+            .GroupBy(x => string.Join("|", x.l.Outcome, x.l.FailureKind ?? "", x.l.Guidance, string.Join("+", x.Services)), StringComparer.Ordinal)
+            .Select(g =>
+            {
+                var first = g.First();
+                return new ReportLimitationGroup(
+                    first.l.CauseLabel, FailureKindLabel(first.l.FailureKind), first.l.Guidance, first.Services,
+                    g.Select(x => x.l.CapabilityLabel).ToList(),
+                    g.SelectMany(x => x.l.AffectedControls).Distinct(StringComparer.Ordinal).ToList());
+            })
+            .OrderByDescending(g => g.AffectedControls.Count).ThenByDescending(g => g.Capabilities.Count)
+            .ThenBy(g => g.CauseLabel, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>Tipo sanitizado da falha em palavras — o mesmo vocabulário da tela (nunca causa atribuída sem prova).</summary>
+    public static string? FailureKindLabel(string? kind) => kind switch
+    {
+        null or "" => null,
+        nameof(KnightFailureKind.HttpStatus) => "resposta HTTP de erro do serviço",
+        nameof(KnightFailureKind.Timeout) => "tempo esgotado",
+        nameof(KnightFailureKind.CircuitOpen) => "leitura não enviada — circuito do cliente HTTP aberto por falhas recentes",
+        nameof(KnightFailureKind.Transport) => "falha de rede ou de transporte antes da resposta",
+        nameof(KnightFailureKind.Contract) => "resposta fora do contrato documentado",
+        nameof(KnightFailureKind.Internal) => "falha interna do AEGIS (não atribuída ao provedor)",
+        nameof(KnightFailureKind.ProcessExit) => "o processo do adaptador terminou com código de erro",
+        nameof(KnightFailureKind.ProcessNoResult) => "o processo do adaptador terminou sem resultado",
+        nameof(KnightFailureKind.OutputLimit) => "saída do adaptador acima do limite",
+        nameof(KnightFailureKind.RuntimeUnavailable) => "runtime ou módulo do adaptador indisponível",
+        nameof(KnightFailureKind.PlatformUnsupported) => "leitura indisponível nesta plataforma",
+        nameof(KnightFailureKind.Connection) => "sessão do serviço não estabelecida",
+        nameof(KnightFailureKind.Command) => "comando de leitura falhou na sessão",
+        nameof(KnightFailureKind.Incomplete) => "leitura incompleta",
+        nameof(KnightFailureKind.NoScope) => "nada a consultar no escopo",
+        _ => kind,
+    };
+
+    /// <summary>Detalhe técnico SEGURO em linhas (vocabulário fechado e números), como na tela.</summary>
+    public static IReadOnlyList<string> TechnicalLines(KnightCapabilityDiagnostic? d)
+    {
+        if (d is null) return Array.Empty<string>();
+        var lines = new List<string> { "Tipo: " + FailureKindLabel(d.Kind.ToString()), "Estágio: " + d.Stage };
+        if (d.DurationMs is { } ms) lines.Add("Duração: " + (ms / 1000.0).ToString("0.0", ReportChart.Pt) + " s");
+        if (d.HttpStatus is not null || !string.IsNullOrEmpty(d.Code))
+            lines.Add(string.Join(" · ", new[] { d.HttpStatus is { } h ? $"HTTP {h}" : null, string.IsNullOrEmpty(d.Code) ? null : "código " + d.Code }.OfType<string>()));
+        if (!string.IsNullOrEmpty(d.Endpoint)) lines.Add("Endpoint: " + d.Endpoint);
+        if (!string.IsNullOrEmpty(d.CorrelationId)) lines.Add("Correlação da execução: " + d.CorrelationId);
+        if (!string.IsNullOrEmpty(d.ServiceRequestId)) lines.Add("Requisição no serviço: " + d.ServiceRequestId);
+        return lines;
     }
 
     /// <summary>Código + título congelado; título nulo quando a fotografia não tem o controle (nunca o catálogo atual).</summary>
@@ -382,7 +499,8 @@ public static class KnightReportModelBuilder
                 return new ReportLimitation(
                     name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), c.Detail,
                     c.Outcome == KnightCapabilityOutcome.InsufficientPermission ? KnightCapabilityLabels.RequiredPermission(c.Capability, s.SourceType) : null,
-                    affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null);
+                    affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null,
+                    c.Diagnostic?.Kind.ToString(), TechnicalLines(c.Diagnostic));
             })
             .ToList();
     }

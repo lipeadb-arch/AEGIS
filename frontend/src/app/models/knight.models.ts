@@ -1393,6 +1393,9 @@ export interface KnightLimitationView {
   previewApi: string | null;
   /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Linhas do detalhe técnico seguro (vazio quando a coleta não o registrou). */
   technical: string[];
+  /** [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Desfecho e tipo sanitizado da falha: a chave que separa limitações diferentes. */
+  outcome: KnightCapabilityOutcome;
+  failureKind: string | null;
 }
 
 const FAILURE_KIND_LABEL: Record<string, string> = {
@@ -1412,6 +1415,11 @@ const FAILURE_KIND_LABEL: Record<string, string> = {
   Incomplete: 'leitura incompleta',
   NoScope: 'nada a consultar no escopo',
 };
+
+/** [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Tipo sanitizado da falha em palavras (o código cru quando o vocabulário não o conhece). */
+export function failureKindLabel(kind: string | null | undefined): string | null {
+  return kind ? FAILURE_KIND_LABEL[kind] ?? kind : null;
+}
 
 /** [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Detalhe técnico seguro em linhas legíveis (só vocabulário fechado e números). */
 export function diagnosticLines(d: KnightCapabilityDiagnostic | null | undefined): string[] {
@@ -1485,6 +1493,8 @@ export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
       requirement: c.requirement ?? null,
       previewApi: c.previewApi ?? null,
       technical: diagnosticLines(c.diagnostic),
+      outcome: c.outcome,
+      failureKind: c.diagnostic?.kind ?? null,
     };
   });
 }
