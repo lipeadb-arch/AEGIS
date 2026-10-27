@@ -220,6 +220,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                           {{ v.title }}
                         </span>
                         @if (v.detail) { <span class="sync-detail">{{ v.detail }}</span> }
+                        @if (v.technical) { <span class="sync-detail sync-technical">Diagnóstico técnico: {{ v.technical }}</span> }
                         @if (src.requirement) { <span class="sync-detail">{{ src.requirement }}</span> }
                         <span class="sync-actions">
                           @if (v.runId) {
@@ -657,6 +658,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       .sync-state.tone-err { border-left-color: var(--red); background: var(--hover); }
       .sync-title { display: flex; gap: 8px; align-items: center; color: var(--text); font-weight: 600; }
       .sync-detail { color: var(--text-2); }
+      .sync-technical { font-size: 0.85em; overflow-wrap: anywhere; }
       .sync-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
       .ok-note {
         color: var(--cyan);

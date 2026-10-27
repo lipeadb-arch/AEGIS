@@ -746,7 +746,7 @@ public static class DefenderForOffice365Controls
                 if (vip.Accounts.Count == 0)
                     return KnightControlOutcome.NotApplicable("nenhuma conta está marcada como prioritária (ver AK-MDO-016).");
                 var rules = c.Configuration.Read<DefenderPresetRule>();
-                if (!rules.Collected) return KnightControlOutcome.NotEvaluated(Trim(rules.MissingReason ?? "as regras predefinidas não foram coletadas."));
+                if (!rules.Collected) return KnightControlOutcome.NotEvaluated(rules.MissingReason ?? "as regras predefinidas não foram coletadas.");
                 var strict = rules.Items.Where(r => r.IsStrict && r.Enabled).ToList();
                 var eop = strict.Where(r => r.Kind == DefenderPresetRule.KindEop).ToList();
                 var atp = strict.Where(r => r.Kind == DefenderPresetRule.KindAtp).ToList();

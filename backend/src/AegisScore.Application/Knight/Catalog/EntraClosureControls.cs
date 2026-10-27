@@ -61,7 +61,7 @@ public static class EntraClosureControls
                         notDisabled);
                 return inv.Complete
                     ? KnightControlOutcome.Passed($"Nenhuma das {inv.EnabledAccounts} conta(s) habilitada(s) usa a MFA por usuário (legado).", new[] { setting })
-                    : KnightControlOutcome.NotEvaluated(Trim(inv.Limitation ?? "nem todas as contas habilitadas foram lidas."), new[] { setting });
+                    : KnightControlOutcome.NotEvaluated(inv.Limitation ?? "nem todas as contas habilitadas foram lidas.", new[] { setting });
             }),
             Ref(M365 + "5.1.2.1"), Ref(AZ + "5.1.3")),
 

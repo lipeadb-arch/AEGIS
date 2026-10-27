@@ -82,6 +82,14 @@ internal sealed class ExchangeCollectionScenario : IExchangeAdminReader
         /// avaliação e as exportações como TEXTO, sem virar marcação nem sumir.
         /// </summary>
         HostileText,
+
+        /// <summary>
+        /// [AEGIS-KNIGHT-PERSISTENCE-01] SMTP AUTH DESABILITADO na organização e a leitura das configurações de acesso
+        /// de cliente (Get-CASMailbox) RECUSADA por autorização; as demais concluíram. É a combinação em que o motivo
+        /// de "não avaliado" do SMTP AUTH junta a explicação do controle ao diagnóstico da recusa — o texto mais longo
+        /// que a avaliação do Exchange monta, e o que excedia a coluna de 500 caracteres no PostgreSQL.
+        /// </summary>
+        CasMailboxesDenied,
     }
 
     /// <summary>Marcação sintética usada no cenário de texto hostil. Não é conteúdo de cliente algum.</summary>
@@ -221,7 +229,10 @@ internal sealed class ExchangeCollectionScenario : IExchangeAdminReader
 
             Read("ExchangeMailboxSignIn", "Get-User", Accounts(v, ok), truncated),
 
-            Read("ExchangeCasMailboxes", "Get-CASMailbox", CasMailboxes(v, ok), truncated),
+            v == Variant.CasMailboxesDenied
+                ? Failed("ExchangeCasMailboxes", "Get-CASMailbox", "InsufficientPermission",
+                    "AuthorizationFailed/UnauthorizedAccessException")
+                : Read("ExchangeCasMailboxes", "Get-CASMailbox", CasMailboxes(v, ok), truncated),
 
             Read("ExchangeAuditBypassAssociations", "Get-MailboxAuditBypassAssociation", new[]
             {

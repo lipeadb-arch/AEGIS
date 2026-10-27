@@ -179,7 +179,7 @@ public static class AzureClosureControls
         return Population(items, check, Describe,
             (n, t) => string.Format(CultureInfo.InvariantCulture, exposed, n, t),
             t => string.Format(CultureInfo.InvariantCulture, passed, t),
-            () => KnightControlOutcome.NotEvaluated(Trim(string.Join(" ", new[] { reason, apiReason }.OfType<string>()))),
+            () => KnightControlOutcome.NotEvaluated(string.Join(" ", new[] { reason, apiReason }.OfType<string>())),
             complete && apiOk, string.Join(" ", new[] { reason, apiReason }.OfType<string>()));
     }
 
@@ -264,7 +264,7 @@ public static class AzureClosureControls
                     t => $"As {t} exportação(ões) do log de atividades para armazenamento usam conta cifrada com chave do cliente.",
                     () => complete
                         ? KnightControlOutcome.NotApplicable($"nenhuma exportação do log de atividades para conta de armazenamento nas {v.Scope.Count} assinatura(s) do escopo.")
-                        : KnightControlOutcome.NotEvaluated(Trim(reason ?? "leitura incompleta.")),
+                        : KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta."),
                     complete && storageOk, string.Join(" ", new[] { reason, storageReason }.OfType<string>()));
             },
             Ref(AzureRefs.Az + "6.1.1.3")),
@@ -324,7 +324,7 @@ public static class AzureClosureControls
                     t => $"Os {t} recurso(s) dos tipos examinados exportam logs de recurso.",
                     () => complete
                         ? KnightControlOutcome.NotApplicable($"nenhum recurso dos tipos examinados nas {v.Scope.Count} assinatura(s) do escopo.")
-                        : KnightControlOutcome.NotEvaluated(Trim(string.Join(" ", parts))),
+                        : KnightControlOutcome.NotEvaluated(string.Join(" ", parts)),
                     complete, parts.Count == 0 ? null : Trim(string.Join(" ", parts), 900));
             },
             Ref(AzureRefs.Az + "6.1.4", KnightReferenceMatch.Partial,
@@ -393,9 +393,9 @@ public static class AzureClosureControls
                 var why = string.Join(" ", new[] { reason, refsReason }.OfType<string>());
                 if (apps.Count == 0) return EmptyOrIncomplete(v, KnightCapability.AzureAppService, "aplicativo do App Service");
                 if (withRefs.Count == 0)
-                    return KnightControlOutcome.NotEvaluated(Trim(complete && refsOk
+                    return KnightControlOutcome.NotEvaluated(complete && refsOk
                         ? $"Nenhum dos {apps.Count} aplicativo(s) referencia o Key Vault nas configurações. Se as demais configurações guardam segredo em texto não é visível com o papel Leitor — a leitura que mostraria isso devolve os valores e não é usada. Registre o resultado manual da referência, se for o caso."
-                        : why));
+                        : why);
                 return Population(withRefs, a =>
                     {
                         var refs = a.Items("kvrefs:items");
@@ -407,7 +407,7 @@ public static class AzureClosureControls
                     }, Describe,
                     (n, t) => $"{n} de {t} aplicativo(s) com referência ao Key Vault têm referência não resolvida.",
                     t => $"Os {t} aplicativo(s) com referência ao Key Vault resolvem todas as referências.",
-                    () => KnightControlOutcome.NotEvaluated(Trim(why)),
+                    () => KnightControlOutcome.NotEvaluated(why),
                     complete && refsOk, why.Length == 0 ? null : Trim(why, 900));
             },
             Ref(AzureRefs.Azc + "2.5", KnightReferenceMatch.Partial,
@@ -428,7 +428,7 @@ public static class AzureClosureControls
                 return Population(all, UnityCatalogByArm, Describe,
                     (n, t) => string.Format(CultureInfo.InvariantCulture, "{0} de {1} workspace(s) do Databricks não têm Unity Catalog.", n, t),
                     t => string.Format(CultureInfo.InvariantCulture, "Os {0} workspace(s) do Databricks têm o Unity Catalog habilitado.", t),
-                    () => KnightControlOutcome.NotEvaluated(Trim(reason ?? "leitura incompleta.")),
+                    () => KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta."),
                     complete, reason);
             },
             Ref(AzureRefs.Az + "2.1.5", KnightReferenceMatch.Partial,

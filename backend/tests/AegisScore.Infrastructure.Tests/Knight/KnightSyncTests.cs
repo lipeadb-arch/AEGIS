@@ -118,6 +118,7 @@ public sealed class KnightSyncTests : IDisposable
     [InlineData("ok", KnightSyncStatus.Completed, null)]
     [InlineData("naoConfigurado", KnightSyncStatus.Failed, "ConnectorNotConfigured")]
     [InlineData("erro", KnightSyncStatus.Failed, "CollectionError")]
+    [InlineData("persistencia", KnightSyncStatus.Failed, "PersistenceError")]
     public async Task Worker_ExecutaSobOTenantDoPedido_ERegistraODesfecho(string caso, KnightSyncStatus esperado, string? categoria)
     {
         var conector = await SeedAsync(TenantA);
@@ -135,6 +136,10 @@ public sealed class KnightSyncTests : IDisposable
             {
                 "ok" => Assessment(runId, KnightSourceState.PartialCollection),
                 "naoConfigurado" => throw new KnightSourceNotConfiguredException(KnightSourceType.MicrosoftEntraId),
+                // [AEGIS-KNIGHT-PERSISTENCE-01] Coleta e avaliação concluídas, gravação recusada: categoria própria.
+                "persistencia" => throw new KnightPersistenceException(KnightSourceType.MicrosoftEntraId, "gravação da avaliação", "22001",
+                    new[] { new KnightPersistenceField("KnightIndicatorResult", "NotEvaluatedReason", "AK-ENTRA-001", 653, 500) },
+                    new InvalidOperationException("recusa do banco")),
                 _ => throw new InvalidOperationException("Graph caiu no meio"),
             };
         });
@@ -156,6 +161,11 @@ public sealed class KnightSyncTests : IDisposable
         {
             fim.RunId.Should().BeNull("uma tentativa que falhou não produz avaliação nova");
             fim.Message.Should().NotBeNullOrWhiteSpace();
+            if (caso == "persistencia")
+                fim.Message.Should().Contain("não pôde ser gravado").And.Contain("a avaliação anterior continua valendo")
+                    .And.Contain("pedido " + pedido.Id).And.Contain("SQLSTATE 22001")
+                    .And.Contain("KnightIndicatorResult.NotEvaluatedReason (AK-ENTRA-001) com 653 caracteres, limite 500")
+                    .And.NotContain("recusa do banco", "a mensagem crua da exceção não vai para o pedido");
         }
 
         (await Requests(Ctx(TenantA), TenantA).ActiveConnectorIdsAsync()).Should().BeEmpty("o pedido saiu do estado ativo");

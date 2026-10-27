@@ -28,7 +28,7 @@ namespace AegisScore.Infrastructure.Tests.Knight;
 ///   • a avaliação relida do banco dá o MESMO veredito da bateria em SQLite;
 ///   • as três aquisições Microsoft — Entra ID, Teams e Exchange Online — convivem no mesmo tenant sem que
 ///     nenhuma apague a outra;
-///   • os textos que a avaliação GRAVA cabem nas colunas que os guardam. O SQLite ignora HasMaxLength; o
+///   • os textos que a avaliação GRAVA chegam inteiros às colunas que os guardam. O SQLite ignora HasMaxLength; o
 ///     PostgreSQL recusa, e é aqui que o motivo montado a partir de dado coletado é de fato verificado;
 ///   • o índice único parcial de sincronização é por (conector, FONTE): um pedido do Exchange não bloqueia o
 ///     do Teams nem o do Entra ID no mesmo conector.
@@ -155,8 +155,8 @@ public sealed class KnightExchangeConfigurationPostgresTests
     /// COLETADO: nomes de política, endereços, comandos recusados, listas que crescem com o ambiente. O SQLite
     /// ignora o limite da coluna e aceita qualquer tamanho; o PostgreSQL recusa. Este teste percorre TODAS as
     /// variantes do ambiente sintético — inclusive as que produzem os textos mais longos (leitura recusada,
-    /// mecanismo faltando, truncamento e alcance de políticas) — e grava cada uma de verdade, na execução E na
-    /// fotografia publicada, que tem limites próprios e mais apertados para a evidência.
+    /// mecanismo faltando, truncamento, alcance de políticas e a recusa do Get-CASMailbox) — e grava cada uma de verdade,
+    /// na execução E na fotografia publicada, comparando o texto gravado com o produzido.
     /// </summary>
     [Fact]
     public async Task TextosDaAvaliacaoDoExchange_CabemNasColunasReais_EmTodasAsVariantes()
@@ -190,15 +190,20 @@ public sealed class KnightExchangeConfigurationPostgresTests
                 .SingleAsync(s => s.Id == published.Summary.Id);
             fotografia.Indicators.Should().HaveCount(persistido.Indicators.Count, variante.ToString());
 
-            // A releitura confirma que nada foi cortado em silêncio no caminho de ida.
-            foreach (var indicador in fotografia.Indicators)
-            {
-                (indicador.Evidence?.Length ?? 0).Should().BeLessThanOrEqualTo(2000, $"{variante}/{indicador.IndicatorId}");
-                (indicador.NotEvaluatedReason?.Length ?? 0).Should().BeLessThanOrEqualTo(1000, $"{variante}/{indicador.IndicatorId}");
-            }
+            // A releitura confirma que nada foi cortado em silêncio no caminho de ida: o que a avaliação produziu é o que a
+            // execução guarda, e o que a execução guarda é o que a fotografia congela.
+            // [AEGIS-KNIGHT-PERSISTENCE-01] Antes, este teste afirmava os LIMITES (500/1000/2000) — e não percorria a recusa
+            // do Get-CASMailbox, cujo motivo tem mais de 500 caracteres. Agora afirma a IGUALDADE, em todas as variantes.
             foreach (var indicador in persistido.Indicators.Where(i => i.IndicatorId.StartsWith("AK-EXO-")))
-                (indicador.NotEvaluatedReason?.Length ?? 0).Should().BeLessThanOrEqualTo(500,
-                    $"{variante}/{indicador.IndicatorId}: o motivo é montado a partir de dado coletado");
+            {
+                var avaliado = run.Indicators.Single(i => i.IndicatorId == indicador.IndicatorId);
+                indicador.NotEvaluatedReason.Should().Be(avaliado.NotEvaluatedReason, $"{variante}/{indicador.IndicatorId}");
+                indicador.Evidence.Should().Be(avaliado.Evidence, $"{variante}/{indicador.IndicatorId}");
+                var congelado = fotografia.Indicators.Single(i => i.IndicatorId == indicador.IndicatorId);
+                congelado.NotEvaluatedReason.Should().Be(indicador.NotEvaluatedReason, $"{variante}/{indicador.IndicatorId}");
+                congelado.Evidence.Should().Be(indicador.Evidence, $"{variante}/{indicador.IndicatorId}");
+                congelado.AffectedDetailLimitation.Should().Be(indicador.AffectedDetailLimitation, $"{variante}/{indicador.IndicatorId}");
+            }
 
             var maior = persistido.Indicators.Where(i => i.IndicatorId.StartsWith("AK-EXO-"))
                 .OrderByDescending(i => (i.Evidence ?? "").Length + (i.NotEvaluatedReason ?? "").Length).First();

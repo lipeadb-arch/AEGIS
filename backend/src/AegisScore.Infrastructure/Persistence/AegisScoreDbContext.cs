@@ -1515,7 +1515,10 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
             e.Property(x => x.Recommendation).HasMaxLength(1000);
-            e.Property(x => x.NotEvaluatedReason).HasMaxLength(500);
+            // [AEGIS-KNIGHT-PERSISTENCE-01] O motivo de "não avaliado" é montado a partir de diagnóstico COLETADO (comando
+            // recusado, listas de políticas, explicação do controle) e não tem tamanho fixo — como a evidência, é text. O
+            // limite de 500 recusava a avaliação inteira no PostgreSQL (SQLSTATE 22001); cortar mudaria o que o operador lê.
+            e.Property(x => x.NotEvaluatedReason);
             e.Property(x => x.SourceType).HasDefaultValue(KnightSourceType.Demo);
             // Uma execução não pode conter duas linhas para o MESMO IndicatorId — invariante de banco. O
             // índice é tenant-leading e cobre o carregamento por (tenant, execução), substituindo o antigo
@@ -1693,7 +1696,9 @@ public class AegisScoreDbContext : DbContext
         {
             e.Property(x => x.IndicatorId).HasMaxLength(40).IsRequired();
             e.Property(x => x.Title).HasMaxLength(300).IsRequired();
-            e.Property(x => x.Evidence).HasMaxLength(2000);
+            // [AEGIS-KNIGHT-PERSISTENCE-01] Evidência, motivo e limitação do detalhe são CONGELADOS da execução, onde são text:
+            // a fotografia não pode ter limite menor que a origem, ou publicar falharia com o mesmo texto que a avaliação gravou.
+            e.Property(x => x.Evidence);
             e.Property(x => x.NistCodes)
                 .HasConversion(stringList, stringListCmp).HasColumnType("jsonb");
             e.Property(x => x.MitreTechniques)
@@ -1702,7 +1707,7 @@ public class AegisScoreDbContext : DbContext
 
             // [AEGIS-KNIGHT-MULTICLOUD-01] Campos congelados do relatório v2 — nulos (ou []) nas fotografias v1.
             e.Property(x => x.Recommendation).HasMaxLength(2000);
-            e.Property(x => x.NotEvaluatedReason).HasMaxLength(1000);
+            e.Property(x => x.NotEvaluatedReason);
             e.Property(x => x.Domain).HasMaxLength(50);
             e.Property(x => x.Service).HasMaxLength(100);
             e.Property(x => x.Provider).HasMaxLength(50);
@@ -1711,7 +1716,7 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.ExpectedConfiguration).HasMaxLength(2000);
             e.Property(x => x.DoesNotProve).HasMaxLength(2000);
             e.Property(x => x.Criterion).HasMaxLength(2000);
-            e.Property(x => x.AffectedDetailLimitation).HasMaxLength(2000);
+            e.Property(x => x.AffectedDetailLimitation);
             // [AEGIS-KNIGHT-COVERAGE-01] Impacto potencial e plataforma congelados (nulos nas fotografias anteriores).
             e.Property(x => x.Impact).HasMaxLength(2000);
             e.Property(x => x.Platform).HasMaxLength(60);

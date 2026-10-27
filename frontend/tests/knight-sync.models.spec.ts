@@ -115,6 +115,28 @@ test('falha mantém a avaliação anterior como anterior, nunca como resultado',
   ok((v.detail ?? '').includes('Nenhuma avaliação nova'), 'declara que nada novo foi registrado');
 });
 
+test('falha de GRAVAÇÃO não vira falha de coleta: diz o que terminou, preserva a anterior e separa o diagnóstico', () => {
+  const v = syncView(req({
+    status: 'Failed',
+    failureCategory: 'PersistenceError',
+    message: 'A coleta e a avaliação terminaram, mas o resultado não pôde ser gravado no banco de dados. Nenhuma avaliação nova foi '
+      + 'registrada; a avaliação anterior continua valendo. Diagnóstico técnico — pedido p-1 · etapa: gravação da avaliação · '
+      + 'SQLSTATE 22001 · KnightIndicatorResult.NotEvaluatedReason (AK-EXO-016) com 653 caracteres, limite 500.',
+    lastCompletedRunId: 'run-5',
+    lastCompletedAt: '2026-10-26T09:00:00Z',
+  }));
+  eq(v.tone, 'err', 'falha');
+  ok(v.title.includes('não pôde ser gravado') && !v.title.includes('coleta falhou'), 'título diz que a gravação falhou');
+  eq(v.runId, null, 'nenhum resultado deste pedido');
+  eq(v.previousRunId, 'run-5', 'a anterior continua valendo');
+  ok(!!v.detail && v.detail.includes('continua valendo'), 'detalhe preserva a anterior');
+  ok(!!v.technical && v.technical.startsWith('pedido p-1') && v.technical.includes('SQLSTATE 22001'), 'diagnóstico separado');
+});
+
+test('falha de coleta não ganha diagnóstico de gravação', () => {
+  ok(!syncView(req({ status: 'Failed', failureCategory: 'CollectionError', message: 'x' })).technical, 'sem diagnóstico');
+});
+
 test('falha sem avaliação anterior não oferece link', () => {
   const v = syncView(req({ status: 'Failed' }));
   eq(v.previousRunId, null, 'sem anterior');

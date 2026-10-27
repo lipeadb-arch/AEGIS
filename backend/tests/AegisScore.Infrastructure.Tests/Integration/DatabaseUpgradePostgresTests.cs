@@ -137,6 +137,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-AUDITOR-CONTEXT-01] Conversas do Auditor Virtual por tenant e conta: uma tabela NOVA, sem alterar nenhuma
             // existente e sem backfill — nenhuma conversa nasce da atualização.
             "20261008052236_AuditorContext01_Conversations",
+            // [AEGIS-KNIGHT-PERSISTENCE-01] Motivo de não avaliado (execução e fotografia), evidência e limitação congeladas
+            // passam de varchar(n) para text — conversão binariamente compatível, sem reescrever linhas nem backfill.
+            "20261027222356_KnightPersistence01_DiagnosticTextColumns",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;
