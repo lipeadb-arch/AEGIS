@@ -3049,8 +3049,7 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<string>("NotEvaluatedReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Recommendation")
                         .IsRequired()
@@ -4567,8 +4566,7 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<string>("AffectedDetailLimitation")
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
+                        .HasColumnType("text");
 
                     b.Property<int>("AffectedObjectCount")
                         .HasColumnType("integer");
@@ -4600,8 +4598,7 @@ namespace AegisScore.Infrastructure.Migrations
 
                     b.Property<string>("Evidence")
                         .IsRequired()
-                        .HasMaxLength(2000)
-                        .HasColumnType("character varying(2000)");
+                        .HasColumnType("text");
 
                     b.Property<string>("ExpectedConfiguration")
                         .HasMaxLength(2000)
@@ -4628,8 +4625,7 @@ namespace AegisScore.Infrastructure.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<string>("NotEvaluatedReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
+                        .HasColumnType("text");
 
                     b.Property<string>("Platform")
                         .HasMaxLength(60)

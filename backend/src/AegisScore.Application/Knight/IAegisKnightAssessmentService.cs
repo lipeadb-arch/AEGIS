@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AegisScore.Domain;
@@ -175,6 +176,61 @@ public sealed class KnightSourceNotConfiguredException : Exception
     public KnightSourceType SourceType { get; }
     public KnightSourceNotConfiguredException(KnightSourceType source)
         : base($"Fonte {source} não está configurada para este tenant.") => SourceType = source;
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-PERSISTENCE-01] Campo de texto que excedeu o limite da coluna na gravação: entidade, propriedade, controle
+/// (código do catálogo, quando a linha o tem) e TAMANHOS — nunca o valor, que é montado a partir de dado coletado.
+/// </summary>
+public sealed record KnightPersistenceField(string Entity, string Property, string? IndicatorId, int Length, int Limit)
+{
+    public override string ToString() =>
+        $"{Entity}.{Property}{(IndicatorId is null ? "" : $" ({IndicatorId})")} com {Length} caracteres, limite {Limit}";
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-PERSISTENCE-01] A coleta e a avaliação TERMINARAM, mas a gravação da avaliação falhou. É uma falha distinta
+/// da coleta: nada foi gravado (a transação desfaz tudo) e a avaliação anterior continua valendo. A mensagem só carrega
+/// diagnóstico seguro — etapa, SQLSTATE, entidade/propriedade e tamanhos —, sem valores, tokens ou conteúdo coletado.
+/// </summary>
+public sealed class KnightPersistenceException : Exception
+{
+    public KnightSourceType SourceType { get; }
+    /// <summary>Etapa em que a gravação falhou (ex.: "gravação da avaliação").</summary>
+    public string Stage { get; }
+    /// <summary>SQLSTATE devolvido pelo banco, quando o provedor o informa (PostgreSQL: 22001 = valor longo demais).</summary>
+    public string? SqlState { get; }
+    /// <summary>Campos identificados como excedentes; vazio quando a causa não é de tamanho ou não pôde ser localizada.</summary>
+    public IReadOnlyList<KnightPersistenceField> Fields { get; }
+    /// <summary>
+    /// Somente os TIPOS da cadeia de exceções internas (ex.: "DbUpdateException → PostgresException"), para log. As
+    /// mensagens do provedor ficam de fora: podem citar valores, parâmetros ou trechos do conteúdo coletado.
+    /// </summary>
+    public string ExceptionTypes { get; }
+
+    public KnightPersistenceException(
+        KnightSourceType source, string stage, string? sqlState, IReadOnlyList<KnightPersistenceField> fields, Exception inner)
+        : base(Describe(stage, sqlState, fields), inner)
+    {
+        SourceType = source;
+        Stage = stage;
+        SqlState = sqlState;
+        Fields = fields;
+        var types = new List<string>();
+        for (var e = inner; e is not null && types.Count < 5; e = e.InnerException)
+            types.Add(e.GetType().Name);
+        ExceptionTypes = string.Join(" → ", types);
+    }
+
+    /// <summary>Diagnóstico curto e seguro; lista no máximo três campos.</summary>
+    public static string Describe(string stage, string? sqlState, IReadOnlyList<KnightPersistenceField> fields)
+    {
+        var parts = new List<string> { $"etapa: {stage}", $"SQLSTATE {sqlState ?? "não informado"}" };
+        if (fields.Count > 0)
+            parts.Add(string.Join("; ", fields.Take(3).Select(f => f.ToString()))
+                      + (fields.Count > 3 ? $"; e mais {fields.Count - 3} campo(s)" : ""));
+        return string.Join(" · ", parts);
+    }
 }
 
 /// <summary>

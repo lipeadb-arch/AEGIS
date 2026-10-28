@@ -309,8 +309,10 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
         encaminhamento.Evidence.Should().NotContain("foram verificados e estão fechados",
             "nunca declarar bloqueado o que não foi lido");
 
-        // O motivo é GRAVADO: ele cabe na coluna que o guarda, inclusive montado a partir de lista variável.
-        (encaminhamento.NotEvaluatedReason!.Length + "Não avaliado: ".Length).Should().BeLessThanOrEqualTo(500);
+        // O motivo é GRAVADO inteiro, inclusive montado a partir de lista variável. [AEGIS-KNIGHT-PERSISTENCE-01] Antes este
+        // teste afirmava o limite de 500 da coluna; a coluna passou a text e o que se afirma é que nada foi cortado.
+        encaminhamento.Evidence.Should().Be("Não avaliado: " + encaminhamento.NotEvaluatedReason);
+        encaminhamento.NotEvaluatedReason.Should().NotEndWith("…");
     }
 
     // ======================================================================================================

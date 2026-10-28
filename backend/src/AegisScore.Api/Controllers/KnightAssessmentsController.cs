@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using AegisScore.Api.Contracts;
 using AegisScore.Application.Abstractions;
 using AegisScore.Application.Knight;
@@ -24,12 +25,15 @@ public class KnightAssessmentsController : ControllerBase
     private readonly IAegisKnightAssessmentService _service;
     private readonly ITenantContext _tenant;
     private readonly IKnightManualResultService? _manual;
+    private readonly ILogger<KnightAssessmentsController>? _log;
 
-    public KnightAssessmentsController(IAegisKnightAssessmentService service, ITenantContext tenant, IKnightManualResultService? manual = null)
+    public KnightAssessmentsController(IAegisKnightAssessmentService service, ITenantContext tenant, IKnightManualResultService? manual = null,
+        ILogger<KnightAssessmentsController>? log = null)
     {
         _service = service;
         _tenant = tenant;
         _manual = manual;
+        _log = log;
     }
 
     /// <summary>Executa um assessment de DEMONSTRAÇÃO (fonte Demo, sintética) e devolve o resultado completo.</summary>
@@ -64,6 +68,21 @@ public class KnightAssessmentsController : ControllerBase
         catch (KnightSourceNotConfiguredException)
         {
             return Conflict($"A fonte {sourceType} não está configurada para este tenant.");
+        }
+        catch (KnightPersistenceException ex)
+        {
+            // [AEGIS-KNIGHT-PERSISTENCE-01] Coleta e avaliação concluídas, gravação recusada: nada foi registrado e a avaliação
+            // anterior continua valendo. O diagnóstico é seguro (etapa, SQLSTATE, tipos, nomes e tamanhos), nunca o texto coletado
+            // — por isso o log não leva a exceção, cuja cadeia do provedor pode citar valores.
+            _log?.LogError(
+                "Avaliação KNIGHT {Request} ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}; exceções {ExceptionTypes}; campos {Fields}.",
+                HttpContext?.TraceIdentifier, sourceType, ex.Stage, ex.SqlState ?? "não informado", ex.ExceptionTypes,
+                ex.Fields.Count == 0 ? "não identificados" : string.Join("; ", ex.Fields));
+            return Problem(
+                title: "A avaliação não pôde ser gravada.",
+                detail: "A coleta e a avaliação terminaram, mas o resultado não pôde ser gravado no banco de dados. Nenhuma "
+                    + "avaliação nova foi registrada; a avaliação anterior continua valendo. Diagnóstico técnico — " + ex.Message + ".",
+                statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 

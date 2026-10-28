@@ -62,7 +62,7 @@ public static class KnightRuleKit
     public static KnightControlOutcome Single<T>(KnightEvaluationContext c, Func<T, KnightControlOutcome> rule) where T : class
     {
         var read = c.Configuration.Read<T>();
-        if (!read.Collected) return KnightControlOutcome.NotEvaluated(Trim(read.MissingReason ?? "configuração não coletada."));
+        if (!read.Collected) return KnightControlOutcome.NotEvaluated(read.MissingReason ?? "configuração não coletada.");
         return read.Single is { } doc
             ? rule(doc)
             : KnightControlOutcome.NotEvaluated("a coleta concluiu sem devolver esta configuração.");
@@ -72,7 +72,7 @@ public static class KnightRuleKit
     public static KnightControlOutcome Many<T>(KnightEvaluationContext c, Func<IReadOnlyList<T>, KnightControlOutcome> rule) where T : class
     {
         var read = c.Configuration.Read<T>();
-        return read.Collected ? rule(read.Items) : KnightControlOutcome.NotEvaluated(Trim(read.MissingReason ?? "configuração não coletada."));
+        return read.Collected ? rule(read.Items) : KnightControlOutcome.NotEvaluated(read.MissingReason ?? "configuração não coletada.");
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public static class KnightRuleKit
                 limitation.Length == 0 ? null : Trim(limitation, 900));
 
         if (!complete || unknown.Count > 0)
-            return KnightControlOutcome.NotEvaluated(Trim(limitation.Length == 0 ? "população incompleta." : limitation),
+            return KnightControlOutcome.NotEvaluated(limitation.Length == 0 ? "população incompleta." : limitation,
                 unknown.Concat(compliant).Take(maxEvidence).ToList());
 
         return KnightControlOutcome.Passed(passedEvidence(items.Count), compliant.Take(maxEvidence).ToList());

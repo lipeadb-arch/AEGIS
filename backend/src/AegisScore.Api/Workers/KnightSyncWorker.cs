@@ -132,6 +132,17 @@ public sealed class KnightSyncWorker : BackgroundService
             // O lease foi perdido (outro processo o assumiu): não há desfecho a gravar por aqui.
             _log.LogWarning("Lease da sincronização {Request} do KNIGHT perdido; o processamento foi interrompido.", lease.RequestId);
         }
+        catch (KnightPersistenceException ex)
+        {
+            // [AEGIS-KNIGHT-PERSISTENCE-01] A coleta e a avaliação terminaram; o que falhou foi GRAVAR. Não é falha de coleta e
+            // não pode ser lida como tal. Log estruturado só com etapa, pedido, SQLSTATE, tipos de exceção e nomes/tamanhos —
+            // SEM a exceção: a cadeia do provedor pode citar valores ou conteúdo coletado.
+            _log.LogError(
+                "Sincronização {Request} do KNIGHT ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}; exceções {ExceptionTypes}; campos {Fields}.",
+                lease.RequestId, ex.SourceType, ex.Stage, ex.SqlState ?? "não informado", ex.ExceptionTypes,
+                ex.Fields.Count == 0 ? "não identificados" : string.Join("; ", ex.Fields));
+            await FailOrRecoverAsync(lease, PersistenceErrorCategory, PersistenceFailureMessage(lease.RequestId, ex));
+        }
         catch (Exception ex)
         {
             _log.LogError(ex, "Sincronização {Request} do KNIGHT falhou.", lease.RequestId);
@@ -160,6 +171,21 @@ public sealed class KnightSyncWorker : BackgroundService
                 _log.LogWarning("Sincronização {Request} do KNIGHT: avaliação vinculada não pôde ser lida; a finalização fica para a retomada.", lease.RequestId);
                 break;
         }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-PERSISTENCE-01] Categoria da falha de GRAVAÇÃO — distinta de "CollectionError".</summary>
+    internal const string PersistenceErrorCategory = "PersistenceError";
+
+    /// <summary>
+    /// Mensagem do pedido para a falha de gravação: o que aconteceu, que a avaliação anterior continua valendo e o diagnóstico
+    /// seguro. Cabe na coluna da mensagem (1000) — o diagnóstico enumera no máximo três campos.
+    /// </summary>
+    internal static string PersistenceFailureMessage(Guid requestId, KnightPersistenceException ex)
+    {
+        var message = "A coleta e a avaliação terminaram, mas o resultado não pôde ser gravado no banco de dados. Nenhuma avaliação "
+            + "nova foi registrada; a avaliação anterior continua valendo. Diagnóstico técnico — pedido " + requestId + " · "
+            + KnightPersistenceException.Describe(ex.Stage, ex.SqlState, ex.Fields) + ".";
+        return message.Length <= 1000 ? message : message[..999] + "…";
     }
 
     private static string MessageFor(KnightSourceState state) => state switch

@@ -102,6 +102,24 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             .Select(r => new SyncRequestState(r.RunId, r.LeaseId, r.Status))
             .FirstOrDefaultAsync(ct);
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-PERSISTENCE-01] A única escrita da avaliação. Uma recusa do banco aqui NÃO é falha de coleta: a coleta e a
+    /// avaliação já terminaram, e o que falhou foi gravá-las. Ela sai como <see cref="KnightPersistenceException"/>, com etapa,
+    /// SQLSTATE e — quando a causa é tamanho — entidade, propriedade e tamanhos, nunca valores. Nada fica gravado: sem
+    /// transação o SaveChanges é atômico, e com transação a exceção a desfaz ao sair do escopo.
+    /// </summary>
+    private async Task SaveAssessmentAsync(KnightSourceType source, CancellationToken ct)
+    {
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            throw await KnightPersistenceDiagnostics.FromAsync(ex, _db, source, "gravação da avaliação");
+        }
+    }
+
     private async Task<KnightSyncRunResult> RunCoreAsync(KnightSourceType source, KnightSyncBinding? binding, CancellationToken ct)
     {
         var tenantId = _tenant.TenantId
@@ -299,7 +317,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
             if (identityAcquisitionId is { } citada)
                 await PinCitedAcquisitionAsync(citada, ct);
 
-            await _db.SaveChangesAsync(ct);
+            await SaveAssessmentAsync(source, ct);
 
             if (binding is not null)
             {
@@ -331,7 +349,7 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
         }
         else
         {
-            await _db.SaveChangesAsync(ct);
+            await SaveAssessmentAsync(source, ct);
         }
 
         // 7) IA CONSULTIVA (uma chamada, fora da transação) — ENRIQUECIMENTO de um resultado que já está

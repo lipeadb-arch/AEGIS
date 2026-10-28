@@ -186,7 +186,7 @@ public static class AzureGovernanceControls
                 }
                 return complete
                     ? KnightControlOutcome.Passed($"Nenhuma atribuição do papel Administrador de Acesso do Usuário na raiz; {uaaCount} atribuição(ões) do papel em escopos menores ficam como evidência.")
-                    : KnightControlOutcome.NotEvaluated(Trim(reason ?? "leitura incompleta."));
+                    : KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta.");
             },
             Ref(AzureRefs.Az + "5.3.3", KnightReferenceMatch.Partial,
                 "Avalia a atribuição no escopo raiz (resultado da elevação de acesso), que é a visível a partir das assinaturas com o papel Leitor; atribuições em grupos de gerenciamento sem assinatura no escopo não são vistas.")),
@@ -231,7 +231,7 @@ public static class AzureGovernanceControls
                     t => $"As {t} conta(s) de usuário com papel no Azure estão habilitadas.",
                     () => complete
                         ? KnightControlOutcome.NotApplicable("nenhuma conta de usuário tem atribuição de papel visível nas assinaturas do escopo.")
-                        : KnightControlOutcome.NotEvaluated(Trim(reason ?? "leitura incompleta.")),
+                        : KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta."),
                     complete, reason);
             },
             Ref(AzureRefs.Az + "5.3.5")),

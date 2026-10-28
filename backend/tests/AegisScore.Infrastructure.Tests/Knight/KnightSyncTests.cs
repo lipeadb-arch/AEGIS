@@ -15,7 +15,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.AspNetCore.Mvc;
+using AegisScore.Api.Controllers;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -118,6 +121,7 @@ public sealed class KnightSyncTests : IDisposable
     [InlineData("ok", KnightSyncStatus.Completed, null)]
     [InlineData("naoConfigurado", KnightSyncStatus.Failed, "ConnectorNotConfigured")]
     [InlineData("erro", KnightSyncStatus.Failed, "CollectionError")]
+    [InlineData("persistencia", KnightSyncStatus.Failed, "PersistenceError")]
     public async Task Worker_ExecutaSobOTenantDoPedido_ERegistraODesfecho(string caso, KnightSyncStatus esperado, string? categoria)
     {
         var conector = await SeedAsync(TenantA);
@@ -135,6 +139,10 @@ public sealed class KnightSyncTests : IDisposable
             {
                 "ok" => Assessment(runId, KnightSourceState.PartialCollection),
                 "naoConfigurado" => throw new KnightSourceNotConfiguredException(KnightSourceType.MicrosoftEntraId),
+                // [AEGIS-KNIGHT-PERSISTENCE-01] Coleta e avaliação concluídas, gravação recusada: categoria própria.
+                "persistencia" => throw new KnightPersistenceException(KnightSourceType.MicrosoftEntraId, "gravação da avaliação", "22001",
+                    new[] { new KnightPersistenceField("KnightIndicatorResult", "NotEvaluatedReason", "AK-ENTRA-001", 653, 500) },
+                    new InvalidOperationException("recusa do banco")),
                 _ => throw new InvalidOperationException("Graph caiu no meio"),
             };
         });
@@ -156,9 +164,83 @@ public sealed class KnightSyncTests : IDisposable
         {
             fim.RunId.Should().BeNull("uma tentativa que falhou não produz avaliação nova");
             fim.Message.Should().NotBeNullOrWhiteSpace();
+            if (caso == "persistencia")
+                fim.Message.Should().Contain("não pôde ser gravado").And.Contain("a avaliação anterior continua valendo")
+                    .And.Contain("pedido " + pedido.Id).And.Contain("SQLSTATE 22001")
+                    .And.Contain("KnightIndicatorResult.NotEvaluatedReason (AK-ENTRA-001) com 653 caracteres, limite 500")
+                    .And.NotContain("recusa do banco", "a mensagem crua da exceção não vai para o pedido");
         }
 
         (await Requests(Ctx(TenantA), TenantA).ActiveConnectorIdsAsync()).Should().BeEmpty("o pedido saiu do estado ativo");
+    }
+
+    // ---- [AEGIS-KNIGHT-PERSISTENCE-01] Diagnóstico de persistência sem valores ----------------------
+
+    /// <summary>
+    /// A cadeia do provedor pode citar o valor recusado (o PostgreSQL e o EF anexam detalhes e parâmetros às mensagens).
+    /// O sentinela está nas mensagens das exceções internas: não pode chegar aos logs, à resposta HTTP nem ao pedido; os
+    /// metadados — pedido, fonte, etapa, SQLSTATE, tipos de exceção, entidade/propriedade e tamanhos — permanecem.
+    /// </summary>
+    private const string Sentinela = "SENTINELA-VALOR-COLETADO-7f3a";
+
+    private static KnightPersistenceException FalhaComSentinela() =>
+        new(KnightSourceType.MicrosoftEntraId, "gravação da avaliação", "22001",
+            new[] { new KnightPersistenceField("KnightIndicatorResult", "NotEvaluatedReason", "AK-EXO-016", 653, 500) },
+            new DbUpdateException("An error occurred while saving the entity changes. Valor: " + Sentinela,
+                new InvalidOperationException("22001: value too long: '" + Sentinela + "'")));
+
+    [Fact]
+    public async Task Worker_FalhaDePersistencia_LogaSoMetadados_SemAExcecaoDoProvedor()
+    {
+        var conector = await SeedAsync(TenantA);
+        await using var db = Ctx(TenantA);
+        var pedido = (await Requests(db, TenantA).EnqueueAsync(conector, KnightSourceType.MicrosoftEntraId, null)).Request;
+        var queue = Queue(new ManualClock(DateTimeOffset.UtcNow), leaseSeconds: 60);
+        var log = new CapturingLogger<KnightSyncWorker>();
+
+        await Worker(queue, new FakeAssessments(_ => throw FalhaComSentinela()), log)
+            .ProcessAsync((await queue.TryClaimNextAsync())!, CancellationToken.None);
+
+        var fim = await Requests(Ctx(TenantA), TenantA).GetAsync(conector, pedido.Id);
+        fim!.FailureCategory.Should().Be("PersistenceError");
+        fim.Message.Should().NotContain(Sentinela);
+
+        var erro = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+        erro.Exception.Should().BeNull("a exceção carregaria a cadeia do provedor para o log");
+        log.Entries.Should().OnlyContain(e => !e.Text.Contains(Sentinela) && e.Exception == null);
+        erro.Text.Should().Contain(pedido.Id.ToString()).And.Contain("MicrosoftEntraId").And.Contain("gravação da avaliação")
+            .And.Contain("SQLSTATE 22001").And.Contain("DbUpdateException → InvalidOperationException")
+            .And.Contain("KnightIndicatorResult.NotEvaluatedReason (AK-EXO-016) com 653 caracteres, limite 500");
+    }
+
+    [Fact]
+    public async Task Api_FalhaDePersistencia_RespondeELogaSoMetadados_SemAExcecaoDoProvedor()
+    {
+        var log = new CapturingLogger<KnightAssessmentsController>();
+        var controller = new KnightAssessmentsController(new FakeAssessments(_ => throw FalhaComSentinela()),
+            new SystemTenantContext(TenantA), log: log);
+
+        var resposta = (await controller.Run("entra", CancellationToken.None)).Result
+            .Should().BeOfType<ObjectResult>().Subject;
+        resposta.StatusCode.Should().Be(500);
+        var problema = resposta.Value.Should().BeOfType<ProblemDetails>().Subject;
+        problema.Detail.Should().NotContain(Sentinela).And.Contain("a avaliação anterior continua valendo")
+            .And.Contain("SQLSTATE 22001").And.Contain("KnightIndicatorResult.NotEvaluatedReason (AK-EXO-016) com 653 caracteres, limite 500");
+
+        var erro = log.Entries.Should().ContainSingle(e => e.Level == LogLevel.Error).Subject;
+        erro.Exception.Should().BeNull();
+        log.Entries.Should().OnlyContain(e => !e.Text.Contains(Sentinela) && e.Exception == null);
+        erro.Text.Should().Contain("MicrosoftEntraId").And.Contain("gravação da avaliação").And.Contain("SQLSTATE 22001")
+            .And.Contain("DbUpdateException → InvalidOperationException").And.Contain("NotEvaluatedReason (AK-EXO-016) com 653 caracteres");
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Text, Exception? Exception)> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception), exception));
     }
 
     // ---- Vínculo durável entre pedido e resultado (serviço REAL) ------------------------------------
@@ -373,9 +455,9 @@ public sealed class KnightSyncTests : IDisposable
     private static IOptions<KnightSyncOptions> WorkerOptions() =>
         Options.Create(new KnightSyncOptions { LeaseSeconds = 60, HeartbeatSeconds = 5, PollSeconds = 1, MaxAttempts = 2 });
 
-    private KnightSyncWorker Worker(IKnightSyncQueue queue, FakeAssessments fake) =>
+    private KnightSyncWorker Worker(IKnightSyncQueue queue, FakeAssessments fake, ILogger<KnightSyncWorker>? log = null) =>
         new(Provider(queue, fake).GetRequiredService<IServiceScopeFactory>(), queue, WorkerOptions(),
-            NullLogger<KnightSyncWorker>.Instance);
+            log ?? NullLogger<KnightSyncWorker>.Instance);
 
     /// <summary>Worker com o serviço de avaliação REAL, resolvido no escopo sob o tenant do pedido.</summary>
     private KnightSyncWorker RealWorker(IKnightSyncQueue queue, KnightGraphScenario.CountingHandler graph)

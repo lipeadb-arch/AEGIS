@@ -99,7 +99,13 @@ export interface SyncView {
   runId: string | null;
   /** Avaliação anterior que continua valendo — nunca apresentada como resultado deste pedido. */
   previousRunId: string | null;
+  /** Diagnóstico técnico seguro (etapa, pedido, SQLSTATE, campo e tamanhos), quando o servidor o registrou. */
+  technical?: string | null;
 }
+
+/** [AEGIS-KNIGHT-PERSISTENCE-01] Categoria da falha de GRAVAÇÃO — espelha KnightSyncWorker.PersistenceErrorCategory. */
+export const PERSISTENCE_ERROR = 'PersistenceError';
+const TECHNICAL_MARKER = 'Diagnóstico técnico — ';
 
 const SOURCE_STATE_TEXT: Record<string, string> = {
   Completed: 'coleta completa',
@@ -174,6 +180,21 @@ export function syncView(r: KnightSyncRequest): SyncView {
         };
       }
       const previous = r.lastCompletedRunId && r.lastCompletedRunId !== r.runId ? r.lastCompletedRunId : null;
+      if (r.failureCategory === PERSISTENCE_ERROR) {
+        // A coleta e a avaliação TERMINARAM; o que falhou foi gravar. Não é "falha de coleta", e a tela diz isso em
+        // palavras, com a avaliação anterior em destaque e o diagnóstico técnico à parte.
+        const at = r.message?.indexOf(TECHNICAL_MARKER) ?? -1;
+        return {
+          tone: 'err',
+          title: 'A coleta e a avaliação terminaram, mas o resultado não pôde ser gravado.',
+          detail: previous
+            ? `Nenhuma avaliação nova foi registrada. A avaliação anterior (${fmt(r.lastCompletedAt)}) continua valendo.`
+            : 'Nenhuma avaliação foi registrada.',
+          runId: null,
+          previousRunId: previous,
+          technical: r.message ? (at >= 0 ? r.message.slice(at + TECHNICAL_MARKER.length) : r.message) : null,
+        };
+      }
       return {
         tone: 'err',
         title: r.message ?? 'A sincronização não foi concluída.',

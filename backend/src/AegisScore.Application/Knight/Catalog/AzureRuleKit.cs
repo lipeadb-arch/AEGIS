@@ -271,13 +271,13 @@ public static class AzureRuleKit
             c =>
             {
                 var v = AzureView.Of(c);
-                return v.Missing is { } m ? KnightControlOutcome.NotEvaluated(KnightRuleKit.Trim(m)) : evaluate(c, v);
+                return v.Missing is { } m ? KnightControlOutcome.NotEvaluated(m) : evaluate(c, v);
             }, references);
 
     public static KnightControlOutcome Evaluate(KnightEvaluationContext c, AzureCheck check)
     {
         var v = AzureView.Of(c);
-        if (v.Missing is { } m) return KnightControlOutcome.NotEvaluated(KnightRuleKit.Trim(m));
+        if (v.Missing is { } m) return KnightControlOutcome.NotEvaluated(m);
 
         var (complete, reason) = v.Completeness(check.Family);
         foreach (var extra in check.AlsoRequires ?? Array.Empty<KnightCapability>())
@@ -305,7 +305,7 @@ public static class AzureRuleKit
             t => string.Format(CultureInfo.InvariantCulture, check.PassedText, t),
             () => complete
                 ? KnightControlOutcome.NotApplicable($"nenhum(a) {check.Noun} nas {v.Scope.Count} assinatura(s) do escopo.")
-                : KnightControlOutcome.NotEvaluated(KnightRuleKit.Trim(reason ?? "leitura incompleta.")),
+                : KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta."),
             complete, reason);
     }
 
@@ -432,6 +432,6 @@ public static class AzureRuleKit
         var (complete, reason) = v.Completeness(family);
         return complete
             ? KnightControlOutcome.NotApplicable($"nenhum(a) {noun} nas {v.Scope.Count} assinatura(s) do escopo.")
-            : KnightControlOutcome.NotEvaluated(KnightRuleKit.Trim(reason ?? "leitura incompleta."));
+            : KnightControlOutcome.NotEvaluated(reason ?? "leitura incompleta.");
     }
 }
