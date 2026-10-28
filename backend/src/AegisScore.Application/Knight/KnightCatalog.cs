@@ -122,7 +122,11 @@ public static class KnightCatalog
     // Resource Manager *-preview), o tempo limite de sessão ociosa, o destino das mensagens denunciadas, as referências ao Key
     // Vault do App Service e a API dos workspaces do Databricks; o controle do Defender para IoT passa a conferir hub a hub.
     // Fotografias v9 continuam com o catálogo v9 congelado e o comparador recusa v9 × v10.
-    public const string Version = "ak-knight-v10";
+    // v11 [AEGIS-KNIGHT-COLLECTION-GAPS-01]: AK-ENTRA-014 (regra "3") aceita, além do alvo declarado em todos os usuários, o alcance
+    // demonstrado conta a conta sobre a enumeração completa das contas habilitadas da mesma coleta, e nunca aprova política
+    // que não alcança conta alguma; AK-ENTRA-001/008/011 passam a resolver grupos pelo pertencimento lido. Fotografias v10
+    // continuam com o catálogo v10 congelado e o comparador recusa v10 × v11.
+    public const string Version = "ak-knight-v11";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -265,7 +269,7 @@ public static class KnightCatalog
         ["AK-ENTRA-014"] = new[]
         {
             new KnightReferenceLink(M365Ref + "5.2.2.2", KnightReferenceMatch.Partial,
-                "O AEGIS aprova com security defaults ou com política habilitada de alvo declarado em todos os usuários; exclusões são listadas como evidência e a cobertura conta a conta de administradores é avaliada no AK-ENTRA-008."),
+                "O AEGIS aprova com security defaults ou com política habilitada de alvo declarado em todos os usuários ou de alcance demonstrado conta a conta sobre todas as contas habilitadas da mesma coleta; exclusões são listadas como evidência, política que não alcança conta alguma não conta e a cobertura conta a conta de administradores é avaliada no AK-ENTRA-008."),
             new KnightReferenceLink(AzRef + "5.1.1", KnightReferenceMatch.Partial,
                 "A referência pede security defaults quando não há acesso condicional; o AEGIS aceita qualquer uma das duas bases."),
         },
@@ -516,13 +520,16 @@ public static class KnightCatalog
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-014", "2", "Ausência de baseline de segurança da plataforma",
+            "AK-ENTRA-014", "3", "Ausência de baseline de segurança da plataforma",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.Medium, EntraOnly,
             new[] { "PR.PS-01", "GV.RR-02" }, Array.Empty<string>(),
             "Habilitar os security defaults ou manter uma política de acesso condicional habilitada exigindo MFA de todos os usuários, em todas as aplicações.",
-            "Security defaults habilitados OU ao menos uma política HABILITADA exigindo MFA ou força de autenticação com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite.",
+            "Security defaults habilitados OU ao menos uma política HABILITADA exigindo MFA ou força de autenticação, em todas as aplicações e sem condição que a estreite, "
+            + "com alvo declarado em todos os usuários OU com alcance demonstrado conta a conta sobre a enumeração completa das contas habilitadas da mesma coleta. "
+            + "Exclusões são explicitadas na evidência; política que não alcança nenhuma conta não sustenta a base.",
             // Política para um usuário, um papel ou uma aplicação não sustenta conclusão sobre o ambiente. Alcance
-            // dependente de grupo não coletado → sinal ausente com o motivo → não avaliado.
+            // dependente de grupo não coletado → sinal ausente com o motivo → não avaliado. Regra "3" (catálogo v11): alcance
+            // demonstrado por identidade, nunca por quantidade; sem conta alcançada, sem base.
             f =>
             {
                 var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
@@ -530,15 +537,16 @@ public static class KnightCatalog
                 if (defaults.IsCollected && defaults.Flag == true)
                     return Passed("Baseline presente: security defaults habilitados.");
                 if (baseline.IsCollected && (baseline.Count ?? 0) > 0)
-                    return Passed($"Baseline presente: {baseline.Count} política(s) habilitada(s) exigem MFA com alvo declarado em todos os usuários e todas as aplicações. "
+                    return Passed($"Baseline presente: {baseline.Count} política(s) habilitada(s) exigem MFA em todas as aplicações, com alvo declarado em todos os usuários ou alcance demonstrado conta a conta sobre todas as contas habilitadas desta coleta. "
                         + "Isso não comprova a cobertura de cada conta: exclusões aparecem na evidência e o alcance para administradores é avaliado em AK-ENTRA-008.");
                 if (!baseline.IsCollected)
                     return NotEvaluated(baseline.MissingReason ?? "políticas de acesso condicional não coletadas");
                 if (!defaults.IsCollected)
-                    return NotEvaluated("nenhuma política habilitada exige MFA de todos os usuários em todas as aplicações, mas os security defaults não puderam ser verificados — "
+                    return NotEvaluated("nenhuma política habilitada exige MFA em todas as aplicações alcançando todas as contas, mas os security defaults não puderam ser verificados — "
                         + (defaults.MissingReason ?? "sinal não coletado"));
-                return Exposed("Sem security defaults e sem política habilitada exigindo MFA de todos os usuários em todas as aplicações — baseline ausente. "
-                    + "Políticas de alcance restrito (usuários, papéis ou aplicações específicos, ou com condições) não sustentam uma base para o ambiente.", 0);
+                return Exposed("Sem security defaults e sem política habilitada exigindo MFA em todas as aplicações que alcance todas as contas (alvo declarado em todos "
+                    + "os usuários ou alcance demonstrado conta a conta) — baseline ausente. Políticas de alcance restrito (usuários, papéis, grupos ou aplicações "
+                    + "específicos, com condições ou sem nenhuma conta alcançada) não sustentam uma base para o ambiente.", 0);
             }),
 
         new KnightIndicatorDefinition(

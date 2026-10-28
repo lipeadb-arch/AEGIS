@@ -749,6 +749,9 @@ public static class ConditionalAccessAnalyzer
     ///     aprovam — a comparação é por id;
     ///   • sem a enumeração completa (teto, falha, aquisição anterior sem os ids) — não resolvida, com o motivo.
     /// Cobrir os administradores não demonstra base mínima para o ambiente: o alcance é sempre o de todas as contas.
+    /// Revisão (catálogo v11): base exige ao menos uma conta efetivamente alcançada — política cujas exclusões alcançam cada
+    /// conta habilitada da enumeração não protege ninguém (alcance restrito, mesmo com alvo declarado em todos), e enumeração
+    /// sem conta habilitada deixa a política dirigida a grupo não resolvida — a ausência de contas nunca aprova.
     /// </remarks>
     private static MfaBaselineConclusion ConcludeBaseline(
         IReadOnlyList<ConditionalAccessPolicyReading> readings, GroupMembershipIndex membership,
@@ -768,6 +771,15 @@ public static class ConditionalAccessAnalyzer
 
             if (r.TargetsAllUsers)
             {
+                // Alvo declarado em todos, mas exclusões que alcançam cada conta habilitada da enumeração: ninguém sujeito ao MFA.
+                if (r.HasExclusions && population is { Count: > 0 }
+                    && population.All(a => ReachOf(r, a, rolesOf.TryGetValue(a, out var held) ? held : Array.Empty<string>(),
+                        Array.Empty<string>(), membership) == Reach.Excluded))
+                {
+                    restricted.Add(p.Id);
+                    reach[p.Id] = "alvo declarado em todos os usuários: " + NoneReached(population.Count, population.Count);
+                    continue;
+                }
                 if (p.ExcludeGroups.Count == 0) { baseline.Add(p.Id); continue; }
                 var open = p.ExcludeGroups.Where(g => !membership.IsComplete(g)).ToList();
                 if (open.Count == 0)
@@ -799,6 +811,13 @@ public static class ConditionalAccessAnalyzer
             {
                 unresolved.Add(p.Id);
                 reach[p.Id] = $"dirigida a {target}, sem a enumeração completa das contas habilitadas do diretório nesta coleta para conferir conta a conta";
+                continue;
+            }
+            if (population.Count == 0)
+            {
+                // Sem contas não há alcance a demonstrar — a ausência de contas nunca aprova.
+                unresolved.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}, mas a enumeração desta coleta não retornou nenhuma conta habilitada — não há alcance a demonstrar";
                 continue;
             }
             if (roles is null && (p.IncludeRoles.Count > 0 || p.ExcludeRoles.Count > 0))
@@ -837,6 +856,12 @@ public static class ConditionalAccessAnalyzer
                 reach[p.Id] = $"dirigida a {target}: alcance não comprovado para {unknown} de {population.Count} conta(s) habilitada(s) (grupo não lido "
                     + "por completo, condição de convidado ou papel detido via grupo)";
             }
+            else if (applies == 0)
+            {
+                // Todas excluídas explicitamente: nenhuma conta sujeita ao MFA desta política — não protege ninguém.
+                restricted.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}: {NoneReached(population.Count, excludedAccounts)}";
+            }
             else
             {
                 baseline.Add(p.Id);
@@ -860,6 +885,10 @@ public static class ConditionalAccessAnalyzer
         }
         return new MfaBaselineConclusion(baseline, unresolved, restricted, reason, reach);
     }
+
+    private static string NoneReached(int population, int excluded) =>
+        $"nenhuma das {population} conta(s) habilitada(s) é alcançada ({excluded} excluída(s) explicitamente) — a política não protege "
+        + "conta alguma e não é base mínima para o ambiente";
 
     // ---- Tradução em sinais do KNIGHT -----------------------------------------------------------------
 

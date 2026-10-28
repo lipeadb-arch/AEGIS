@@ -66,7 +66,7 @@ public sealed class KnightEntraConfigurationFlowTests : IDisposable
         await using var db = NewContext(TenantA);
         var run = await RunAsync(db, TenantA, new EntraConfigurationScenario(EntraConfigurationScenario.Variant.Compliant));
 
-        run.CatalogVersion.Should().Be("ak-knight-v10");
+        run.CatalogVersion.Should().Be("ak-knight-v11");
         run.SourceState.Should().Be(KnightSourceState.PartialCollection, "só as duas capacidades de risco de identidade devolvem 403 neste cenário");
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         entity.IdentityAcquisitionId.Should().NotBeNull("a avaliação leu a aquisição persistida do ADM");

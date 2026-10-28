@@ -186,8 +186,8 @@ public static class KnightControlProfiles
         new KnightControlProfile("AK-ENTRA-014", KnightSecurityDomain.Governance,
             "Nenhuma base mínima de proteção de identidade: sem security defaults e sem política habilitada exigindo MFA de todos os usuários.",
             "Sem uma base mínima, cada usuário depende só da própria senha, e nenhum controle do provedor compensa isso.",
-            "Security defaults habilitados, ou ao menos uma política de acesso condicional HABILITADA exigindo MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite.",
-            "Presença de baseline não significa cobertura completa: exclusões são listadas e o alcance para administradores é avaliado em AK-ENTRA-008. Política de alcance restrito não sustenta uma base para o ambiente. Política dirigida a grupo só sustenta a base quando cada conta habilitada da enumeração completa é conferida pela identidade — quantidades iguais não bastam.",
+            "Security defaults habilitados, ou ao menos uma política de acesso condicional HABILITADA exigindo MFA em todas as aplicações e sem condição que a estreite, com alvo declarado em todos os usuários ou com alcance demonstrado conta a conta sobre todas as contas habilitadas da mesma coleta.",
+            "Presença de baseline não significa cobertura completa: exclusões são listadas e o alcance para administradores é avaliado em AK-ENTRA-008. Política de alcance restrito não sustenta uma base para o ambiente. Política dirigida a grupo só sustenta a base quando cada conta habilitada da enumeração completa é conferida pela identidade — quantidades iguais não bastam. Exclusões ficam explicitadas, e política que não alcança nenhuma conta (todas excluídas, ou enumeração sem contas) não afirma proteção.",
             Docs(DocDefaults), Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline, KnightCapability.EntraGroupMembership)),
 
         new KnightControlProfile("AK-ENTRA-015", KnightSecurityDomain.Governance,

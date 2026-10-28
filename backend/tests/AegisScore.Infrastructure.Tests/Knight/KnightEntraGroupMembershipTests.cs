@@ -229,6 +229,52 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
         withBreakGlass.Baseline.Reach!["p-grupo"].Should().Contain("8 de 9").And.Contain("1 excluída(s) explicitamente");
     }
 
+    [Fact]
+    public void BaseMinima_DirigidaAGrupoComTodasAsContasExcluidas_NaoEhBase()
+    {
+        // Revisão do PR #101: fora = 0 e desconhecidas = 0, mas nenhuma conta sujeita ao MFA — a política não protege ninguém.
+        var groups = new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1", "u2") };
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }, excludeUsers: new[] { "u1", "u2" }) },
+            Array.Empty<DirectoryRoleConfiguration>(), groups, enabled: new[] { "u1", "u2" });
+        a.Baseline.BaselinePolicyIds.Should().BeEmpty();
+        a.Baseline.RestrictedPolicyIds.Should().Equal("p-grupo");
+        a.Baseline.Reach!["p-grupo"].Should().Contain("nenhuma das 2 conta(s) habilitada(s) é alcançada").And.Contain("2 excluída(s) explicitamente");
+        Signal(a, KnightSignalKey.BaselineMfaPolicies).Count.Should().Be(0);
+
+        // O mesmo pela exclusão de um grupo lido por completo, e na política para todos os usuários.
+        var byGroup = groups.Append(Group("g-bg", EntraGroupMembershipState.Complete, "u1", "u2")).ToArray();
+        Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }, excludeGroups: new[] { "g-bg" }) },
+            Array.Empty<DirectoryRoleConfiguration>(), byGroup, enabled: new[] { "u1", "u2" }).Baseline.RestrictedPolicyIds.Should().Equal("p-grupo");
+        var all = Analyze(new[] { Mfa("p-todos", includeUsers: new[] { "All" }, excludeGroups: new[] { "g-bg" }) },
+            Array.Empty<DirectoryRoleConfiguration>(), byGroup, enabled: new[] { "u1", "u2" });
+        all.Baseline.BaselinePolicyIds.Should().BeEmpty();
+        all.Baseline.Reach!["p-todos"].Should().Contain("nenhuma das 2 conta(s) habilitada(s) é alcançada");
+    }
+
+    [Fact]
+    public void BaseMinima_CriterioRevisado_IdentificadoPelaVersao_SemReescreverFotografiaAntiga()
+    {
+        var d = KnightCatalog.Indicators.Single(i => i.Id == "AK-ENTRA-014");
+        d.Version.Should().Be("3");
+        d.ExpectedEvidence.Should().Contain("alcance demonstrado conta a conta").And.Contain("não alcança nenhuma conta");
+
+        KnightControlPresentation For(string catalog) => KnightControlPresentations.For("AK-ENTRA-014", d.Category, d.Severity,
+            KnightIndicatorStatus.Passed, KnightSourceType.MicrosoftEntraId, d.NistCodes, d.MitreTechniques, catalog);
+        For(KnightCatalog.Version).Criterion.Should().Be(d.ExpectedEvidence);
+        For("ak-knight-v10").Criterion.Should().BeNull("a fotografia v10 não recebe o critério que não aplicou");
+    }
+
+    [Fact]
+    public void BaseMinima_DirigidaAGrupoComPopulacaoVazia_NaoAprovaPorAusenciaDeContas()
+    {
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) }, Array.Empty<DirectoryRoleConfiguration>(),
+            new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1") }, enabled: Array.Empty<string>());
+        a.Baseline.BaselinePolicyIds.Should().BeEmpty();
+        a.Baseline.UnresolvedPolicyIds.Should().Equal("p-grupo");
+        Signal(a, KnightSignalKey.BaselineMfaPolicies).Outcome.Should().Be(KnightObservationOutcome.Missing);
+        a.Baseline.InconclusiveReason.Should().Contain("nenhuma conta habilitada");
+    }
+
     [Theory]
     [InlineData(EntraGroupMembershipState.Incomplete)]
     [InlineData(EntraGroupMembershipState.Denied)]
