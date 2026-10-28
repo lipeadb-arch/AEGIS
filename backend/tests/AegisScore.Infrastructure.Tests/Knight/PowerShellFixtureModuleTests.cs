@@ -115,6 +115,28 @@ public sealed class PowerShellFixtureModuleTests
         result.Capabilities.First().Detail.Should().NotContain("AADSTS7000215", "o texto bruto da exceção não atravessa a fronteira");
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recusa no COMANDO, com a sessão aberta: o script real extrai o status HTTP e a
+    /// correlação de forma estruturada (número e GUID) e nada mais da mensagem — nem o marcador com forma de segredo.
+    /// </summary>
+    [Fact]
+    public async Task Teams_ComandoRecusado_StatusECorrelacaoEstruturados_SemAMensagem()
+    {
+        if (Pwsh() is not { } pwsh) return;
+
+        var result = await Teams(pwsh, "comando-recusado");
+
+        result.State.Should().Be(KnightSourceState.InsufficientPermission);
+        result.Capabilities.Should().HaveCount(TeamsKnightCollector.Capabilities.Count).And.OnlyContain(c =>
+            c.Outcome == KnightCapabilityOutcome.InsufficientPermission
+            && c.Diagnostic!.Kind == KnightFailureKind.Command
+            && c.Diagnostic.HttpStatus == 403
+            && c.Diagnostic.ServiceRequestId == "0b7a6c1e-0000-4000-8000-0000000000c1");
+        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("Autorização recusada no comando") && c.Detail.Contains("HTTP 403"));
+        var tudo = string.Join(" ", result.Capabilities.Select(c => c.Detail + " " + c.Diagnostic!.Code));
+        tudo.Should().NotContain("AEGIS-MARCADOR-FIXTURE-0003").And.NotContain("Bearer");
+    }
+
     /// <summary>Avisos e texto de host do módulo saem na saída padrão do pwsh real — e não invalidam mais o resultado.</summary>
     [Fact]
     public async Task Exchange_AvisosDoModuloNaSaidaPadrao_NaoInvalidamAColeta()

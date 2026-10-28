@@ -66,14 +66,17 @@ public sealed class KnightTeamsCollectorTests
         result.State.Should().Be(KnightSourceState.PartialCollection);
         var meeting = result.Capabilities.Single(c => c.Capability == KnightCapability.TeamsMeetingPolicies);
         meeting.Outcome.Should().Be(KnightCapabilityOutcome.InsufficientPermission);
-        meeting.Detail.Should().Contain("Leitor do Teams").And.Contain("Get-CsTeamsMeetingPolicy");
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] A etapa exata (tokens emitidos, sessão aberta, comando recusado) — sem
+        // atribuir a recusa a um papel que a resposta não nomeia.
+        meeting.Detail.Should().Contain("Autorização recusada no comando").And.Contain("Get-CsTeamsMeetingPolicy");
+        meeting.Detail.Should().NotContain("Confira se a aplicação tem o papel");
 
         result.Capabilities.Where(c => c.Capability != KnightCapability.TeamsMeetingPolicies)
             .Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Collected);
 
         var read = result.TenantConfigurationOrEmpty.Read<TeamsMeetingPolicyConfiguration>();
         read.Collected.Should().BeFalse("a capacidade falhou — a lista vazia não pode ser lida como 'não há políticas'");
-        read.MissingReason.Should().Contain("Leitor do Teams");
+        read.MissingReason.Should().Contain("Get-CsTeamsMeetingPolicy");
     }
 
     [Fact]
@@ -86,8 +89,9 @@ public sealed class KnightTeamsCollectorTests
         result.Capabilities.Should().HaveCount(TeamsKnightCollector.Capabilities.Count)
             .And.OnlyContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
         // A mensagem é MONTADA a partir da categoria — não é o texto que a fonte devolveu.
-        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("recusada por permissão ou papel insuficiente"));
-        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("Leitor do Teams"));
+        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("recusou a conexão de aplicativo por autorização"));
+        result.Capabilities.Should().OnlyContain(c => !c.Detail!.Contains("Confira se a aplicação tem o papel"),
+            "[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] uma recusa genérica não prova a falta de um papel específico");
         result.TenantConfigurationOrEmpty.Documents.Should().BeEmpty();
     }
 
@@ -258,7 +262,7 @@ public sealed class KnightTeamsCollectorTests
         publicado.Should().NotContain(VazaSegredoNoDiagnostico.MarcadorDeToken);
         publicado.Should().NotContain(VazaSegredoNoDiagnostico.MarcadorDeCabecalho);
         publicado.Should().NotContain("Bearer ");
-        publicado.Should().Contain("Leitor do Teams", "a orientação útil é preservada");
+        publicado.Should().Contain("recusou a conexão de aplicativo por autorização", "a etapa e a categoria são preservadas");
     }
 
     /// <summary>

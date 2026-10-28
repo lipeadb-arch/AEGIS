@@ -39,9 +39,12 @@ namespace AegisScore.Connectors.Microsoft.Knight.Teams;
 ///   • permissão de aplicativo do Microsoft Graph: <c>Organization.Read.All</c> — a documentação do módulo a
 ///     exige para o conjunto de comandos; nenhuma outra permissão da documentação do módulo é pedida aqui,
 ///     porque nenhum comando fora dos <c>*-Cs*</c> de leitura é executado;
-///   • papel de diretório atribuído à APLICAÇÃO: <b>Leitor do Teams</b> (o menor papel documentado que lê tudo
-///     no centro de administração do Teams). Leitor Global também serve; Administrador do Teams é excessivo e
-///     concede escrita.
+///   • papel de diretório atribuído à APLICAÇÃO, que chega no token da administração do Teams. O de menor
+///     privilégio na tabela de papéis do Teams é <b>Leitor do Teams</b>; a tabela, porém, só o cita para o centro de
+///     administração e associa ao módulo PowerShell os papéis de administração.
+/// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Por isso uma recusa NÃO é traduzida em "falta o papel X": o motivo diz a etapa
+/// (token, conexão ou comando), o status e a correlação, e o diagnóstico de <see cref="KnightAccessDiagnostics"/> traz o
+/// que o token e a entidade de serviço comprovam.
 /// </summary>
 public sealed class TeamsKnightCollector : IKnightCollector
 {
@@ -51,17 +54,21 @@ public sealed class TeamsKnightCollector : IKnightCollector
     private readonly ITeamsAdminReader _reader;
     private readonly ILogger<TeamsKnightCollector>? _log;
     private readonly TimeProvider _time;
+    private readonly IEntraGraphClient? _graph;
 
     public TeamsKnightCollector(
         ITeamsTokenClient tokens,
         ITeamsAdminReader reader,
         ILogger<TeamsKnightCollector>? log = null,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        IEntraGraphClient? graph = null)
     {
         _tokens = tokens;
         _reader = reader;
         _log = log;
         _time = time ?? TimeProvider.System;
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Só para consultar a entidade de serviço depois de uma recusa (leitura).
+        _graph = graph;
     }
 
     public KnightSourceType Source => KnightSourceType.MicrosoftTeams;
@@ -109,11 +116,12 @@ public sealed class TeamsKnightCollector : IKnightCollector
                 _ => KnightSourceState.Unavailable,
             };
             _log?.LogWarning(
-                "Falha ao obter os tokens de aplicativo do Microsoft Teams: Kind={Kind}, HttpStatus={HttpStatus}.",
-                ex.Kind, ex.HttpStatusCode);
-            return Failure(tokenState, "Falha ao obter os tokens de aplicativo exigidos pela administração do Microsoft Teams.",
-                OutcomeFor(tokenState), "A aplicação não obteve os tokens exigidos; nenhuma leitura foi tentada.",
-                diagnostic: KnightFailureClassifier.FromHttp(ex, Label, "token", null, correlation).Diagnostic);
+                "Falha ao obter os tokens de aplicativo do Microsoft Teams: Kind={Kind}, HttpStatus={HttpStatus}, Recurso={Resource}, Codigos={Codes}.",
+                ex.Kind, ex.HttpStatusCode, ex.TokenResource ?? "n/a", string.Join(",", ex.OAuthErrorCodes));
+            // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Qual dos dois tokens foi recusado, com error/AADSTS/trace/correlação.
+            var refused = KnightFailureClassifier.FromHttp(ex, Label, "token", null, correlation);
+            var tokenReason = refused.Reason + " A sessão do Teams não foi aberta.";
+            return Failure(tokenState, tokenReason, OutcomeFor(tokenState), tokenReason, diagnostic: refused.Diagnostic);
         }
 
         TeamsAdminOutput output;
@@ -158,13 +166,16 @@ public sealed class TeamsKnightCollector : IKnightCollector
             // o diagnóstico bruto da conexão era concatenado e seguia para o ADM, para a API e para o relatório;
             // esse texto é escrito por um módulo de terceiro e pode repetir cabeçalho de autorização ou token.
             // O identificador técnico (já sanitizado) fica só no log do operador.
-            var reason = ConnectionReason(outcome);
+            var reason = ConnectionReason(outcome) + Observed(output.ConnectionErrorStatus, output.ConnectionErrorCorrelationId);
+            if (IsRefusal(outcome))
+                reason += " " + (await DiagnoseAsync(cfg, credentials, ct)).Text;
             _log?.LogWarning(
                 "Conexão do adaptador do Microsoft Teams recusada: Categoria={Categoria}, Diagnostico={Diagnostico}, Correlacao={CorrelationId}.",
                 output.ConnectionErrorCategory ?? "n/a", output.ConnectionErrorId ?? "n/a", correlation);
             return Failure(StateFor(outcome), reason, outcome, reason, output.Runtime,
                 new KnightCapabilityDiagnostic("connect", KnightFailureKind.Connection, process?.DurationMs,
-                    Code: output.ConnectionErrorId, CorrelationId: correlation));
+                    HttpStatus: output.ConnectionErrorStatus, Code: output.ConnectionErrorId, CorrelationId: correlation,
+                    ServiceRequestId: output.ConnectionErrorCorrelationId));
         }
 
         var now = _time.GetUtcNow();
@@ -192,7 +203,8 @@ public sealed class TeamsKnightCollector : IKnightCollector
                 var outcome = ParseOutcome(read.ErrorCategory) ?? KnightCapabilityOutcome.Error;
                 caps.Add(new KnightCapabilityStatus(capability, outcome, Describe(outcome, read),
                     new KnightCapabilityDiagnostic("read " + capability, KnightFailureKind.Command, read.DurationMs,
-                        Code: read.ErrorId, CorrelationId: correlation)));
+                        HttpStatus: read.ErrorStatus, Code: read.ErrorId, CorrelationId: correlation,
+                        ServiceRequestId: read.ErrorCorrelationId)));
                 continue;
             }
 
@@ -211,10 +223,46 @@ public sealed class TeamsKnightCollector : IKnightCollector
             }
         }
 
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recusa de autorização num comando: o diagnóstico de acesso (token e entidade de
+        // serviço) é montado UMA vez e acompanha o motivo de cada capacidade recusada — que é o que chega ao relatório.
+        if (caps.Any(c => IsRefusal(c.Outcome)))
+        {
+            var diagnosis = (await DiagnoseAsync(cfg, credentials, ct)).Text;
+            for (var i = 0; i < caps.Count; i++)
+                if (IsRefusal(caps[i].Outcome))
+                    caps[i] = caps[i] with { Detail = caps[i].Detail + " " + diagnosis };
+        }
+
         var state = DeriveState(caps);
         return PowerShellRunInterpretation.Qualify(new KnightCollectionResult(
             Source, state, Label, KnightFactSet.Empty, caps, now, DescribeState(state, output.Runtime),
             TenantConfiguration: new KnightTenantConfiguration(docs, caps)), process, Label);
+    }
+
+    private static bool IsRefusal(KnightCapabilityOutcome outcome) =>
+        outcome is KnightCapabilityOutcome.InsufficientPermission or KnightCapabilityOutcome.AuthenticationFailure;
+
+    /// <summary>Diagnóstico de acesso; uma falha dele nunca derruba a coleta (só o cancelamento do chamador propaga).</summary>
+    private async Task<KnightAccessDiagnosis> DiagnoseAsync(IMicrosoftGraphCredentials cfg, TeamsAdminCredentials credentials, CancellationToken ct)
+    {
+        try
+        {
+            return await KnightAccessDiagnostics.TeamsAsync(cfg, credentials, _graph, ct);
+        }
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
+        {
+            _log?.LogWarning("Diagnóstico de acesso do Microsoft Teams indisponível: {ExceptionType}.", KnightFailureClassifier.SafeTypeName(ex));
+            return KnightAccessDiagnosis.Unavailable;
+        }
+    }
+
+    /// <summary>Status e correlação observados na recusa (já restritos na leitura da saída).</summary>
+    private static string Observed(int? status, string? correlationId)
+    {
+        var parts = new List<string>();
+        if (status is { } s) parts.Add($"HTTP {s}");
+        if (correlationId is { } c) parts.Add($"correlação: {c}");
+        return parts.Count == 0 ? "" : " (" + string.Join(" · ", parts) + ")";
     }
 
     // ---- Tradução: resposta do comando → documento tipado do ADM --------------------------------------
@@ -408,12 +456,11 @@ public sealed class TeamsKnightCollector : IKnightCollector
     /// </summary>
     private static string ConnectionReason(KnightCapabilityOutcome outcome) => outcome switch
     {
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Etapa e categoria — sem atribuir a recusa a um papel que a resposta não nomeia.
         KnightCapabilityOutcome.InsufficientPermission =>
-            "A conexão de aplicativo com a administração do Microsoft Teams foi recusada por permissão ou papel insuficiente. "
-            + "Confira se a aplicação tem o papel Leitor do Teams (ou Leitor Global) atribuído.",
+            "Os dois tokens foram emitidos, mas a administração do Microsoft Teams recusou a conexão de aplicativo por autorização.",
         KnightCapabilityOutcome.AuthenticationFailure =>
-            "A conexão de aplicativo com a administração do Microsoft Teams falhou na autenticação. Confira o segredo da "
-            + "aplicação, o consentimento do administrador e se os dois tokens exigidos foram emitidos para os recursos corretos.",
+            "Os dois tokens foram emitidos, mas a administração do Microsoft Teams recusou a autenticação da conexão de aplicativo.",
         KnightCapabilityOutcome.Throttled =>
             "A administração do Microsoft Teams aplicou limite de taxa ao estabelecer a conexão. Nenhuma leitura foi tentada; "
             + "a coleta pode ser repetida mais tarde.",
@@ -429,16 +476,21 @@ public sealed class TeamsKnightCollector : IKnightCollector
     {
         var head = outcome switch
         {
+            // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] O ponto exato: tokens emitidos, sessão aberta, comando recusado.
             KnightCapabilityOutcome.InsufficientPermission =>
-                "Permissão ou papel insuficiente para esta leitura. Confira se a aplicação tem o papel Leitor do Teams (ou Leitor Global) atribuído.",
-            KnightCapabilityOutcome.AuthenticationFailure => "Falha de autenticação da aplicação nesta leitura.",
+                "Autorização recusada no comando, com os dois tokens emitidos e a sessão do Teams estabelecida.",
+            KnightCapabilityOutcome.AuthenticationFailure =>
+                "Autenticação recusada no comando, com os dois tokens emitidos e a sessão do Teams estabelecida.",
             KnightCapabilityOutcome.Throttled => "Limite de taxa da administração do Microsoft Teams nesta leitura.",
             KnightCapabilityOutcome.LimitedByLicense => "O locatário não tem a licença que este recurso exige.",
             KnightCapabilityOutcome.Unavailable =>
                 "A leitura não pôde ser concluída: o comando não está disponível nesta versão do módulo, ou o serviço não respondeu.",
             _ => "Erro inesperado nesta leitura.",
         };
-        return $"{head} (comando: {read.Command})";
+        var observed = new List<string> { $"comando: {read.Command}" };
+        if (read.ErrorStatus is { } status) observed.Add($"HTTP {status}");
+        if (read.ErrorCorrelationId is { } correlationId) observed.Add($"correlação: {correlationId}");
+        return $"{head} ({string.Join(" · ", observed)})";
     }
 
     /// <summary>

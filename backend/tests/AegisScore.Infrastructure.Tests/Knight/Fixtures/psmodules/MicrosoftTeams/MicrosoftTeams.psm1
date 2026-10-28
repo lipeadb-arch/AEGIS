@@ -4,7 +4,9 @@
 #   cenario-sucesso     — todas as leituras respondem;
 #   cenario-aviso       — a conexão escreve aviso e texto de host na saída padrão (fluxos misturados);
 #   cenario-queda       — o processo morre (código 137) durante a leitura das políticas de reunião;
-#   credencial-invalida — a conexão é recusada como o serviço recusa (AADSTS).
+#   credencial-invalida — a conexão é recusada como o serviço recusa (AADSTS);
+#   comando-recusado    — [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] a conexão abre, e cada leitura é recusada com HTTP 403 e um
+#                         CorrelationId; a mensagem também carrega um marcador com forma de segredo, que não pode sair.
 # Formatos de resposta: ZERO objetos (Get-CsGroupPolicyAssignment), UM (Get-CsTeamsClientConfiguration) e VÁRIOS
 # (Get-CsTeamsMeetingPolicy: a global e uma marcada).
 Set-StrictMode -Version Latest
@@ -27,6 +29,14 @@ function Connect-MicrosoftTeams {
     [pscustomobject]@{ Account = 'aplicativo'; Environment = 'AzureCloud'; Tenant = 'fixture' }
 }
 
+function Assert-FixtureAuthorized {
+    if ($script:Scenario -eq 'comando-recusado') {
+        throw [System.Net.Http.HttpRequestException]::new(
+            'Response status code does not indicate success: 403 (Forbidden). CorrelationId: 0b7a6c1e-0000-4000-8000-0000000000c1 Authorization: Bearer AEGIS-MARCADOR-FIXTURE-0003 (fixture)',
+            $null, [System.Net.HttpStatusCode]::Forbidden)
+    }
+}
+
 function Disconnect-MicrosoftTeams {
     [CmdletBinding(SupportsShouldProcess)]
     param()
@@ -34,6 +44,7 @@ function Disconnect-MicrosoftTeams {
 }
 
 function Get-CsTeamsClientConfiguration {
+    Assert-FixtureAuthorized
     [pscustomobject]@{
         Identity = 'Global'; AllowEmailIntoChannel = $false; AllowDropBox = $false; AllowBox = $false; AllowGoogleDrive = $false
         AllowShareFile = $false; AllowEgnyte = $false; AllowGuestUser = $true
@@ -41,6 +52,7 @@ function Get-CsTeamsClientConfiguration {
 }
 
 function Get-CsTenantFederationConfiguration {
+    Assert-FixtureAuthorized
     [pscustomobject]@{
         AllowFederatedUsers = $true; AllowedDomains = [AllowAllKnownDomains]::new(); BlockedDomains = @(); BlockAllSubdomains = $false
         AllowTeamsConsumer = $false; AllowTeamsConsumerInbound = $false; ExternalAccessWithTrialTenants = 'Blocked'
@@ -49,6 +61,7 @@ function Get-CsTenantFederationConfiguration {
 }
 
 function Get-CsTeamsMeetingPolicy {
+    Assert-FixtureAuthorized
     if ($script:Scenario -eq 'cenario-queda') { [Environment]::Exit(137) }
     [pscustomobject]@{
         Identity = 'Global'; AllowAnonymousUsersToJoinMeeting = $false; AllowAnonymousUsersToStartMeeting = $false
@@ -64,16 +77,17 @@ function Get-CsTeamsMeetingPolicy {
     }
 }
 
-function Get-CsTeamsMessagingPolicy { [pscustomobject]@{ Identity = 'Global'; AllowSecurityEndUserReporting = $true } }
+function Get-CsTeamsMessagingPolicy { Assert-FixtureAuthorized; [pscustomobject]@{ Identity = 'Global'; AllowSecurityEndUserReporting = $true } }
 
 function Get-CsTeamsAppPermissionPolicy {
+    Assert-FixtureAuthorized
     [pscustomobject]@{
         Identity = 'Global'; DefaultCatalogAppsType = 'AllowedAppList'; DefaultCatalogApps = @(); GlobalCatalogAppsType = 'AllowedAppList'
         GlobalCatalogApps = @(); PrivateCatalogAppsType = 'AllowedAppList'; PrivateCatalogApps = @()
     }
 }
 
-function Get-CsGroupPolicyAssignment { @() }
+function Get-CsGroupPolicyAssignment { Assert-FixtureAuthorized; @() }
 
 Export-ModuleMember -Function Connect-MicrosoftTeams, Disconnect-MicrosoftTeams, Get-CsTeamsClientConfiguration,
     Get-CsTenantFederationConfiguration, Get-CsTeamsMeetingPolicy, Get-CsTeamsMessagingPolicy, Get-CsTeamsAppPermissionPolicy,

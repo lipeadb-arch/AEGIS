@@ -128,8 +128,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         probes.Add(await ProbeGraphReadAsync(credentials, "Microsoft Intune",
             IntuneKnightCollector.SettingsUrl, "DeviceManagementConfiguration.Read.All", ct));
         if (_appTokens is not null && _rest is not null)
-            probes.Add(await ProbeRestAsync(credentials, "Microsoft Fabric", FabricKnightCollector.Scope, FabricKnightCollector.TenantSettingsUrl,
-                "a configuração “entidades de serviço podem usar as APIs de administração somente leitura” e o grupo de segurança da aplicação", ct));
+            probes.Add(await ProbeFabricAsync(credentials, ct));
         if (_appTokens is not null && _rest is not null)
             probes.Add(await ProbeAzureAsync(credentials, ct));
         // Uma leitura NÃO TENTADA (ex.: a API administrativa do SharePoint, que exigiria permissão de escrita) não conta
@@ -247,7 +246,9 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         }
         catch (EntraGraphException ex)
         {
-            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+            // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] A recusa é do endpoint de token (qual dos dois tokens, error, AADSTS,
+            // correlação) — antes a linha a atribuía ao Microsoft Graph e mandava conferir Organization.Read.All.
+            return new Probe(false, KnightFailureClassifier.FromHttp(ex, label, "token").Reason);
         }
         catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
@@ -260,17 +261,22 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             if (!output.Connected && output.Process is { Clean: false } teamsRun && output.ConnectionErrorCategory is null)
                 return new Probe(false, $"{label}: {ProcessFailureReason(teamsRun)}");
             if (!output.Connected)
-                return new Probe(false, $"{label}: {TeamsConnectionFailureReason(output.ConnectionErrorCategory)}");
+                return new Probe(false, $"{label}: os dois tokens foram emitidos. {TeamsConnectionFailureReason(output.ConnectionErrorCategory)}"
+                    + Observed(output.ConnectionErrorStatus, output.ConnectionErrorCorrelationId)
+                    + (IsAuthorizationCategory(output.ConnectionErrorCategory) ? " " + await TeamsDiagnosisAsync(cfg, credentials, ct) : ""));
 
             var probe = output.Reads.FirstOrDefault();
             if (probe is null || !probe.Ok)
                 return new Probe(false,
-                    $"{label}: conexão estabelecida, mas a leitura de verificação "
+                    $"{label}: os dois tokens foram emitidos e a conexão foi estabelecida, mas a leitura de verificação "
                     + $"({probe?.Command ?? "Get-CsTeamsClientConfiguration"}) foi "
-                    + TeamsReadFailureReason(probe?.ErrorCategory));
+                    + TeamsReadFailureReason(probe?.ErrorCategory)
+                    + Observed(probe?.ErrorStatus, probe?.ErrorCorrelationId)
+                    + (IsAuthorizationCategory(probe?.ErrorCategory) ? " " + await TeamsDiagnosisAsync(cfg, credentials, ct) : ""));
 
             var suffix = output.Runtime.Module is { Length: > 0 } m ? $" (módulo Teams PowerShell {m})" : "";
-            return new Probe(true, $"{label}: credencial aceita, conexão estabelecida e leitura confirmada{suffix}.");
+            return new Probe(true, $"{label}: tokens emitidos, conexão estabelecida e leitura de verificação (Get-CsTeamsClientConfiguration) "
+                + $"aceita{suffix}. Isso não valida as outras cinco leituras nem os controles — só a sincronização as executa.");
         }
         catch (TeamsAdminTransportException)
         {
@@ -367,22 +373,23 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         new(false, "SharePoint e OneDrive (API administrativa): não solicitada — exigiria Sites.FullControl.All, que também concede "
             + "escrita. As configurações que só ela expõe ficam não avaliadas, com o motivo.", Skipped: true);
 
-    /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Token para o recurso e UMA leitura REST (Fabric).</summary>
-    private async Task<Probe> ProbeRestAsync(IMicrosoftGraphCredentials cfg, string label, string scope, string url, string requirement, CancellationToken ct)
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Fabric: token do recurso do Fabric e UMA leitura de <c>/v1/admin/tenantsettings</c>
+    /// (a mesma da sincronização). Cada etapa tem a própria mensagem: token recusado pelo Microsoft Entra ID (com error, AADSTS e
+    /// correlação), leitura recusada pelo Fabric (com status, código e o diagnóstico de acesso) ou leitura aceita — que confirma
+    /// só a autorização da chamada, não os controles.
+    /// </summary>
+    private async Task<Probe> ProbeFabricAsync(IMicrosoftGraphCredentials cfg, CancellationToken ct)
     {
+        const string label = "Microsoft Fabric";
+        string token;
         try
         {
-            var token = await _appTokens!.AcquireAsync(cfg, scope, ct);
-            await _rest!.GetAsync(token, url, ct);
-            return new Probe(true, $"{label}: leitura de verificação confirmada.");
-        }
-        catch (EntraGraphException ex) when (ex.Kind == EntraGraphErrorKind.InsufficientPermission)
-        {
-            return new Probe(false, $"{label}: autorização recusada, e a recusa não identifica a causa — confira {requirement}.");
+            token = await _appTokens!.AcquireAsync(cfg, FabricKnightCollector.Scope, ct);
         }
         catch (EntraGraphException ex)
         {
-            return new Probe(false, $"{label}: {GraphFailureReason(ex)}");
+            return new Probe(false, KnightFailureClassifier.FromHttp(ex, label, "token").Reason);
         }
         catch (MicrosoftCertificateException ex)
         {
@@ -391,6 +398,53 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
         {
             return FailedProbe(label, ex);
+        }
+
+        try
+        {
+            await _rest!.GetAsync(token, FabricKnightCollector.TenantSettingsUrl, ct);
+            return new Probe(true, $"{label}: token emitido e leitura de verificação de /v1/admin/tenantsettings aceita (primeira página). "
+                + "Isso confirma a autorização da chamada, não os controles — a avaliação depende da sincronização.");
+        }
+        catch (EntraGraphException ex) when (ex.Kind is EntraGraphErrorKind.InsufficientPermission or EntraGraphErrorKind.AuthFailure)
+        {
+            var refused = KnightFailureClassifier.FromHttp(ex, label, "read").Reason;
+            return new Probe(false, $"{refused}. {await FabricDiagnosisAsync(cfg, token, ct)}");
+        }
+        catch (EntraGraphException ex)
+        {
+            return new Probe(false, KnightFailureClassifier.FromHttp(ex, label, "read").Reason);
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            return FailedProbe(label, ex);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Diagnóstico de acesso; se ele próprio falhar, a linha diz isso e segue.</summary>
+    private async Task<string> FabricDiagnosisAsync(IMicrosoftGraphCredentials cfg, string token, CancellationToken ct)
+    {
+        try
+        {
+            return (await KnightAccessDiagnostics.FabricAsync(cfg, token, _graph, ct)).Text;
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            _log?.LogWarning("Diagnóstico de acesso do Fabric indisponível: {ExceptionType}.", ex.GetType().Name);
+            return "Não verificável: o diagnóstico de acesso não pôde ser concluído.";
+        }
+    }
+
+    private async Task<string> TeamsDiagnosisAsync(IMicrosoftGraphCredentials cfg, TeamsAdminCredentials tokens, CancellationToken ct)
+    {
+        try
+        {
+            return (await KnightAccessDiagnostics.TeamsAsync(cfg, tokens, _graph, ct)).Text;
+        }
+        catch (Exception ex) when (!IsRequestedCancellation(ex, ct))
+        {
+            _log?.LogWarning("Diagnóstico de acesso do Teams indisponível: {ExceptionType}.", ex.GetType().Name);
+            return "Não verificável: o diagnóstico de acesso não pôde ser concluído.";
         }
     }
 
@@ -505,6 +559,18 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
         _ => "o Microsoft Graph não respondeu à verificação.",
     };
 
+    private static bool IsAuthorizationCategory(string? category) =>
+        category is nameof(KnightCapabilityOutcome.InsufficientPermission) or nameof(KnightCapabilityOutcome.AuthenticationFailure);
+
+    /// <summary>Status e correlação observados na recusa (já restritos pela leitura da saída do adaptador).</summary>
+    private static string Observed(int? status, string? correlationId)
+    {
+        var parts = new List<string>();
+        if (status is { } s) parts.Add($"HTTP {s}");
+        if (correlationId is { } c) parts.Add($"correlação: {c}");
+        return parts.Count == 0 ? "" : " (" + string.Join(" · ", parts) + ")";
+    }
+
     /// <summary>
     /// Mensagem da recusa de CONEXÃO do Teams pela CATEGORIA. Só orienta conferir o papel de diretório quando a
     /// categoria É autorização — apontar isso para uma recusa por licença ou limite de taxa seria inventar uma
@@ -513,9 +579,10 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     private static string TeamsConnectionFailureReason(string? category) => category switch
     {
         nameof(KnightCapabilityOutcome.AuthenticationFailure) =>
-            "A conexão falhou na autenticação — confira o segredo da aplicação e os dois tokens emitidos.",
+            "A administração do Teams recusou a autenticação da conexão; a credencial já tinha sido aceita pelo Microsoft Entra ID na emissão dos tokens.",
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Sem deduzir o papel: o diagnóstico de acesso que segue diz o que foi comprovado.
         nameof(KnightCapabilityOutcome.InsufficientPermission) =>
-            "A conexão foi recusada por autorização — confira o papel Leitor do Teams (ou Leitor Global) atribuído à aplicação.",
+            "A administração do Teams recusou a conexão por autorização.",
         nameof(KnightCapabilityOutcome.Throttled) =>
             "O serviço aplicou limite de taxa ao estabelecer a conexão; não é uma questão de permissão ou papel.",
         nameof(KnightCapabilityOutcome.LimitedByLicense) =>
@@ -527,7 +594,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
     private static string TeamsReadFailureReason(string? category) => category switch
     {
         nameof(KnightCapabilityOutcome.InsufficientPermission) =>
-            "recusada por autorização. Confira o papel Leitor do Teams (ou Leitor Global) atribuído à aplicação.",
+            "recusada por autorização no comando.",
         nameof(KnightCapabilityOutcome.LimitedByLicense) =>
             "recusada por licença do locatário; não é resolvida concedendo mais papel.",
         nameof(KnightCapabilityOutcome.Throttled) =>

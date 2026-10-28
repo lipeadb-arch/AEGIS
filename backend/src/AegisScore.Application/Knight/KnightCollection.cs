@@ -480,7 +480,10 @@ public sealed record KnightCapabilityDiagnostic(
     string? Code = null,
     string? Endpoint = null,
     string? CorrelationId = null,
-    string? ServiceRequestId = null);
+    string? ServiceRequestId = null,
+    // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] correlation_id do endpoint de token (GUID). Omitido quando nulo, para que o JSON
+    // dos diagnósticos já gravados continue idêntico.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ServiceCorrelationId = null);
 
 /// <summary>
 /// Estado por capacidade — o que a fonte conseguiu (ou não) coletar, com detalhe sanitizado.

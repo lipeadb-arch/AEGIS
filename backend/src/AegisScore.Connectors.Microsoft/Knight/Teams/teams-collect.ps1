@@ -132,6 +132,56 @@ function Get-ErrorCategory {
     catch { return 'Error' }
 }
 
+# [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Status HTTP e correlação da recusa. Como a classificação acima, LEEM a exceção
+# localmente e só EMITEM valores de forma fechada: um número de um conjunto fixo e um GUID rotulado como correlação.
+function Get-ErrorStatus {
+    <#
+        Status HTTP da recusa, quando a exceção (ou uma interna) o expõe como PROPRIEDADE (StatusCode,
+        Response.StatusCode). Só valores de um conjunto FECHADO saem daqui; a mensagem só é consultada pela forma
+        padrão "status code ... 403" e devolve apenas o número.
+    #>
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+    try {
+        $allowed = @(400, 401, 403, 404, 409, 429, 500, 502, 503, 504)
+        $ex = $ErrorRecord.Exception
+        for ($i = 0; $null -ne $ex -and $i -lt 5; $i++) {
+            foreach ($candidate in @((Get-Prop $ex 'StatusCode'), (Get-Prop (Get-Prop $ex 'Response') 'StatusCode'), (Get-Prop $ex 'ResponseStatusCode'))) {
+                if ($null -eq $candidate) { continue }
+                # Enum (HttpStatusCode) ou numero: o valor inteiro. Texto ("Forbidden") nao converte e e ignorado.
+                $n = $null
+                try { $n = [int]$candidate } catch { $n = $null }
+                if ($null -ne $n -and $allowed -contains $n) { return $n }
+            }
+            $m = [string]$ex.Message
+            if ($m -match '(?i)status code[^0-9]{0,40}\b(40[01349]|429|50[0234])\b') { return [int]$Matches[1] }
+            $ex = $ex.InnerException
+        }
+        return $null
+    }
+    catch { return $null }
+}
+
+function Get-ErrorCorrelationId {
+    <#
+        Identificador de correlação/requisição da recusa — SÓ um GUID, e só quando rotulado como tal (CorrelationId,
+        client-request-id, request-id). Nenhum outro texto da mensagem sai.
+    #>
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+    try {
+        $texts = @()
+        $ex = $ErrorRecord.Exception
+        for ($i = 0; $null -ne $ex -and $i -lt 5; $i++) { $texts += [string]$ex.Message; $ex = $ex.InnerException }
+        if ($null -ne $ErrorRecord.ErrorDetails) { $texts += [string]$ErrorRecord.ErrorDetails.Message }
+        foreach ($t in $texts) {
+            if ($t -match '(?i)(?:correlation[-_ ]?id|client-request-id|x-ms-request-id|request[-_ ]?id)["'':=\s]{1,6}([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})') {
+                return $Matches[1].ToLowerInvariant()
+            }
+        }
+        return $null
+    }
+    catch { return $null }
+}
+
 function Get-ErrorId {
     <#
         Identificador TÉCNICO do erro, para diagnóstico — e nada além disso. NÃO usa a mensagem da exceção:
@@ -185,6 +235,8 @@ function Invoke-Read {
             items         = @()
             errorCategory = (Get-ErrorCategory $_)
             errorId       = (Get-ErrorId $_)
+            errorStatus   = (Get-ErrorStatus $_)
+            errorCorrelationId = (Get-ErrorCorrelationId $_)
             durationMs    = [long]$sw.ElapsedMilliseconds
         }
     }
@@ -339,6 +391,8 @@ $result = @{
     connected         = $false
     connectionErrorId = $null
     connectionErrorCategory = $null
+    connectionErrorStatus = $null
+    connectionErrorCorrelationId = $null
     reads             = @()
 }
 
@@ -395,6 +449,8 @@ try {
         $result.connected = $false
         $result.connectionErrorCategory = Get-ErrorCategory $_
         $result.connectionErrorId = Get-ErrorId $_
+        $result.connectionErrorStatus = Get-ErrorStatus $_
+        $result.connectionErrorCorrelationId = Get-ErrorCorrelationId $_
         Write-AegisStage 'connect-failed'
         Write-AegisResult $result
         exit 0

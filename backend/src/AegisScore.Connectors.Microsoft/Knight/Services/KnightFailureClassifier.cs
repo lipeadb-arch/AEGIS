@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -89,8 +90,14 @@ public static class KnightFailureClassifier
     public static KnightFailure FromHttp(
         EntraGraphException ex, string serviceLabel, string stage, long? durationMs = null, string? correlationId = null)
     {
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recusa no ENDPOINT DE TOKEN: a etapa é a emissão do token, não a leitura.
+        var tokenStage = ex.EndpointPath == "/oauth2/v2.0/token";
         var (outcome, kind, head) = ex.Kind switch
         {
+            _ when tokenStage && ex.Kind is EntraGraphErrorKind.AuthFailure or EntraGraphErrorKind.InsufficientPermission =>
+                (ex.Kind == EntraGraphErrorKind.AuthFailure ? KnightCapabilityOutcome.AuthenticationFailure : KnightCapabilityOutcome.InsufficientPermission,
+                 KnightFailureKind.HttpStatus,
+                 $"O Microsoft Entra ID recusou a emissão do token{(ex.TokenResource is { } r ? " de " + r : "")}; nenhuma leitura foi enviada."),
             _ when MentionsLicense(ex.GraphErrorCode) =>
                 (KnightCapabilityOutcome.LimitedByLicense, KnightFailureKind.HttpStatus, "O locatário não tem a licença que este recurso exige."),
             EntraGraphErrorKind.InsufficientPermission =>
@@ -113,12 +120,17 @@ public static class KnightFailureClassifier
         var parts = new List<string>();
         if (ex.HttpStatusCode is { } status) parts.Add($"HTTP {status}");
         if (!string.IsNullOrWhiteSpace(ex.GraphErrorCode)) parts.Add($"código: {ex.GraphErrorCode}");
+        if (ex.OAuthErrorCodes.Count > 0) parts.Add(string.Join(", ", ex.OAuthErrorCodes));
         if (!string.IsNullOrWhiteSpace(ex.EndpointPath)) parts.Add($"endpoint: {ex.EndpointPath}");
+        // Identificadores do serviço: só GUIDs, para o suporte da Microsoft localizar a requisição.
+        if (ex.ServiceRequestId is { } rid) parts.Add($"requisição: {rid}");
+        if (ex.ServiceCorrelationId is { } cid) parts.Add($"correlação: {cid}");
         var reason = $"{serviceLabel}: {head}" + (parts.Count == 0 ? "" : " " + string.Join(" · ", parts));
         if (reason.Length > 460) reason = reason[..459] + "…";
 
+        var code = ex.OAuthErrorCodes.Count > 0 ? string.Join("/", new[] { ex.GraphErrorCode }.Concat(ex.OAuthErrorCodes).Where(c => c is not null)) : ex.GraphErrorCode;
         return new KnightFailure(outcome, reason, new KnightCapabilityDiagnostic(
-            stage, kind, durationMs, ex.HttpStatusCode, ex.GraphErrorCode, ex.EndpointPath, correlationId, ex.ServiceRequestId));
+            stage, kind, durationMs, ex.HttpStatusCode, code, ex.EndpointPath, correlationId, ex.ServiceRequestId, ex.ServiceCorrelationId));
     }
 
     /// <summary>Licença só quando o CÓDIGO do erro a comprova (ex.: AadPremiumLicenseRequired).</summary>

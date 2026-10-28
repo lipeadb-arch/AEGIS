@@ -135,11 +135,10 @@ public sealed class MicrosoftAppTokenClient : IMicrosoftAppTokenClient
         using var form = new FormUrlEncodedContent(fields);
         using var request = new HttpRequestMessage(HttpMethod.Post, MicrosoftClientCredentialForm.TokenEndpoint(credentials)) { Content = form };
         using var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
-            throw new EntraGraphException(Classify(response.StatusCode),
-                $"token endpoint retornou {(int)response.StatusCode}", (int)response.StatusCode, endpointPath: "/oauth2/v2.0/token");
-
         var body = await response.Content.ReadAsStringAsync(ct);
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] A recusa preserva error, AADSTS, trace e correlação — nunca a descrição.
+        if (!response.IsSuccessStatusCode)
+            throw EntraGraphException.TokenRefused(Classify(response.StatusCode), response, body, ResourceOf(scope));
         try
         {
             using var doc = JsonDocument.Parse(body);
@@ -156,6 +155,13 @@ public sealed class MicrosoftAppTokenClient : IMicrosoftAppTokenClient
         throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
             "resposta do token endpoint sem access_token", endpointPath: "/oauth2/v2.0/token");
     }
+
+    /// <summary>Nome do recurso pedido, para o diagnóstico (só os recursos oficiais conhecidos; o resto vira o host).</summary>
+    internal static string ResourceOf(string scope) =>
+        scope.StartsWith("https://api.fabric.microsoft.com", StringComparison.OrdinalIgnoreCase) ? "API do Microsoft Fabric"
+        : scope.StartsWith("https://management.azure.com", StringComparison.OrdinalIgnoreCase) ? "Azure Resource Manager"
+        : Uri.TryCreate(scope, UriKind.Absolute, out var u) ? u.Host
+        : "recurso solicitado";
 
     internal static EntraGraphErrorKind Classify(HttpStatusCode status) => status switch
     {

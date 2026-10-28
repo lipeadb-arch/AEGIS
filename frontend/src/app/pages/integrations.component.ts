@@ -639,6 +639,8 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
       .conn-msg {
         grid-column: 2 / -1;
         margin: 0.35rem 0 0;
+        /* [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Uma linha por fonte no resultado do "Testar conexão". */
+        white-space: pre-line;
         font-size: var(--fs-meta);
         opacity: 0.85;
       }
