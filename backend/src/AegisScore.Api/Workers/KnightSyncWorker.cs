@@ -135,10 +135,11 @@ public sealed class KnightSyncWorker : BackgroundService
         catch (KnightPersistenceException ex)
         {
             // [AEGIS-KNIGHT-PERSISTENCE-01] A coleta e a avaliação terminaram; o que falhou foi GRAVAR. Não é falha de coleta e
-            // não pode ser lida como tal. Log estruturado só com etapa, pedido, SQLSTATE e nomes/tamanhos — nunca valores.
-            _log.LogError(ex,
-                "Sincronização {Request} do KNIGHT ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}; campos {Fields}.",
-                lease.RequestId, ex.SourceType, ex.Stage, ex.SqlState ?? "não informado",
+            // não pode ser lida como tal. Log estruturado só com etapa, pedido, SQLSTATE, tipos de exceção e nomes/tamanhos —
+            // SEM a exceção: a cadeia do provedor pode citar valores ou conteúdo coletado.
+            _log.LogError(
+                "Sincronização {Request} do KNIGHT ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}; exceções {ExceptionTypes}; campos {Fields}.",
+                lease.RequestId, ex.SourceType, ex.Stage, ex.SqlState ?? "não informado", ex.ExceptionTypes,
                 ex.Fields.Count == 0 ? "não identificados" : string.Join("; ", ex.Fields));
             await FailOrRecoverAsync(lease, PersistenceErrorCategory, PersistenceFailureMessage(lease.RequestId, ex));
         }

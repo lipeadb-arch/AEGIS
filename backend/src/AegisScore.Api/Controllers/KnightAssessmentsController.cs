@@ -72,9 +72,12 @@ public class KnightAssessmentsController : ControllerBase
         catch (KnightPersistenceException ex)
         {
             // [AEGIS-KNIGHT-PERSISTENCE-01] Coleta e avaliação concluídas, gravação recusada: nada foi registrado e a avaliação
-            // anterior continua valendo. O diagnóstico é seguro (etapa, SQLSTATE, nomes e tamanhos), nunca o texto coletado.
-            _log?.LogError(ex, "Avaliação KNIGHT ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}.",
-                sourceType, ex.Stage, ex.SqlState ?? "não informado");
+            // anterior continua valendo. O diagnóstico é seguro (etapa, SQLSTATE, tipos, nomes e tamanhos), nunca o texto coletado
+            // — por isso o log não leva a exceção, cuja cadeia do provedor pode citar valores.
+            _log?.LogError(
+                "Avaliação KNIGHT {Request} ({Source}): falha de persistência na etapa {Stage}; SQLSTATE {SqlState}; exceções {ExceptionTypes}; campos {Fields}.",
+                HttpContext?.TraceIdentifier, sourceType, ex.Stage, ex.SqlState ?? "não informado", ex.ExceptionTypes,
+                ex.Fields.Count == 0 ? "não identificados" : string.Join("; ", ex.Fields));
             return Problem(
                 title: "A avaliação não pôde ser gravada.",
                 detail: "A coleta e a avaliação terminaram, mas o resultado não pôde ser gravado no banco de dados. Nenhuma "

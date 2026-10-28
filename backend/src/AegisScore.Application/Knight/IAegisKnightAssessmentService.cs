@@ -202,6 +202,11 @@ public sealed class KnightPersistenceException : Exception
     public string? SqlState { get; }
     /// <summary>Campos identificados como excedentes; vazio quando a causa não é de tamanho ou não pôde ser localizada.</summary>
     public IReadOnlyList<KnightPersistenceField> Fields { get; }
+    /// <summary>
+    /// Somente os TIPOS da cadeia de exceções internas (ex.: "DbUpdateException → PostgresException"), para log. As
+    /// mensagens do provedor ficam de fora: podem citar valores, parâmetros ou trechos do conteúdo coletado.
+    /// </summary>
+    public string ExceptionTypes { get; }
 
     public KnightPersistenceException(
         KnightSourceType source, string stage, string? sqlState, IReadOnlyList<KnightPersistenceField> fields, Exception inner)
@@ -211,6 +216,10 @@ public sealed class KnightPersistenceException : Exception
         Stage = stage;
         SqlState = sqlState;
         Fields = fields;
+        var types = new List<string>();
+        for (var e = inner; e is not null && types.Count < 5; e = e.InnerException)
+            types.Add(e.GetType().Name);
+        ExceptionTypes = string.Join(" → ", types);
     }
 
     /// <summary>Diagnóstico curto e seguro; lista no máximo três campos.</summary>

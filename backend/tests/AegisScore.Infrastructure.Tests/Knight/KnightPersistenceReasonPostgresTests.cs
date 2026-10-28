@@ -119,6 +119,80 @@ public sealed class KnightPersistenceReasonPostgresTests
     }
 
     /// <summary>
+    /// Os limites antigos da FOTOGRAFIA — motivo em 1000 e evidência em 2000 — também caíram. O caso de 653 caracteres só
+    /// passava da coluna de 500; aqui o motivo tem mais de 1000 e a evidência mais de 2000 caracteres. O texto é sintético
+    /// (lista de políticas em demo.example.com, como a que um motivo montado de listas variáveis carrega) e é gravado sobre
+    /// o resultado de uma avaliação real no PostgreSQL migrado; depois: releitura, publicação da fotografia (hash válido),
+    /// releitura da fotografia e relatório HTML — o MESMO texto, caractere a caractere, em todos.
+    /// </summary>
+    [Fact]
+    public async Task MotivoAcimaDe1000_EvidenciaAcimaDe2000_GravaPublicaReleEExportaIntegrais()
+    {
+        await using var pg = await PostgresProbe.TryCreateAsync();
+        if (pg is null) { _output.WriteLine("PULADO: AEGIS_TEST_PG não definido."); return; }
+        var opt = pg.DbOptions();
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
+            await db.Database.MigrateAsync();
+        var tenant = await SeedAsync(opt);
+
+        var politicas = new StringBuilder("as substituições por caixa não foram lidas; políticas envolvidas: ");
+        for (var i = 1; politicas.Length < 2100; i++)
+            politicas.Append($"Política sintética {i:D3} (mailbox{i:D3}@demo.example.com); ");
+        var motivo = politicas.Append("fim do diagnóstico sintético.").ToString();
+        var evidencia = "Não avaliado: " + motivo;
+        motivo.Length.Should().BeGreaterThan(1000, "passa do limite antigo do motivo na fotografia");
+        evidencia.Length.Should().BeGreaterThan(2000, "passa do limite antigo da evidência na fotografia");
+        _output.WriteLine($"motivo: {motivo.Length} caracteres; evidência: {evidencia.Length} caracteres");
+
+        Guid runId;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            runId = (await KnightExchangeConfigurationFlowTests
+                .ServiceFor(db, tenant, new ExchangeCollectionScenario(ExchangeCollectionScenario.Variant.CasMailboxesDenied))
+                .RunAssessmentAsync(KnightSourceType.MicrosoftExchangeOnline)).Id;
+        }
+
+        // Gravação no PostgreSQL: o resultado "não avaliado" recebe o motivo e a evidência longos. Status, nota e
+        // denominadores da execução não são tocados.
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var resultado = await db.KnightIndicatorResults.SingleAsync(i => i.RunId == runId && i.IndicatorId == "AK-EXO-016");
+            resultado.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+            resultado.NotEvaluatedReason = motivo;
+            resultado.Evidence = evidencia;
+            await db.SaveChangesAsync();
+        }
+
+        Guid snapshotId;
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var gravado = await db.KnightIndicatorResults.AsNoTracking()
+                .SingleAsync(i => i.RunId == runId && i.IndicatorId == "AK-EXO-016");
+            gravado.NotEvaluatedReason.Should().Be(motivo, "a releitura devolve o motivo inteiro");
+            gravado.Evidence.Should().Be(evidencia, "a releitura devolve a evidência inteira");
+
+            snapshotId = (await new PostureSnapshotService(db, new SystemTenantContext(tenant))
+                .PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftExchangeOnline, runId)).Summary.Id;
+        }
+
+        await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(tenant)))
+        {
+            var fotografia = await db.PostureSnapshots.AsNoTracking()
+                .Include(s => s.Controls).Include(s => s.Indicators).Include(s => s.ActionItems).Include(s => s.Objects)
+                .SingleAsync(s => s.Id == snapshotId);
+            var congelado = fotografia.Indicators.Single(i => i.IndicatorId == "AK-EXO-016");
+            congelado.NotEvaluatedReason.Should().Be(motivo, "a fotografia congela o motivo acima de 1000 caracteres inteiro");
+            congelado.Evidence.Should().Be(evidencia, "a fotografia congela a evidência acima de 2000 caracteres inteira");
+            PostureSnapshotHasher.Verify(fotografia).Should().BeTrue("o hash da fotografia confere com o conteúdo relido");
+
+            var html = Encoding.UTF8.GetString((await new PostureSnapshotExporter(db).ExportAsync(snapshotId, PostureExportFormat.Html))!.Content);
+            var dados = DataIsland(html);
+            StringValues(dados, "notEvaluatedReason").Should().Contain(motivo, "o relatório HTML leva o motivo inteiro");
+            StringValues(dados, "evidence").Should().Contain(evidencia, "o relatório HTML leva a evidência inteira");
+        }
+    }
+
+    /// <summary>
     /// Falha de gravação NUNCA vira sucesso, nem "falha de coleta". O banco é deixado propositalmente ATRÁS do modelo — a
     /// coluna volta a character varying(500), como no ambiente antes desta migration — e a sincronização passa pelo worker
     /// real: o pedido termina "PersistenceError" com etapa, pedido, SQLSTATE, entidade, propriedade e tamanhos (sem o texto
