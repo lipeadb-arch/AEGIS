@@ -288,8 +288,8 @@ public sealed partial class EntraIdKnightCollector
     }
 
     /// <summary>A MESMA régua que a releitura do ADM usa (contas habilitadas da enumeração completa da MFA por usuário).</summary>
-    private static int? IdentityKnightBoundaryAccounts(List<KnightConfigurationDocument> docs, List<KnightCapabilityStatus> caps) =>
-        IdentityKnightBoundary.EnabledAccountCount(new KnightTenantConfiguration(docs, caps));
+    private static IReadOnlyList<string>? IdentityKnightBoundaryAccounts(List<KnightConfigurationDocument> docs, List<KnightCapabilityStatus> caps) =>
+        IdentityKnightBoundary.EnabledAccountIds(new KnightTenantConfiguration(docs, caps));
 
     /// <summary>Sinais do acesso condicional com políticas, papéis, pertencimento e contagem de contas desta coleta.</summary>
     private void AddConditionalAccessObservations(DirectoryConfigurationBox box, List<KnightObservation> obs, EntraRun run)

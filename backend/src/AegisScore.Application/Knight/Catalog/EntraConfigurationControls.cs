@@ -233,6 +233,8 @@ public static class EntraConfigurationControls
                     "Lacuna comprovada: nenhuma política habilitada que aplica " + req.Label + " alcança " + string.Join(", ", notTargeted) + ".",
                 RoleMfaCoverageState.NotCovered => "Lacuna comprovada: nenhum membro é alcançado por política habilitada que aplica " + req.Label + ".",
                 RoleMfaCoverageState.CoveredWithExceptions => "Exceções sem outra cobertura: " + string.Join(", ", excepted) + ".",
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01]
+                RoleMfaCoverageState.NoUserMembers => "Só identidades de aplicação — fora da exigência de autenticação de usuários.",
                 _ => "Cobertura não resolvida — depende de grupo(s) cujo pertencimento não é coletado.",
             };
             var obj = new KnightIndicatorObject(

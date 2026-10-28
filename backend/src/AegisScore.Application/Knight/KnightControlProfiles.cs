@@ -147,9 +147,10 @@ public static class KnightControlProfiles
             "Papéis administrativos ativos sem política habilitada que EXIJA MFA em todas as aplicações.",
             "Contas administrativas são o alvo prioritário de roubo de credencial. Sem exigência de segundo fator por política, uma senha comprometida de um administrador basta para controlar o ambiente.",
             "Para cada membro dos papéis privilegiados: ao menos uma política de acesso condicional HABILITADA que o alcance (pelo papel, por todos os usuários ou nominalmente), em todas as aplicações, sem condição que estreite a exigência, exigindo MFA ou uma força de autenticação — ou security defaults habilitados.",
-            "Exigência por política não comprova que cada autenticação aplicou o segundo fator. Exclusões explícitas (como contas de emergência) não são irregulares por si, mas não comprovam proteção: sem outra política que as cubra, o controle fica não avaliado e as contas aparecem nomeadas. Pertencimento a grupos não é coletado.",
+            "Exigência por política não comprova que cada autenticação aplicou o segundo fator. Exclusões explícitas (como contas de emergência) não são irregulares por si, mas não comprovam proteção: sem outra política que as cubra, o controle fica não avaliado e as contas aparecem nomeadas. O alcance por grupo usa o pertencimento lido; grupo não lido por completo e papel detido via grupo (que a política dirigida ao papel não comprova alcançar) ficam não resolvidos. Identidades de aplicação não entram na exigência de MFA de usuários.",
             Docs(DocAdminMfa, DocDefaults),
-            Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline, KnightCapability.PrivilegedRoleInventory)),
+            Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline, KnightCapability.PrivilegedRoleInventory,
+                KnightCapability.EntraGroupMembership)),
 
         new KnightControlProfile("AK-ENTRA-009", KnightSecurityDomain.Identity,
             "Aplicações com segredos ou certificados vencidos ou perto do vencimento.",
@@ -186,8 +187,8 @@ public static class KnightControlProfiles
             "Nenhuma base mínima de proteção de identidade: sem security defaults e sem política habilitada exigindo MFA de todos os usuários.",
             "Sem uma base mínima, cada usuário depende só da própria senha, e nenhum controle do provedor compensa isso.",
             "Security defaults habilitados, ou ao menos uma política de acesso condicional HABILITADA exigindo MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite.",
-            "Presença de baseline não significa cobertura completa: exclusões são listadas e o alcance para administradores é avaliado em AK-ENTRA-008. Política de alcance restrito não sustenta uma base para o ambiente.",
-            Docs(DocDefaults), Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline)),
+            "Presença de baseline não significa cobertura completa: exclusões são listadas e o alcance para administradores é avaliado em AK-ENTRA-008. Política de alcance restrito não sustenta uma base para o ambiente. Política dirigida a grupo só sustenta a base quando cada conta habilitada da enumeração completa é conferida pela identidade — quantidades iguais não bastam.",
+            Docs(DocDefaults), Caps(KnightCapability.ConditionalAccessPolicies, KnightCapability.SecurityBaseline, KnightCapability.EntraGroupMembership)),
 
         new KnightControlProfile("AK-ENTRA-015", KnightSecurityDomain.Governance,
             "Não há contas de acesso de emergência (break-glass) designadas.",

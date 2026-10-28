@@ -350,7 +350,7 @@ public static class IdentityKnightBoundary
             Collected(KnightCapability.PrivilegedRoleInventory),
             // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento dos grupos e a contagem COMPLETA de contas habilitadas da mesma coleta.
             Collected(KnightCapability.EntraGroupMembership),
-            EnabledAccountCount(tenant));
+            EnabledAccountIds(tenant));
 
         return new KnightCollectionResult(
             record.Origin.Provider,
@@ -368,12 +368,12 @@ public static class IdentityKnightBoundary
     }
 
     /// <summary>
-    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Contas habilitadas do diretório pela enumeração da MFA por usuário — só quando ela foi
-    /// coletada e não parou no teto. É a régua da base mínima conta a conta; o coletor usa a MESMA leitura, para que o veredito
-    /// da coleta e a evidência relida não divirjam.
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Ids das contas habilitadas pela enumeração da MFA por usuário — só quando ela foi
+    /// coletada, não parou no teto e guardou os ids (aquisições anteriores não os têm). É a população da base mínima conta a
+    /// conta; o coletor usa a MESMA leitura, para que o veredito da coleta e a evidência relida não divirjam.
     /// </summary>
-    public static int? EnabledAccountCount(KnightTenantConfiguration tenant) =>
-        tenant.Read<EntraPerUserMfaInventory>() is { Collected: true, Single: { Truncated: false } inventory } ? inventory.EnabledAccounts : null;
+    public static IReadOnlyList<string>? EnabledAccountIds(KnightTenantConfiguration tenant) =>
+        tenant.Read<EntraPerUserMfaInventory>() is { Collected: true, Single: { Truncated: false, EnabledAccountIds: { } ids } } ? ids : null;
 
     /// <summary>
     /// [AEGIS-ADM-02] O texto que impede uma lista vazia de passar por ausência. Diz as TRÊS coisas que

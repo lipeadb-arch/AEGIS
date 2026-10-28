@@ -70,7 +70,7 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
             groups ?? Array.Empty<string>(), apps ?? Array.Empty<string>(), Array.Empty<string>());
 
     private static ConditionalAccessAnalysis Analyze(IReadOnlyList<ConditionalAccessPolicyConfiguration> policies,
-        IReadOnlyList<DirectoryRoleConfiguration> roles, IReadOnlyList<EntraGroupMembership>? groups, int? enabled = null) =>
+        IReadOnlyList<DirectoryRoleConfiguration> roles, IReadOnlyList<EntraGroupMembership>? groups, string[]? enabled = null) =>
         ConditionalAccessAnalyzer.Analyze(new KnightDirectoryConfiguration(policies, roles, groups, enabled))!;
 
     private static KnightObservation Signal(ConditionalAccessAnalysis a, KnightSignalKey key) =>
@@ -187,28 +187,67 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
         Signal(a, KnightSignalKey.BaselineMfaPolicies).Count.Should().Be(1);
     }
 
+    private static readonly string[] Nove = { "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9" };
+
     [Fact]
-    public void BaseMinima_DirigidaAGrupoComMenosContasQueAsHabilitadas_NaoEhBase()
+    public void BaseMinima_DirigidaAGrupoComContasForaDoAlvo_NaoEhBase()
     {
         var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-parte" }) },
-            Array.Empty<DirectoryRoleConfiguration>(), new[] { Group("g-parte", EntraGroupMembershipState.Complete, "u1", "u2") }, enabled: 9);
+            Array.Empty<DirectoryRoleConfiguration>(), new[] { Group("g-parte", EntraGroupMembershipState.Complete, "u1", "u2") }, enabled: Nove);
         a.Baseline.RestrictedPolicyIds.Should().Equal("p-grupo");
-        a.Baseline.Reach!["p-grupo"].Should().Contain("no máximo 2 de 9 conta(s) habilitada(s)");
+        a.Baseline.Reach!["p-grupo"].Should().Contain("7 de 9 conta(s) habilitada(s) fora do alvo");
         Signal(a, KnightSignalKey.BaselineMfaPolicies).Count.Should().Be(0, "há conta fora do alvo: não há base para o ambiente");
     }
 
     [Fact]
-    public void BaseMinima_GrupoComTantasContasQuantoAsHabilitadas_NaoEhAprovadoPorContagem()
+    public void BaseMinima_QuantidadesIguaisComIdsDiferentes_NaoAprova()
     {
-        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) },
-            Array.Empty<DirectoryRoleConfiguration>(), new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1", "u2", "u3") }, enabled: 3);
+        // Três no grupo, três habilitadas — mas "u-desabilitada" não é "u3": a comparação é por identidade.
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) }, Array.Empty<DirectoryRoleConfiguration>(),
+            new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1", "u2", "u-desabilitada") }, enabled: new[] { "u1", "u2", "u3" });
+        a.Baseline.BaselinePolicyIds.Should().BeEmpty();
+        a.Baseline.RestrictedPolicyIds.Should().Equal("p-grupo");
+        a.Baseline.Reach!["p-grupo"].Should().Contain("1 de 3 conta(s) habilitada(s) fora do alvo");
+    }
+
+    [Fact]
+    public void BaseMinima_AlcanceComprovadoContaAConta_EhBase_SemRelaxarAsCondicoes()
+    {
+        var groups = new[] { Group("g-todos", EntraGroupMembershipState.Complete, Nove.Concat(new[] { "u-desabilitada" }).ToArray()) };
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) }, Array.Empty<DirectoryRoleConfiguration>(), groups, enabled: Nove);
+        a.Baseline.BaselinePolicyIds.Should().Equal("p-grupo");
+        a.Baseline.Reach!["p-grupo"].Should().Contain("9 de 9 conta(s) habilitada(s) alcançada(s)");
+        Signal(a, KnightSignalKey.BaselineMfaPolicies).Count.Should().Be(1);
+
+        // O mesmo alcance com condição que estreita (localização) não é base: demonstrar alcance não relaxa o critério.
+        var narrowed = Mfa("p-grupo", includeGroups: new[] { "g-todos" }) with { HasLocationCondition = true };
+        Analyze(new[] { narrowed }, Array.Empty<DirectoryRoleConfiguration>(), groups, enabled: Nove).Baseline.BaselinePolicyIds.Should().BeEmpty();
+
+        // Exclusão nominal de uma conta habilitada é delimitada (excluída explicitamente), como nas políticas para todos.
+        var withBreakGlass = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }, excludeUsers: new[] { "u9" }) },
+            Array.Empty<DirectoryRoleConfiguration>(), groups, enabled: Nove);
+        withBreakGlass.Baseline.Reach!["p-grupo"].Should().Contain("8 de 9").And.Contain("1 excluída(s) explicitamente");
+    }
+
+    [Theory]
+    [InlineData(EntraGroupMembershipState.Incomplete)]
+    [InlineData(EntraGroupMembershipState.Denied)]
+    public void BaseMinima_LeituraIncompleta_PreservaAIncerteza(EntraGroupMembershipState state)
+    {
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) }, Array.Empty<DirectoryRoleConfiguration>(),
+            new[] { Group("g-todos", state, "u1", "u2") }, enabled: new[] { "u1", "u2", "u3" });
         a.Baseline.UnresolvedPolicyIds.Should().Equal("p-grupo");
         Signal(a, KnightSignalKey.BaselineMfaPolicies).Outcome.Should().Be(KnightObservationOutcome.Missing);
-        a.Baseline.InconclusiveReason.Should().Contain("não menos que as 3 habilitadas");
+        a.Baseline.InconclusiveReason.Should().Contain("alcance não comprovado para 1 de 3");
+    }
 
-        var noCount = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) },
-            Array.Empty<DirectoryRoleConfiguration>(), new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1") }, enabled: null);
-        Signal(noCount, KnightSignalKey.BaselineMfaPolicies).Outcome.Should().Be(KnightObservationOutcome.Missing, "sem a contagem completa não há comparação");
+    [Fact]
+    public void BaseMinima_SemEnumeracaoCompleta_NaoResolvida()
+    {
+        var a = Analyze(new[] { Mfa("p-grupo", includeGroups: new[] { "g-todos" }) }, Array.Empty<DirectoryRoleConfiguration>(),
+            new[] { Group("g-todos", EntraGroupMembershipState.Complete, "u1") }, enabled: null);
+        Signal(a, KnightSignalKey.BaselineMfaPolicies).Outcome.Should().Be(KnightObservationOutcome.Missing, "sem a população não há comparação");
+        a.Baseline.InconclusiveReason.Should().Contain("sem a enumeração completa das contas habilitadas");
     }
 
     [Fact]
@@ -216,16 +255,16 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
     {
         var group = Group("g-adm", EntraGroupMembershipState.Incomplete, "u2", "u1") with { Detail = "teto", HttpStatus = null };
         var config = new KnightDirectoryConfiguration(new[] { Mfa("p") }, new[] { RoleV2(Ga, "GA", new[] { "u1" }, groups: new[] { "g-adm" }) },
-            new[] { group }, 9);
+            new[] { group }, new[] { "u1", "u2" });
         var observed = DirectoryConfigurationDocuments.ToObserved(config);
         observed.Single(o => o.Kind == ConfigurationObjectKind.DirectoryRole).SchemaVersion.Should().Be(DirectoryRoleConfiguration.SchemaVersion);
         observed.Single(o => o.Kind == ConfigurationObjectKind.DirectoryGroupMembership).SchemaVersion.Should().Be(EntraGroupMembership.SchemaVersion);
 
-        var back = DirectoryConfigurationDocuments.FromObserved(observed, true, true, groupsCollected: true, enabledAccountCount: 9);
+        var back = DirectoryConfigurationDocuments.FromObserved(observed, true, true, groupsCollected: true, enabledAccountIds: new[] { "u1", "u2" });
         back.PrivilegedRoles!.Single().GroupMemberIds.Should().Equal("g-adm");
         back.GroupMemberships!.Single().State.Should().Be(EntraGroupMembershipState.Incomplete);
         back.GroupMemberships!.Single().Members.Select(m => m.Id).Should().Equal("u1", "u2");
-        back.EnabledAccountCount.Should().Be(9);
+        back.EnabledAccountIds.Should().Equal("u1", "u2");
 
         // Um papel gravado na v1 (antes deste pacote) continua legível e sem tipos.
         var v1 = new IdentityObservedConfiguration(ConfigurationObjectKind.DirectoryRole, Ga, "GA", DirectoryRoleConfiguration.SchemaVersionV1,
@@ -238,7 +277,7 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
     // ===== 2) Percurso inteiro: Graph sintético → coletor → ADM → avaliação ========================================
 
     /// <summary>Locatário com grupos atribuídos a papéis, aplicação em papel e política de MFA dirigida a grupo.</summary>
-    private sealed class GroupTenant
+    internal sealed class GroupTenant
     {
         public string[] Todos { get; init; } = { "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9" };
         public string[] Enabled { get; init; } = { "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u9" };
@@ -402,6 +441,30 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
 
         var baseline = Indicator(run, "AK-ENTRA-014");
         baseline.Status.Should().Be(KnightIndicatorStatus.Exposed, baseline.NotEvaluatedReason ?? baseline.Evidence);
+    }
+
+    [Fact]
+    public async Task BaseMinima_QuantidadesIguaisIdsDiferentes_Reprova_PelaIdentidade()
+    {
+        // Nove no grupo, nove habilitadas — mas o grupo tem uma conta desabilitada no lugar de u9.
+        var (run, _) = await RunAsync(new GroupTenant { Todos = new[] { "u1", "u2", "u3", "u4", "u5", "u6", "u7", "u8", "u-desabilitada" } });
+        Indicator(run, "AK-ENTRA-014").Status.Should().Be(KnightIndicatorStatus.Exposed);
+    }
+
+    [Fact]
+    public async Task BaseMinima_GrupoAlcancaCadaContaHabilitada_Aprova_ComAEvidenciaRelidaDoAdm()
+    {
+        var (run, db) = await RunAsync(new GroupTenant());
+        var baseline = Indicator(run, "AK-ENTRA-014");
+        baseline.Status.Should().Be(KnightIndicatorStatus.Passed, baseline.NotEvaluatedReason ?? baseline.Evidence);
+
+        // A população veio da MESMA enumeração (sem consulta por usuário a mais) e foi preservada no ADM, com o teto dito.
+        var perUser = Deserialize<EntraPerUserMfaInventory>((await Observations(db, run.Id)).Single(d => d.Kind == ConfigurationObjectKind.PerUserMfaInventory));
+        perUser.Truncated.Should().BeFalse();
+        perUser.EnabledAccountIds.Should().BeEquivalentTo(new GroupTenant().Enabled);
+        var objects = await db.KnightAffectedObjects.AsNoTracking().Where(o => o.RunId == run.Id && o.IndicatorId == "AK-ENTRA-014").ToListAsync();
+        objects.Should().Contain(o => o.DisplayName == "Exigir a autenticação multifator para todos os usuários"
+            && o.Detail!.Contains("9 de 9 conta(s) habilitada(s) alcançada(s)"));
     }
 
     [Fact]

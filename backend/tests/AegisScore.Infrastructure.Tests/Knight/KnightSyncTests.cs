@@ -475,6 +475,43 @@ public sealed class KnightSyncTests : IDisposable
             WorkerOptions(), NullLogger<KnightSyncWorker>.Instance);
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] O caminho REAL do resumo do escopo do Azure: avaliação → finalização do pedido pelo worker →
+    /// mensagem gravada (no limite da coluna) → visão devolvida pela API, que a tela de Integrações separa pelo marcador.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Worker_PedidoDoAzureConcluido_GravaOResumoDoEscopo_NoLimiteDaMensagem(bool longo)
+    {
+        var conector = await SeedAsync(TenantA);
+        await using var db = Ctx(TenantA);
+        var pedido = (await Requests(db, TenantA).EnqueueAsync(conector, KnightSourceType.MicrosoftAzure, null)).Request;
+        var queue = Queue(new ManualClock(DateTimeOffset.UtcNow), leaseSeconds: 60);
+        var resumo = "Descoberta concluída: 0 assinatura(s) consultada(s) de 2 visível(is) na listagem; 2 desabilitada(s)."
+            + (longo ? new string('x', 1500) : "");
+        var runId = Guid.NewGuid();
+        var fake = new FakeAssessments(_ => Assessment(runId, KnightSourceState.PartialCollection) with
+        {
+            SourceType = KnightSourceType.MicrosoftAzure,
+            Capabilities = new[]
+            {
+                new KnightCapabilityStatus(KnightCapability.AzureSubscriptions, KnightCapabilityOutcome.Collected, resumo),
+                new KnightCapabilityStatus(KnightCapability.AzureTenantDiagnostics, KnightCapabilityOutcome.InsufficientPermission, "recusado"),
+            },
+        });
+
+        await Worker(queue, fake).ProcessAsync((await queue.TryClaimNextAsync())!, CancellationToken.None);
+
+        var fim = await Requests(Ctx(TenantA), TenantA).GetAsync(conector, pedido.Id);
+        fim!.Status.Should().Be(KnightSyncStatus.Completed);
+        fim.RunId.Should().Be(runId);
+        fim.Message.Should().StartWith("Coleta parcial").And.Contain(KnightSyncWorker.AzureScopeMarker + "Descoberta concluída: 0 assinatura(s)");
+        fim.Message!.Length.Should().BeLessThanOrEqualTo(1000, "a coluna da mensagem tem 1000 caracteres");
+        if (!longo) fim.Message.Should().EndWith("Diagnóstico do Entra ID (escopo do locatário, separado das assinaturas): não lido.");
+        else fim.Message.Should().EndWith("…");
+    }
+
     private static KnightAssessment Assessment(Guid id, KnightSourceState state) => new(
         id, KnightAssessmentMode.Live, KnightSourceType.MicrosoftEntraId, state, "Microsoft Entra ID", KnightRunStatus.Completed,
         KnightCatalog.Version, KnightScoreFormula.Version, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 70, 80,

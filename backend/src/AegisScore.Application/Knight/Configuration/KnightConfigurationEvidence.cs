@@ -256,8 +256,12 @@ public static class KnightConfigurationEvidence
         // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O alcance conta a conta, quando o pertencimento foi lido.
         var reach = baseline.Reach is { } map && map.TryGetValue(p.Id, out var why) ? why : null;
         if (baseline.BaselinePolicyIds.Contains(p.Id))
-            return "Sustenta a base mínima: exige MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite"
-                + Exceptions(p, member, membership) + (reach is null ? "" : "; " + reach) + ".";
+            return r.TargetsAllUsers
+                ? "Sustenta a base mínima: exige MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite"
+                  + Exceptions(p, member, membership) + (reach is null ? "" : "; " + reach) + "."
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Dirigida a grupo: sustenta só porque cada conta habilitada foi conferida pela identidade.
+                : "Sustenta a base mínima: exige MFA em todas as aplicações, sem condição que a estreite; " + reach
+                  + Exceptions(p, member, membership) + ".";
         if (baseline.UnresolvedPolicyIds.Contains(p.Id))
             return reach is not null
                 ? "Exige MFA em todas as aplicações, mas o alcance sobre todas as contas não foi comprovado: " + reach

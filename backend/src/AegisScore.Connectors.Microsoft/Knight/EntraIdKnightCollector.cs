@@ -1163,8 +1163,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento lido (nulo = capacidade não concluída).</summary>
         public IReadOnlyList<EntraGroupMembership>? Groups { get; set; }
 
-        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Contas habilitadas pela enumeração completa da mesma coleta.</summary>
-        public int? EnabledAccounts { get; set; }
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Ids das contas habilitadas pela enumeração completa da mesma coleta.</summary>
+        public IReadOnlyList<string>? EnabledAccounts { get; set; }
     }
 
     private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> all)

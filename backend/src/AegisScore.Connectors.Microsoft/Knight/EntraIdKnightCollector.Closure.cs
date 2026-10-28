@@ -208,6 +208,7 @@ public sealed partial class EntraIdKnightCollector
 
         var states = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var removed = 0;
+        var removedIds = new ConcurrentBag<string>();
         var unread = 0;
         EntraGraphException? fatal = null;
         string? contract = null;
@@ -232,6 +233,7 @@ public sealed partial class EntraIdKnightCollector
                     catch (EntraGraphException ex) when (ex.HttpStatusCode == 404)
                     {
                         Interlocked.Increment(ref removed); // conta excluída entre a listagem e a leitura
+                        removedIds.Add(u.Id);
                     }
                     catch (EntraGraphException ex) when (ex.Kind is EntraGraphErrorKind.InsufficientPermission or EntraGraphErrorKind.AuthFailure)
                     {
@@ -301,6 +303,8 @@ public sealed partial class EntraIdKnightCollector
                 notDisabled.Take(EntraPerUserMfaInventory.MaxListed).ToList(),
                 truncated ? $"A enumeração parou no teto de {EntraPerUserMfaInventory.MaxAccounts} contas habilitadas."
                     : interruption is not null ? $"{unread} conta(s) não lida(s). {interruption}"
-                    : unread > 0 ? $"{unread} conta(s) não lida(s) (limitação de taxa ou indisponibilidade do Microsoft Graph)." : null)));
+                    : unread > 0 ? $"{unread} conta(s) não lida(s) (limitação de taxa ou indisponibilidade do Microsoft Graph)." : null,
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01] A população enumerada (sem consulta por usuário a mais), para a base mínima.
+                users.Select(u => u.Id).Except(removedIds, StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.Ordinal).ToList())));
     }
 }

@@ -178,6 +178,17 @@ public sealed class KnightAzureDiscoveryTests : IDisposable
     }
 
     [Fact]
+    public async Task Integracoes_RecebeOResumoDaDescoberta_EODiagnosticoDoEntraSeparado()
+    {
+        var (run, _) = await RunAsync(new AzureScenario(AzureScenario.Variant.EntraDiagnosticsDenied), Config(scope: null));
+        var scope = AegisScore.Api.Workers.KnightSyncWorker.ScopeSummary(run);
+        scope.Should().StartWith("Descoberta concluída: 3 assinatura(s) consultada(s) de 3 visível(is)")
+            .And.EndWith("Diagnóstico do Entra ID (escopo do locatário, separado das assinaturas): não lido.");
+        AegisScore.Api.Workers.KnightSyncWorker.ScopeSummary(run with { SourceType = KnightSourceType.MicrosoftEntraId })
+            .Should().BeNull("só o Azure tem descoberta de escopo");
+    }
+
+    [Fact]
     public void DeclaracoesDoToken_TokenIlegivel_NaoVerificavel()
     {
         AzureKnightCollector.ArmTokenClaims("token-sintetico", DirectoryId).Should().Be(((string?)null, (bool?)null));

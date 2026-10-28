@@ -217,13 +217,13 @@ public sealed record EntraGroupMembership(
 /// </summary>
 /// <param name="GroupMemberships">[AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento dos grupos referenciados; nulo = não coletado
 /// (aquisições anteriores): a análise mantém o grupo como desconhecido, exatamente como antes.</param>
-/// <param name="EnabledAccountCount">[AEGIS-KNIGHT-COLLECTION-GAPS-01] Contas habilitadas do diretório, de uma enumeração
-/// COMPLETA da mesma coleta (nulo = não disponível). Só sustenta a prova "o grupo alcança menos contas do que existem".</param>
+/// <param name="EnabledAccountIds">[AEGIS-KNIGHT-COLLECTION-GAPS-01] Ids das contas habilitadas do diretório, de uma enumeração
+/// COMPLETA da mesma coleta (nulo = não disponível ou incompleta). É a população da base mínima conferida conta a conta.</param>
 public sealed record KnightDirectoryConfiguration(
     IReadOnlyList<ConditionalAccessPolicyConfiguration>? ConditionalAccessPolicies,
     IReadOnlyList<DirectoryRoleConfiguration>? PrivilegedRoles,
     IReadOnlyList<EntraGroupMembership>? GroupMemberships = null,
-    int? EnabledAccountCount = null)
+    IReadOnlyList<string>? EnabledAccountIds = null)
 {
     public static KnightDirectoryConfiguration None { get; } = new(null, null);
 
@@ -295,7 +295,7 @@ public static class DirectoryConfigurationDocuments
     /// </summary>
     public static KnightDirectoryConfiguration FromObserved(
         IEnumerable<IdentityObservedConfiguration> objects, bool policiesCollected, bool rolesCollected,
-        bool groupsCollected = false, int? enabledAccountCount = null)
+        bool groupsCollected = false, IReadOnlyList<string>? enabledAccountIds = null)
     {
         var policies = new List<ConditionalAccessPolicyConfiguration>();
         var roles = new List<DirectoryRoleConfiguration>();
@@ -341,6 +341,6 @@ public static class DirectoryConfigurationDocuments
             rolesCollected ? roles.OrderBy(r => r.TemplateId, StringComparer.Ordinal).ToList() : null,
             // Um documento de grupo ilegível some da lista — e o grupo fica DESCONHECIDO na análise (nunca vazio).
             groupsCollected ? groups.OrderBy(g => g.GroupId, StringComparer.Ordinal).ToList() : null,
-            enabledAccountCount);
+            enabledAccountIds);
     }
 }
