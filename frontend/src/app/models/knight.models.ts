@@ -1441,7 +1441,7 @@ const CAUSE: Record<string, [string, string]> = {
     // aceito — e no Exchange Online a permissão sozinha nunca autoriza comando algum. "Permissão ausente"
     // elegia uma dessas causas e mandava o operador consertar o que talvez já estivesse certo.
     'Autorização recusada',
-    'Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Integrações.',
+    'Conferir o diagnóstico de acesso no detalhe abaixo antes de alterar permissões. A recusa não comprova, sozinha, falta de consentimento de administrador: identidade, papéis e configuração específica do serviço também precisam ser considerados.',
   ],
   LimitedByLicense: [
     'Licença insuficiente',
@@ -1480,7 +1480,7 @@ export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
       : c.outcome === 'Error' && c.previewApi
           ? 'A resposta da versão preview saiu do contrato documentado: os controles que dependem dela ficam não avaliados até a leitura ser revista. Nada a conceder.'
           : c.outcome === 'InsufficientPermission' && c.capability.startsWith('Azure')
-            ? 'Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Integrações.'
+            ? 'Conferir a identidade da aplicação e seu acesso Azure RBAC no escopo recusado (assinatura ou cofre), conforme o detalhe abaixo. Não concluir que falta um papel apenas pela recusa da consulta.'
             : generic;
     return {
       capability: c.capability,

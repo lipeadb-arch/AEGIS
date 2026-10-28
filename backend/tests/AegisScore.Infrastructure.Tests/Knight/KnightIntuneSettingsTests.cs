@@ -15,10 +15,11 @@ using Xunit.Abstractions;
 namespace AegisScore.Infrastructure.Tests.Knight;
 
 /// <summary>
-/// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Configuração de conformidade do Intune (<c>deviceManagement.settings.secureByDefault</c>)
+/// Configuração de conformidade do Intune (<c>GET deviceManagement/settings</c>, secureByDefault na raiz)
 /// pelo percurso inteiro: resposta do Graph → coletor → ADM → releitura → AK-INT-001. Antes, a capacidade terminava como
-/// COLETADA mesmo quando o objeto ou a propriedade não vinham, e o controle ficava "a fonte não informou" sem dizer o porquê.
-/// Agora: true e false são lidos; objeto ausente, propriedade ausente e tipo incompatível são falhas de contrato distintas,
+/// COLETADA mesmo quando a propriedade não vinha; depois passou a detectar a omissão, mas ainda consultava o singleton
+/// deviceManagement. A fixture distingue esse singleton (sem settings, como na resposta real) do objeto consultado diretamente.
+/// True e false são lidos; objeto ausente, propriedade ausente e tipo incompatível são falhas de contrato distintas,
 /// cada uma com o próprio diagnóstico — nunca convertidas em false, conformidade ou sucesso. AK-INT-002 não é afetado.
 /// </summary>
 public sealed class KnightIntuneSettingsTests : IDisposable
@@ -40,8 +41,8 @@ public sealed class KnightIntuneSettingsTests : IDisposable
     public void Dispose() => _connection.Dispose();
 
     [Theory]
-    [InlineData("""{"settings":{"secureByDefault":true,"deviceComplianceCheckinThresholdDays":30}}""", KnightIndicatorStatus.Passed)]
-    [InlineData("""{"settings":{"secureByDefault":false,"deviceComplianceCheckinThresholdDays":30}}""", KnightIndicatorStatus.Exposed)]
+    [InlineData("""{"secureByDefault":true,"deviceComplianceCheckinThresholdDays":30}""", KnightIndicatorStatus.Passed)]
+    [InlineData("""{"secureByDefault":false,"deviceComplianceCheckinThresholdDays":30}""", KnightIndicatorStatus.Exposed)]
     public async Task ValorBooleano_EhLidoEAvaliado(string body, KnightIndicatorStatus expected)
     {
         var (run, scenario) = await RunAsync(body);
@@ -50,17 +51,17 @@ public sealed class KnightIntuneSettingsTests : IDisposable
         run.Indicators.Single(i => i.IndicatorId == "AK-INT-001").Status.Should().Be(expected);
         run.Indicators.Single(i => i.IndicatorId == "AK-INT-002").Status.Should().NotBe(KnightIndicatorStatus.NotEvaluated);
         scenario.Requests.Select(r => r.RequestUri!.AbsoluteUri)
-            .Should().Contain(u => u.EndsWith("/v1.0/deviceManagement", StringComparison.Ordinal),
-                "a leitura usa o GET documentado do deviceManagement, que devolve settings sem depender de $select");
+            .Should().Contain(u => u.EndsWith("/v1.0/deviceManagement/settings", StringComparison.Ordinal),
+                "a configuração é lida diretamente; o singleton deviceManagement pode omitir settings");
     }
 
     [Theory]
-    [InlineData("""{"id":"00000000-0000-0000-0000-000000000000"}""", "settings ausente")]
-    [InlineData("""{"settings":null}""", "settings ausente")]
-    [InlineData("""{"settings":"texto"}""", "settings com tipo incompatível")]
-    [InlineData("""{"settings":{"deviceComplianceCheckinThresholdDays":30}}""", "secureByDefault ausente")]
-    [InlineData("""{"settings":{"secureByDefault":null}}""", "secureByDefault ausente")]
-    [InlineData("""{"settings":{"secureByDefault":"true"}}""", "secureByDefault com tipo incompatível")]
+    [InlineData("""{"id":"00000000-0000-0000-0000-000000000000"}""", "secureByDefault ausente")]
+    [InlineData("null", "deviceManagementSettings")]
+    [InlineData("\"texto\"", "deviceManagementSettings")]
+    [InlineData("""{"deviceComplianceCheckinThresholdDays":30}""", "secureByDefault ausente")]
+    [InlineData("""{"secureByDefault":null}""", "secureByDefault ausente")]
+    [InlineData("""{"secureByDefault":"true"}""", "secureByDefault com tipo incompatível")]
     public async Task DadoAusenteOuIncompativel_NaoEhColetado_ComDiagnosticoProprio(string body, string expected)
     {
         var (run, _) = await RunAsync(body);
@@ -68,7 +69,7 @@ public sealed class KnightIntuneSettingsTests : IDisposable
         var cap = run.Capabilities.Single(c => c.Capability == KnightCapability.IntuneServiceSettings);
         cap.Outcome.Should().Be(KnightCapabilityOutcome.Error, "ausência nunca é false, conformidade nem sucesso");
         cap.Diagnostic!.Kind.Should().Be(KnightFailureKind.Contract);
-        cap.Diagnostic.Endpoint.Should().Be("/v1.0/deviceManagement");
+        cap.Diagnostic.Endpoint.Should().Be("/v1.0/deviceManagement/settings");
         cap.Detail.Should().Contain(expected);
 
         var ind = run.Indicators.Single(i => i.IndicatorId == "AK-INT-001");
