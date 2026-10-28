@@ -48,12 +48,17 @@ public sealed class TeamsTokenClient : ITeamsTokenClient
     public async Task<TeamsAdminCredentials> AcquireAsync(IMicrosoftGraphCredentials credentials, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(credentials);
-        var graph = await AcquireAsync(credentials, GraphScope, ct);
-        var teams = await AcquireAsync(credentials, TeamsScope, ct);
+        // Ordem e recursos da documentação: primeiro o Microsoft Graph, depois a API de administração do Teams.
+        var graph = await AcquireAsync(credentials, GraphScope, GraphResource, ct);
+        var teams = await AcquireAsync(credentials, TeamsScope, TeamsResource, ct);
         return new TeamsAdminCredentials(credentials.AzureTenantId, graph, teams);
     }
 
-    private async Task<string> AcquireAsync(IMicrosoftGraphCredentials config, string scope, CancellationToken ct)
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Qual dos dois tokens foi recusado — a etapa exata da falha.</summary>
+    internal const string GraphResource = "Microsoft Graph (1º token do Teams)";
+    internal const string TeamsResource = "Skype and Teams Tenant Admin API (2º token do Teams)";
+
+    private async Task<string> AcquireAsync(IMicrosoftGraphCredentials config, string scope, string resource, CancellationToken ct)
     {
         var url = $"{LoginBaseUrl}/{Uri.EscapeDataString(config.AzureTenantId)}/oauth2/v2.0/token";
         // [AEGIS-KNIGHT-COVERAGE-04] Segredo OU certificado: o corpo vem do formulário compartilhado.
@@ -61,14 +66,11 @@ public sealed class TeamsTokenClient : ITeamsTokenClient
 
         using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = form };
         using var response = await _http.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
-            throw new EntraGraphException(
-                Classify(response.StatusCode),
-                $"token endpoint retornou {(int)response.StatusCode}",
-                (int)response.StatusCode,
-                endpointPath: "/oauth2/v2.0/token");
-
         var body = await response.Content.ReadAsStringAsync(ct);
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Antes só o status chegava ao diagnóstico; agora também error, AADSTS, trace e
+        // correlação — e qual dos dois tokens foi recusado. A descrição e o corpo continuam fora.
+        if (!response.IsSuccessStatusCode)
+            throw EntraGraphException.TokenRefused(Classify(response.StatusCode), response, body, resource);
         try
         {
             using var doc = JsonDocument.Parse(body);
@@ -83,7 +85,7 @@ public sealed class TeamsTokenClient : ITeamsTokenClient
         }
 
         throw new EntraGraphException(EntraGraphErrorKind.AuthFailure,
-            "resposta do token endpoint sem access_token", endpointPath: "/oauth2/v2.0/token");
+            "resposta do token endpoint sem access_token", endpointPath: "/oauth2/v2.0/token") { TokenResource = resource };
     }
 
     private static EntraGraphErrorKind Classify(HttpStatusCode status) => status switch

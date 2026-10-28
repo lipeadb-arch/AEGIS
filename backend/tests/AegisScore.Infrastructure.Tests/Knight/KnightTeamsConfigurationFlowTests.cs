@@ -219,7 +219,7 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
         {
             var i = run.Indicators.Single(x => x.IndicatorId == id);
             i.Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id);
-            i.NotEvaluatedReason.Should().Contain("Leitor do Teams", id);
+            i.NotEvaluatedReason.Should().Contain("Autorização recusada no comando", id);
         }
 
         // As leituras que concluíram continuam valendo: a falha de uma não apaga as outras.
@@ -543,7 +543,54 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
         tudo.Should().NotContain(ConexaoComSegredoNoDiagnostico.MarcadorDeToken);
         tudo.Should().NotContain(ConexaoComSegredoNoDiagnostico.MarcadorDeSegredo);
         tudo.Should().NotContain("Bearer ");
-        tudo.Should().Contain("Leitor do Teams", "a orientação sobre a causa é preservada");
+        tudo.Should().Contain("recusou a conexão de aplicativo por autorização", "a etapa e a categoria da recusa são preservadas");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] O diagnóstico de acesso de uma recusa de comando chega ao ADM, à avaliação dos
+    /// controles e ao relatório (HTML e CSV) — com o que foi verificado e a ação demonstrada — e nada do token chega junto.
+    /// A limitação própria de AK-TEAMS-007 (modelo de aplicativos não determinável por autenticação de aplicativo) é preservada.
+    /// </summary>
+    [Fact]
+    public async Task DiagnosticoDeAcesso_PersistidoEApresentado_SemDadosSensiveis()
+    {
+        const string marcador = "AEGIS-MARCADOR-DO-TOKEN-0002";
+        var graphToken = KnightTeamsFabricAccessTests.Jwt("https://graph.microsoft.com", roles: new[] { "Organization.Read.All" }, extra: marcador);
+        var teamsToken = KnightTeamsFabricAccessTests.Jwt("48ac35b8-9aa8-4d74-927d-1f4a14a0b239", wids: Array.Empty<string>(), extra: marcador);
+        await SeedAsync(TenantA);
+        await using var db = NewContext(TenantA);
+
+        var run = await ServiceFor(db, TenantA,
+                new KnightTeamsFabricAccessTests.ScriptedTeamsReader(connected: true, refuseAll: true, status: 403,
+                    correlation: "66666666-7777-4888-9999-000000000000"),
+                new KnightTeamsFabricAccessTests.FixedTeamsTokens(graphToken, teamsToken))
+            .RunAssessmentAsync(KnightSourceType.MicrosoftTeams);
+        Dump(run);
+
+        run.SourceState.Should().Be(KnightSourceState.InsufficientPermission);
+        var client = run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-001");
+        client.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        client.NotEvaluatedReason.Should().Contain("Autorização recusada no comando").And.Contain("HTTP 403")
+            .And.Contain("Verificado: ").And.Contain("não declara nenhum papel de diretório do Teams")
+            .And.Contain("Não verificável: ").And.Contain("a ausência do papel no token não comprova ausência de atribuição")
+            .And.Contain("Nenhuma ação específica é demonstrada pela evidência disponível.");
+        client.NotEvaluatedReason.Should().NotContain("atribuir um papel", "sem a leitura das atribuições, nenhuma concessão é demonstrada");
+        run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007").NotEvaluatedReason
+            .Should().Contain("não é possível determinar qual modelo governa o acesso a aplicativos");
+
+        var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
+        var persisted = KnightCapabilitiesJson.Deserialize(entity.CapabilitiesJson);
+        persisted.Single(c => c.Capability == KnightCapability.TeamsClientConfiguration).Detail
+            .Should().Contain("a ausência do papel no token não comprova ausência de atribuição");
+
+        var published = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, run.Id);
+        var exporter = new PostureSnapshotExporter(db);
+        var html = Encoding.UTF8.GetString((await exporter.ExportAsync(published.Summary.Id, PostureExportFormat.Html))!.Content);
+        var csv = Encoding.UTF8.GetString((await exporter.ExportAsync(published.Summary.Id, PostureExportFormat.Csv))!.Content);
+        csv.Should().Contain("Get-CsTeamsClientConfiguration").And.Contain("Organization.Read.All");
+
+        var tudo = string.Join(" | ", entity.CapabilitiesJson, string.Join(" ", run.Indicators.Select(i => i.Evidence + " " + i.NotEvaluatedReason)), html, csv);
+        tudo.Should().NotContain(marcador).And.NotContain(graphToken).And.NotContain(teamsToken.Split('.')[1]);
     }
 
     // ---- Infraestrutura -----------------------------------------------------------------------------
@@ -580,13 +627,14 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
     private static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, TeamsCollectionScenario.Variant variant) =>
         ServiceFor(db, tenantId, new TeamsCollectionScenario(variant));
 
-    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, ITeamsAdminReader reader)
+    internal static IAegisKnightAssessmentService ServiceFor(AegisScoreDbContext db, Guid tenantId, ITeamsAdminReader reader,
+        ITeamsTokenClient? tokens = null, IEntraGraphClient? graph = null)
     {
         var tenant = new SystemTenantContext(tenantId);
         var registry = new KnightCollectorRegistry(new IKnightCollector[]
         {
             new EntraIdKnightCollector(new EntraGraphClient(new System.Net.Http.HttpClient(new KnightGraphScenario.StubHandler()))),
-            new TeamsKnightCollector(new StubTokens(), reader),
+            new TeamsKnightCollector(tokens ?? new StubTokens(), reader, graph: graph),
         });
         var config = new MicrosoftConfig();
         var store = new IdentityAcquisitionStore(db, tenant, TimeProvider.System);

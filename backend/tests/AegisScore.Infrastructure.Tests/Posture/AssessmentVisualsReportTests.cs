@@ -237,6 +237,25 @@ public sealed class AssessmentVisualsReportTests
     }
 
     /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Exportações simultâneas (dois usuários, ou testes em paralelo) não mudam a paginação:
+    /// sem a trava de geração, o mesmo PDF NIST saía com quebras de linha diferentes ("ID.AM-05" → "ID.AM- 05").
+    /// </summary>
+    [Fact]
+    public void GeracaoSimultanea_ProduzOMesmoTexto()
+    {
+        var k = AssessmentVisualsFixtures.Knight(true);
+        var n = AssessmentVisualsFixtures.Nist(true);
+        var r = AssessmentVisualsFixtures.NistReport();
+        var nist = PdfText(NistReportPdfWriter.Write(n, r));
+        var knight = PdfText(PostureSnapshotPdfWriter.Write(k));
+        var pdfs = new System.Collections.Concurrent.ConcurrentBag<(bool Nist, byte[] Bytes)>();
+        System.Threading.Tasks.Parallel.For(0, 12, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = 6 }, i =>
+            pdfs.Add(i % 2 == 0 ? (true, NistReportPdfWriter.Write(n, r)) : (false, PostureSnapshotPdfWriter.Write(k))));
+        pdfs.Should().HaveCount(12);
+        pdfs.Should().OnlyContain(p => PdfText(p.Bytes) == (p.Nist ? nist : knight));
+    }
+
+    /// <summary>
     /// Grava os relatórios sintéticos para a verificação visual (navegador e leitor de PDF) quando
     /// <c>AEGIS_VISUALS_OUT</c> aponta um diretório. Sem a variável, só confere que todos são gerados.
     /// </summary>

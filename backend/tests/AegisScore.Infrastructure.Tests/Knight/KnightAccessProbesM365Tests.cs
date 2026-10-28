@@ -85,7 +85,7 @@ public sealed class KnightAccessProbesM365Tests
         var health = await ConnectorFor(scenario, certificate: true).TestAsync(Config(), CancellationToken.None);
 
         health.Status.Should().Be(ConnectorStatus.Degraded);
-        health.Message.Should().Contain("Microsoft Fabric: autorização recusada").And.Contain("APIs de administração somente leitura");
+        health.Message.Should().Contain("Microsoft Fabric: Autorização recusada").And.Contain("APIs de administração somente leitura");
     }
 
     /// <summary>[AEGIS-KNIGHT-COVERAGE-04] Conectar ao Resource Manager sem enxergar assinatura não é sucesso: falta o papel Leitor.</summary>

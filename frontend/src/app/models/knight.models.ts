@@ -401,7 +401,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   { source: 'MicrosoftEntraId', label: 'Microsoft Entra ID', slug: 'entra', provider: 'Microsoft', microsoftConnector: true, consolidable: true, requirement: null },
   {
     source: 'MicrosoftTeams', label: 'Microsoft Teams', slug: 'teams', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'Exige, além da credencial acima, Organization.Read.All (Microsoft Graph, aplicativo — a Microsoft a documenta para todos os cmdlets) e o papel Leitor do Teams (ou Leitor Global) atribuído a esta aplicação no Microsoft Entra ID.',
+    requirement: 'Exige, além da credencial acima, Organization.Read.All (Microsoft Graph, aplicativo — a Microsoft a documenta para todos os cmdlets) nenhuma permissão configurada para «Skype and Teams Tenant Admin API» e um papel de diretório do Teams atribuído a esta aplicação (é no token que a sessão o recebe). O de menor privilégio é Leitor do Teams; a tabela oficial associa ao módulo PowerShell os papéis de administração do Teams.',
   },
   {
     source: 'MicrosoftExchangeOnline', label: 'Exchange Online', slug: 'exchange', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
@@ -426,7 +426,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   },
   {
     source: 'MicrosoftFabric', label: 'Microsoft Fabric (Power BI)', slug: 'fabric', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'Um administrador do Fabric precisa permitir que entidades de serviço usem as APIs de administração somente leitura, para um grupo que contenha a aplicação.',
+    requirement: 'Um administrador do Fabric precisa permitir que entidades de serviço usem as APIs de administração somente leitura, para um grupo de segurança que contenha a aplicação, e a aplicação não pode ter permissões de aplicativo do Power BI/Fabric que exijam consentimento do administrador.',
   },
   {
     source: 'MicrosoftAzure', label: 'Microsoft Azure', slug: 'azure', provider: 'Microsoft', microsoftConnector: true, consolidable: true,

@@ -153,7 +153,9 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
                         // Segunda barreira: o script já restringe o identificador na origem, mas quem lê a saída
                         // não pode depender disso — o que entra no objeto é sempre o valor sanitizado.
                         TeamsDiagnosticScrubber.ScrubIdentifier(Text(r, "errorId")),
-                        Duration(r)));
+                        Duration(r),
+                        Status(r, "errorStatus"),
+                        Correlation(r, "errorCorrelationId")));
                 }
             }
 
@@ -162,9 +164,20 @@ public sealed class PowerShellTeamsAdminReader : ITeamsAdminReader
                 root.TryGetProperty("connected", out var c) && c.ValueKind == JsonValueKind.True,
                 TeamsDiagnosticScrubber.ScrubIdentifier(Text(root, "connectionErrorId")),
                 Text(root, "connectionErrorCategory"),
-                reads);
+                reads,
+                ConnectionErrorStatus: Status(root, "connectionErrorStatus"),
+                ConnectionErrorCorrelationId: Correlation(root, "connectionErrorCorrelationId"));
         }
     }
+
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Status HTTP declarado pelo script — só de 100 a 599.</summary>
+    internal static int? Status(JsonElement parent, string name) =>
+        parent.ValueKind == JsonValueKind.Object && parent.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number
+        && v.TryGetInt32(out var n) && n is >= 100 and <= 599 ? n : null;
+
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Segunda barreira: só um GUID atravessa.</summary>
+    internal static string? Correlation(JsonElement parent, string name) =>
+        Guid.TryParse(Text(parent, name), out var g) ? g.ToString("D") : null;
 
     private static JsonElement EmptyArray()
     {

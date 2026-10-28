@@ -247,6 +247,10 @@ public sealed class SharePointKnightCollector : KnightRestCollectorBase
 /// Configurações do locatário do Fabric pela API de administração (<c>GET /v1/admin/tenantsettings</c>). A Microsoft
 /// documenta o acesso por entidade de serviço; o administrador do Fabric precisa permitir que entidades de serviço
 /// usem as APIs de administração somente leitura, e a aplicação precisa estar no grupo de segurança autorizado.
+/// <para>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Contrato conferido com a referência: <c>value</c> (TenantSetting[]) e a
+/// continuação por <c>continuationUri</c>/<c>continuationToken</c>. Numa recusa, o motivo preserva status, código e endpoint
+/// e recebe o diagnóstico de <see cref="KnightAccessDiagnostics.FabricAsync"/> — o que o token e a entidade de serviço
+/// comprovam. Os escopos delegados (Tenant.Read.All) não são recomendados: esta é autenticação de aplicativo.</para>
 /// </summary>
 public sealed class FabricKnightCollector : KnightRestCollectorBase
 {
@@ -255,12 +259,14 @@ public sealed class FabricKnightCollector : KnightRestCollectorBase
 
     private readonly IMicrosoftAppTokenClient _tokens;
     private readonly IMicrosoftRestClient _rest;
+    private readonly IEntraGraphClient? _graph;
 
     public FabricKnightCollector(IMicrosoftAppTokenClient tokens, IMicrosoftRestClient rest,
-        ILogger<FabricKnightCollector>? log = null, TimeProvider? time = null) : base(log, time)
+        ILogger<FabricKnightCollector>? log = null, TimeProvider? time = null, IEntraGraphClient? graph = null) : base(log, time)
     {
         _tokens = tokens;
         _rest = rest;
+        _graph = graph;
     }
 
     public override KnightSourceType Source => KnightSourceType.MicrosoftFabric;
@@ -284,5 +290,30 @@ public sealed class FabricKnightCollector : KnightRestCollectorBase
                         Groups(s, "enabledSecurityGroups"), Groups(s, "excludedSecurityGroups"), Str(s, "tenantSettingGroup"))));
             }
         }, ct);
+
+        // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recusa: o motivo persistido ganha o que foi verificado, o que não é verificável
+        // e a ação, quando demonstrada. O código real (ex.: InsufficientScopes) e a etapa continuam no início do motivo.
+        var index = recorder.Capabilities.FindIndex(c => c.Capability == KnightCapability.FabricTenantSettings);
+        if (index >= 0 && recorder.Capabilities[index].Outcome is KnightCapabilityOutcome.InsufficientPermission or KnightCapabilityOutcome.AuthenticationFailure)
+        {
+            var diagnosis = await DiagnoseAsync(cfg, token, ct);
+            recorder.Capabilities[index] = recorder.Capabilities[index] with
+            {
+                Detail = recorder.Capabilities[index].Detail + " " + diagnosis.Text,
+            };
+        }
+    }
+
+    private async Task<KnightAccessDiagnosis> DiagnoseAsync(IMicrosoftGraphCredentials cfg, string token, CancellationToken ct)
+    {
+        try
+        {
+            return await KnightAccessDiagnostics.FabricAsync(cfg, token, _graph, ct);
+        }
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
+        {
+            Log?.LogWarning("Diagnóstico de acesso do Microsoft Fabric indisponível: {ExceptionType}.", KnightFailureClassifier.SafeTypeName(ex));
+            return KnightAccessDiagnosis.Unavailable;
+        }
     }
 }

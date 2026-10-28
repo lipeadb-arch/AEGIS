@@ -99,7 +99,8 @@ public sealed class KnightIdentityPostureConnectorTests
 
         health.Status.Should().Be(ConnectorStatus.Degraded);
         health.Message.Should().Contain("Get-CsTeamsClientConfiguration");
-        health.Message.Should().Contain("Leitor do Teams");
+        health.Message.Should().Contain("recusada por autorização no comando");
+        health.Message.Should().NotContain("Confira o papel", "[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] o papel não é deduzido da recusa");
     }
 
     [Fact]
@@ -175,7 +176,7 @@ public sealed class KnightIdentityPostureConnectorTests
         entra.Should().Contain("falha inesperada");
         entra.Should().NotContain("falha de rede",
             "um erro interno do AEGIS não pode ser apresentado como falha de rede ou tempo limite");
-        health.Message.Should().Contain("Microsoft Teams: credencial aceita")
+        health.Message.Should().Contain("Microsoft Teams: tokens emitidos")
             .And.Contain("Exchange Online: credencial aceita");
         health.Message.Should().NotContain("estado interno sintético",
             "a mensagem de uma exceção inesperada não atravessa para o diagnóstico");

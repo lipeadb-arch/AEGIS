@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -54,6 +55,36 @@ public sealed class EntraGraphException : Exception
     /// </summary>
     public string? ContractDetail { get; init; }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Códigos numéricos do Microsoft Entra ID na recusa de um token
+    /// (<c>error_codes</c>, apresentados como <c>AADSTS…</c>). Só dígitos — nunca a descrição, que cita a aplicação.
+    /// </summary>
+    public IReadOnlyList<string> OAuthErrorCodes { get; init; } = Array.Empty<string>();
+
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] <c>correlation_id</c> devolvido pelo endpoint de token (só GUID).</summary>
+    public string? ServiceCorrelationId { get; init; }
+
+    /// <summary>[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recurso do token recusado (constante do AEGIS, nunca texto da fonte).</summary>
+    public string? TokenResource { get; init; }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Recusa do endpoint de token com os metadados OAuth SEGUROS: <c>error</c>,
+    /// <c>error_codes</c>, <c>trace_id</c> e <c>correlation_id</c>. <c>error_description</c>, o corpo e qualquer outro campo
+    /// nunca atravessam esta fronteira.
+    /// </summary>
+    internal static EntraGraphException TokenRefused(
+        EntraGraphErrorKind kind, HttpResponseMessage response, string? body, string? resource)
+    {
+        var oauth = OAuthTokenError.Read(body);
+        return new EntraGraphException(kind, $"token endpoint retornou {(int)response.StatusCode}", (int)response.StatusCode,
+            oauth.Error, "/oauth2/v2.0/token", oauth.TraceId ?? RequestIdOf(response))
+        {
+            OAuthErrorCodes = oauth.Codes,
+            ServiceCorrelationId = oauth.CorrelationId,
+            TokenResource = resource,
+        };
+    }
+
     public EntraGraphException(
         EntraGraphErrorKind kind,
         string? detail = null,
@@ -104,6 +135,46 @@ public sealed class EntraGraphException : Exception
 }
 
 /// <summary>
+/// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Campos estruturados e seguros da resposta de erro do endpoint de token do
+/// Microsoft Entra ID. Cada um é validado por forma: <c>error</c> em minúsculas e sublinhado, códigos só com dígitos,
+/// identificadores só GUID. O que não passa é descartado — e a descrição nunca é lida.
+/// </summary>
+internal sealed record OAuthTokenError(string? Error, IReadOnlyList<string> Codes, string? TraceId, string? CorrelationId)
+{
+    private static readonly OAuthTokenError None = new(null, Array.Empty<string>(), null, null);
+
+    public static OAuthTokenError Read(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body) || body.Length > 64_000) return None;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return None;
+            string? error = root.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String
+                && e.GetString() is { Length: > 0 and <= 64 } s && s.All(c => c is (>= 'a' and <= 'z') or '_')
+                ? s
+                : null;
+            var codes = new List<string>();
+            if (root.TryGetProperty("error_codes", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                foreach (var c in arr.EnumerateArray())
+                    if (c.ValueKind == JsonValueKind.Number && c.TryGetInt64(out var n) && n is > 0 and < 100_000_000 && codes.Count < 5)
+                        codes.Add($"AADSTS{n}");
+            return new OAuthTokenError(error, codes.Distinct().ToList(), Guid(root, "trace_id"), Guid(root, "correlation_id"));
+        }
+        catch (JsonException)
+        {
+            return None;
+        }
+    }
+
+    private static string? Guid(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+            ? EntraGraphException.SanitizeRequestId(v.GetString())
+            : null;
+}
+
+/// <summary>
 /// Transporte de baixo nível do Microsoft Graph (client credentials + GET paginado). É o seam testável por
 /// HTTP simulado: mockando o <see cref="HttpClient"/> (via HttpMessageHandler) o protocolo real é exercido —
 /// forma do token, header Bearer, paginação por <c>@odata.nextLink</c>, e a classificação de 401/403/429/5xx.
@@ -113,6 +184,15 @@ public interface IEntraGraphClient
     Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct);
     IAsyncEnumerable<JsonElement> GetPagedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
     Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] GET paginado como CONSULTA AVANÇADA de objetos de diretório: envia
+    /// <c>ConsistencyLevel: eventual</c> em todas as páginas (a URL traz <c>$count=true</c>), como a documentação exige para
+    /// cast OData, <c>$search</c>, <c>$filter</c> e <c>$orderby</c> nessas relações. Um cliente que não envia o cabeçalho
+    /// recusa em vez de fingir cumprir o contrato — e o chamador trata a recusa como "não verificável".
+    /// </summary>
+    IAsyncEnumerable<JsonElement> GetPagedAdvancedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        throw new NotSupportedException("este cliente do Microsoft Graph não envia consultas avançadas");
 }
 
 /// <inheritdoc cref="IEntraGraphClient"/>
@@ -163,13 +243,8 @@ public sealed class EntraGraphClient : IEntraGraphClient
             // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] O endpoint de token devolve 400 para credencial recusada (invalid_client,
             // unauthorized_client): é falha de AUTENTICAÇÃO, não indisponibilidade — os outros clientes de token já tratavam
             // assim. O código OAuth curto acompanha o diagnóstico; a descrição (que cita a aplicação) nunca.
-            throw new EntraGraphException(
-                ClassifyToken(resp.StatusCode),
-                $"token endpoint retornou {(int)resp.StatusCode}",
-                (int)resp.StatusCode,
-                TryReadOAuthErrorCode(body),
-                endpointPath: "/oauth2/v2.0/token",
-                serviceRequestId: EntraGraphException.RequestIdOf(resp));
+            // [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Também os códigos AADSTS e os identificadores trace/correlação.
+            throw EntraGraphException.TokenRefused(ClassifyToken(resp.StatusCode), resp, body, "Microsoft Graph");
 
         JsonDocument doc;
         try
@@ -194,8 +269,16 @@ public sealed class EntraGraphClient : IEntraGraphClient
             endpointPath: "/oauth2/v2.0/token");
     }
 
-    public async IAsyncEnumerable<JsonElement> GetPagedAsync(
-        string token, IMicrosoftGraphCredentials config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
+    public IAsyncEnumerable<JsonElement> GetPagedAsync(
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        PagedAsync(token, relativeUrl, advanced: false, ct);
+
+    public IAsyncEnumerable<JsonElement> GetPagedAdvancedAsync(
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        PagedAsync(token, relativeUrl, advanced: true, ct);
+
+    private async IAsyncEnumerable<JsonElement> PagedAsync(
+        string token, string relativeUrl, bool advanced, [EnumeratorCancellation] CancellationToken ct)
     {
         var next = BuildGraphUrl(relativeUrl);
         var pages = 0;
@@ -206,7 +289,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
                     endpointPath: PathOf(next));
 
             ValidateGraphUrl(next!);
-            var body = await SendGetAsync(token, next!, ct);
+            var body = await SendGetAsync(token, next!, ct, advanced);
             pages++;
 
             var pageItems = new List<JsonElement>();
@@ -272,11 +355,12 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
     }
 
-    private async Task<string> SendGetAsync(string token, string url, CancellationToken ct)
+    private async Task<string> SendGetAsync(string token, string url, CancellationToken ct, bool advanced = false)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (advanced) req.Headers.Add("ConsistencyLevel", "eventual");
         using var resp = await _http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (resp.StatusCode != HttpStatusCode.OK)
@@ -327,24 +411,6 @@ public sealed class EntraGraphClient : IEntraGraphClient
     }
 
     private static string? PathOf(string? url) => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsolutePath : null;
-
-    /// <summary>Código OAuth curto do endpoint de token (<c>error</c>), nunca a descrição.</summary>
-    internal static string? TryReadOAuthErrorCode(string body)
-    {
-        if (string.IsNullOrWhiteSpace(body) || body.Length > 64_000) return null;
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.ValueKind == JsonValueKind.Object
-                   && doc.RootElement.TryGetProperty("error", out var e) && e.ValueKind == JsonValueKind.String
-                ? e.GetString()
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
 
     /// <summary>Endpoint de token: 400 e 401 são credencial recusada; 429 é limite; o resto, indisponibilidade.</summary>
     internal static EntraGraphErrorKind ClassifyToken(HttpStatusCode code) => code switch

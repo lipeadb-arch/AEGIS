@@ -29,6 +29,8 @@ public sealed record TeamsAdminCredentials(string TenantId, string GraphToken, s
 /// <param name="Command">Comando oficial executado — registrado para rastreabilidade do método de coleta.</param>
 /// <param name="Items">Itens devolvidos, sempre um array JSON (vazio quando a leitura não devolveu nada).</param>
 /// <param name="ErrorCategory">Classificação da falha, quando houve. É DAQUI que sai a mensagem do cliente.</param>
+/// <param name="ErrorStatus">[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Status HTTP da recusa, de um conjunto fechado, quando a exceção o expõe.</param>
+/// <param name="ErrorCorrelationId">[AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Correlação da recusa — só um GUID rotulado como tal.</param>
 /// <param name="ErrorId">
 /// Identificador TÉCNICO do erro (identificador de erro do PowerShell + tipo da exceção), já restrito a um
 /// conjunto fixo de caracteres e sanitizado na leitura. Serve ao diagnóstico do operador e NÃO vira texto de
@@ -42,7 +44,9 @@ public sealed record TeamsAdminRead(
     JsonElement Items,
     string? ErrorCategory,
     string? ErrorId,
-    long? DurationMs = null);
+    long? DurationMs = null,
+    int? ErrorStatus = null,
+    string? ErrorCorrelationId = null);
 
 /// <summary>Runtime em que a coleta correu — o que a homologação precisa saber para reproduzir o resultado.</summary>
 public sealed record TeamsAdminRuntime(string? PowerShell, string? Module, string? Platform);
@@ -57,7 +61,9 @@ public sealed record TeamsAdminOutput(
     string? ConnectionErrorId,
     string? ConnectionErrorCategory,
     IReadOnlyList<TeamsAdminRead> Reads,
-    AegisScore.Connectors.Microsoft.Knight.PowerShell.PowerShellRunReport? Process = null);
+    AegisScore.Connectors.Microsoft.Knight.PowerShell.PowerShellRunReport? Process = null,
+    int? ConnectionErrorStatus = null,
+    string? ConnectionErrorCorrelationId = null);
 
 /// <summary>
 /// Falha do TRANSPORTE — antes de qualquer leitura: runtime ausente, processo que não terminou no tempo
