@@ -373,6 +373,13 @@ public enum KnightCapability
 
     /// <summary>Destino das mensagens denunciadas pelos usuários (<c>Get-ReportSubmissionPolicy</c>, sessão do Exchange Online).</summary>
     DefenderReportSubmissionPolicy = 94,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento TRANSITIVO dos grupos referenciados pelas políticas de acesso condicional
+    /// habilitadas (inclusão e exclusão) e dos grupos atribuídos a papéis privilegiados (<c>/groups/{id}/transitiveMembers</c>,
+    /// Directory.Read.All). Cada grupo guarda o próprio desfecho: um grupo recusado não apaga os outros.
+    /// </summary>
+    EntraGroupMembership = 95,
 }
 
 /// <summary>

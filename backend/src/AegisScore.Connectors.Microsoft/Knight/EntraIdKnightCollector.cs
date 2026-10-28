@@ -164,11 +164,14 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         // [AEGIS-KNIGHT-COVERAGE-01] Documentos de configuração do LOCATÁRIO produzidos por esta coleta (contratos
         // tipados). Só entram documentos de capacidades concluídas; a leitura relida do ADM decide o resto.
         var tenantDocs = new List<KnightConfigurationDocument>();
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento de grupos lido UMA vez por grupo nesta coleta (e só nela: o cache
+        // nasce e morre com esta execução, que é de UM locatário) e reaproveitado por papéis e políticas.
+        var groups = new GroupReader(this, token, cfg, run, now);
 
         await RunCapabilityAsync(KnightCapability.PrivilegedRoleInventory,
             new[] { KnightSignalKey.PrivilegedAccountsTotal, KnightSignalKey.PrivilegedAccountsWithMailbox,
                     KnightSignalKey.StalePrivilegedAccounts, KnightSignalKey.ExternalMembersInPrivilegedRoles },
-            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, configBox, now, ct), obs, caps, run);
+            () => CollectPrivilegedRolesAsync(token, cfg, privileged, obs, affected, configBox, groups, now, ct), obs, caps, run);
 
         await RunCapabilityAsync(KnightCapability.MfaRegistration,
             new[] { KnightSignalKey.MfaRegistrationCoveragePercent, KnightSignalKey.PrivilegedAccountsWithoutMfa },
@@ -180,7 +183,10 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
         await RunCapabilityAsync(KnightCapability.ConditionalAccessPolicies,
             new[] { KnightSignalKey.LegacyAuthenticationBlocked, KnightSignalKey.PrivilegedRolesWithoutMfaPolicy, KnightSignalKey.BaselineMfaPolicies },
-            () => CollectConditionalAccessAsync(token, cfg, obs, configBox, ct), obs, caps, run);
+            () => CollectConditionalAccessAsync(token, cfg, configBox, ct), obs, caps, run);
+
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento dos grupos referenciados pelas políticas habilitadas e pelos papéis.
+        await CollectGroupMembershipAsync(groups, privileged, configBox, caps, run);
 
         await RunCapabilityAsync(KnightCapability.SecurityBaseline,
             new[] { KnightSignalKey.SecurityDefaultsEnabled },
@@ -204,6 +210,12 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         // ---- [AEGIS-KNIGHT-CLOSURE-01] Leituras em versão beta e sessão ociosa: capacidades próprias, mesmo token ----
         await CollectClosureAsync(token, cfg, obs, caps, tenantDocs, run);
 
+        // ---- [AEGIS-KNIGHT-COLLECTION-GAPS-01] Sinais do acesso condicional, com o pertencimento e a contagem de contas ------
+        // Calculados DEPOIS de todas as leituras de que dependem (papéis, políticas, grupos e a enumeração das contas
+        // habilitadas), com a MESMA configuração que vai ao ADM — a avaliação relida chega ao mesmo veredito.
+        configBox.EnabledAccounts = IdentityKnightBoundaryAccounts(tenantDocs, caps);
+        AddConditionalAccessObservations(configBox, obs, run);
+
         // ---- [AEGIS-MVP-MICROSOFT-COVERAGE-03] Risco de identidade: DUAS capacidades INDEPENDENTES -------
         // Rodam na MESMA operação lógica, com o MESMO token já adquirido acima — nunca uma segunda aquisição,
         // um segundo cliente Graph ou um pipeline paralelo. Cada uma classifica a própria falha e PRESERVA os
@@ -224,7 +236,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         return new KnightCollectionResult(
             Source, runState, Label, facts, caps, now, DescribeState(runState),
             identityRisk, authPostureBox.Value, affected,
-            new KnightDirectoryConfiguration(configBox.Policies, configBox.Roles),
+            new KnightDirectoryConfiguration(configBox.Policies, configBox.Roles, configBox.Groups, configBox.EnabledAccounts),
             new KnightTenantConfiguration(tenantDocs, caps));
     }
 
@@ -309,7 +321,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
     private async Task CollectPrivilegedRolesAsync(
         string token, KnightEntraIdConfiguration cfg, PrivilegedAccumulator acc, List<KnightObservation> obs,
-        List<KnightAffectedObjectEvidence> affected, DirectoryConfigurationBox configBox, DateTimeOffset now, CancellationToken ct)
+        List<KnightAffectedObjectEvidence> affected, DirectoryConfigurationBox configBox, GroupReader groups, DateTimeOffset now,
+        CancellationToken ct)
     {
         var members = new Dictionary<string, MemberInfo>(StringComparer.OrdinalIgnoreCase);
         var roles = new List<DirectoryRoleConfiguration>();
@@ -324,6 +337,10 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             var templateId = Str(role, "roleTemplateId") ?? roleId;
             var roleMemberCount = 0;
             var roleUserIds = new List<string>();
+            // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Os demais membros por TIPO: grupo atribuído ao papel, aplicação, não reconhecido.
+            var roleGroupIds = new List<string>();
+            var roleAppIds = new List<string>();
+            var roleOtherIds = new List<string>();
             // [AEGIS-MVP-PRODUCT-02] O $select ganhou displayName/userPrincipalName na MESMA consulta já
             // autorizada por Directory.Read.All — nenhuma chamada por usuário e nenhuma permissão nova. São
             // campos que o próprio endpoint de membros devolve; para objetos que não são pessoa (aplicação,
@@ -335,7 +352,13 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
                 if (string.IsNullOrEmpty(id)) continue;
 
                 roleMemberCount++;
-                if (ClassifyMember(m) == MemberKind.User) roleUserIds.Add(id);
+                switch (ClassifyMember(m))
+                {
+                    case MemberKind.User: roleUserIds.Add(id); break;
+                    case MemberKind.Group: roleGroupIds.Add(id); break;
+                    case MemberKind.ServicePrincipal: roleAppIds.Add(id); break;
+                    default: roleOtherIds.Add(id); break;
+                }
 
                 // Deduplicação por ID do objeto — a MESMA regra que produz a contagem. Um objeto em vários
                 // papéis é UM afetado, com os papéis acumulados (nunca uma linha por papel).
@@ -353,21 +376,64 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
                     Str(m, "displayName"), Str(m, "userPrincipalName"), memberRoles);
             }
 
+            static List<string> Distinct(List<string> ids) => ids.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             roles.Add(new DirectoryRoleConfiguration(templateId, roleName, roleMemberCount,
-                roleUserIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList()));
+                Distinct(roleUserIds), Distinct(roleGroupIds), Distinct(roleAppIds), Distinct(roleOtherIds)));
         }
 
         configBox.Roles = roles;
         acc.Collected = true;
         acc.MemberKinds = members.ToDictionary(kv => kv.Key, kv => KindOf(kv.Value), StringComparer.OrdinalIgnoreCase);
-        acc.PrivilegedUsers = members
+        var privilegedUsers = members
             .Where(kv => kv.Value.Kind == MemberKind.User)
             .Select(kv => new PrivilegedUser(
                 kv.Key, kv.Value.LastSignIn, kv.Value.DisplayName, kv.Value.UserPrincipalName,
                 kv.Value.Roles.ToList(),
                 string.Equals(kv.Value.UserType, "Guest", StringComparison.OrdinalIgnoreCase)))
             .ToList();
-        acc.AllMembersClassifiable = members.Values.All(v => v.Kind is MemberKind.User or MemberKind.ServicePrincipal);
+
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Grupo atribuído a papel: os USUÁRIOS do pertencimento transitivo detêm o papel via
+        // grupo e entram na população de contas privilegiadas (MFA registrada, atividade). Um grupo com pertencimento não lido
+        // por completo, ou membro de tipo não reconhecido, mantém o cruzamento incompleto — com o motivo nomeando o grupo.
+        var groupMembers = members.Where(kv => kv.Value.Kind == MemberKind.Group).ToList();
+        var openGroups = new List<string>();
+        var viaGroup = new Dictionary<string, (List<string> Roles, List<string> Groups)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (groupId, info) in groupMembers)
+        {
+            var read = await groups.ReadAsync(groupId, info.DisplayName,
+                roles.Where(r => r.GroupMemberIds!.Contains(groupId, StringComparer.OrdinalIgnoreCase)).Select(r => "role:" + r.TemplateId), ct);
+            if (read.State != EntraGroupMembershipState.Complete) openGroups.Add(groups.Describe(groupId));
+            if (read.Members.Any(m => m.Kind is not (EntraMemberKind.User or EntraMemberKind.ServicePrincipal or EntraMemberKind.Group)))
+                openGroups.Add(groups.Describe(groupId) + " com membro de tipo não reconhecido");
+            foreach (var m in read.Members.Where(m => m.Kind == EntraMemberKind.User))
+            {
+                if (!viaGroup.TryGetValue(m.Id, out var v)) viaGroup[m.Id] = v = (new List<string>(), new List<string>());
+                foreach (var r in info.Roles.Where(r => !v.Roles.Contains(r))) v.Roles.Add(r);
+                v.Groups.Add(info.DisplayName ?? groupId);
+            }
+        }
+        foreach (var (userId, via) in viaGroup)
+        {
+            var i = privilegedUsers.FindIndex(u => string.Equals(u.Id, userId, StringComparison.OrdinalIgnoreCase));
+            if (i >= 0)
+                privilegedUsers[i] = privilegedUsers[i] with { Roles = privilegedUsers[i].Roles.Union(via.Roles, StringComparer.OrdinalIgnoreCase).ToList() };
+            else
+                privilegedUsers.Add(new PrivilegedUser(userId, null, null, null, via.Roles, false, ViaGroups: via.Groups));
+        }
+        // Atividade, tipo e nome das contas que detêm papel via grupo — e de quem veio sem atividade na listagem do papel.
+        privilegedUsers = await CompletePrivilegedUsersAsync(token, cfg, privilegedUsers, ct);
+        groups.Privileged.UnionWith(privilegedUsers.Select(u => u.Id));
+        foreach (var u in privilegedUsers) groups.Names[u.Id] = (u.DisplayName, u.UserPrincipalName);
+
+        acc.PrivilegedUsers = privilegedUsers;
+        acc.AllMembersClassifiable = members.Values.All(v => v.Kind is MemberKind.User or MemberKind.ServicePrincipal or MemberKind.Group)
+            && openGroups.Count == 0;
+        acc.UnclassifiableReason = members.Values.Any(v => v.Kind == MemberKind.Other)
+            ? "Há membro de papel privilegiado de tipo não reconhecido na resposta da fonte"
+            : openGroups.Count > 0
+                ? "Há grupo atribuído a papel privilegiado com pertencimento não lido por completo (" + string.Join(", ", openGroups.Take(5))
+                  + (openGroups.Count > 5 ? "…" : "") + ")"
+                : null;
 
         var total = members.Count;
         var external = members.Values.Count(v => string.Equals(v.UserType, "Guest", StringComparison.OrdinalIgnoreCase));
@@ -394,7 +460,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         if (!acc.AllMembersClassifiable)
         {
             obs.Add(KnightObservation.MissingData(KnightSignalKey.StalePrivilegedAccounts,
-                "Há membro de papel privilegiado não identificável como usuário — cobertura de atividade incompleta."));
+                (acc.UnclassifiableReason ?? "Há membro de papel privilegiado não identificável como usuário") + " — cobertura de atividade incompleta."));
         }
         else if (acc.PrivilegedUsers.Any(u => u.LastSignIn is null))
         {
@@ -512,7 +578,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         else if (!acc.AllMembersClassifiable)
         {
             obs.Add(KnightObservation.MissingData(KnightSignalKey.PrivilegedAccountsWithoutMfa,
-                "Há membro de papel privilegiado não identificável como usuário — cruzamento com MFA incompleto."));
+                (acc.UnclassifiableReason ?? "Há membro de papel privilegiado não identificável como usuário") + " — cruzamento com MFA incompleto."));
         }
         else if (acc.PrivilegedUsers.Any(u => !seenIds.Contains(u.Id)))
         {
@@ -600,6 +666,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         return KindOf(m) switch
         {
             KnightAffectedObjectKind.ServicePrincipal => roles + " Identidade de aplicação — não é uma pessoa.",
+            KnightAffectedObjectKind.Group => roles + " Grupo atribuído ao papel — os membros dele detêm o papel via grupo.",
             KnightAffectedObjectKind.Guest => roles + " Conta de convidado com papel privilegiado.",
             KnightAffectedObjectKind.Unknown => roles + " Tipo de objeto não reconhecido na resposta da fonte.",
             _ => roles,
@@ -612,8 +679,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
     /// que a avaliação usa para mostrar, política a política, o que sustentou o veredito.
     /// </summary>
     private async Task CollectConditionalAccessAsync(
-        string token, KnightEntraIdConfiguration cfg, List<KnightObservation> obs, DirectoryConfigurationBox configBox,
-        CancellationToken ct)
+        string token, KnightEntraIdConfiguration cfg, DirectoryConfigurationBox configBox, CancellationToken ct)
     {
         var policies = new List<ConditionalAccessPolicyConfiguration>();
         await foreach (var p in _graph.GetPagedAsync(token, cfg, "identity/conditionalAccess/policies", ct))
@@ -622,9 +688,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             if (normalized is not null) policies.Add(normalized);
         }
 
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Os sinais são calculados no fim da coleta, com o pertencimento dos grupos.
         configBox.Policies = policies;
-        var analysis = ConditionalAccessAnalyzer.Analyze(new KnightDirectoryConfiguration(policies, configBox.Roles));
-        obs.AddRange(ConditionalAccessAnalyzer.ToObservations(analysis, null));
     }
 
     /// <summary>Tradução de UMA política do Graph para o contrato normalizado. Sem id → descartada.</summary>
@@ -1094,6 +1159,12 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
     {
         public IReadOnlyList<DirectoryRoleConfiguration>? Roles { get; set; }
         public IReadOnlyList<ConditionalAccessPolicyConfiguration>? Policies { get; set; }
+
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento lido (nulo = capacidade não concluída).</summary>
+        public IReadOnlyList<EntraGroupMembership>? Groups { get; set; }
+
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Contas habilitadas pela enumeração completa da mesma coleta.</summary>
+        public int? EnabledAccounts { get; set; }
     }
 
     private static KnightSourceState DeriveState(IReadOnlyList<KnightCapabilityStatus> all)
@@ -1125,7 +1196,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         _ => "Coleta do Microsoft Entra ID.",
     };
 
-    private enum MemberKind { User, ServicePrincipal, Other }
+    private enum MemberKind { User, ServicePrincipal, Group, Other }
 
     /// <summary>
     /// [AEGIS-MVP-PRODUCT-02] Um membro de papel privilegiado como o diretório o devolveu. Guarda também
@@ -1137,9 +1208,10 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         MemberKind Kind, string? UserType, DateTimeOffset? LastSignIn,
         string? DisplayName, string? UserPrincipalName, List<string> Roles);
 
+    /// <param name="ViaGroups">[AEGIS-KNIGHT-COLLECTION-GAPS-01] Grupos pelos quais a conta detém o papel (nulo = só direto).</param>
     private sealed record PrivilegedUser(
         string Id, DateTimeOffset? LastSignIn, string? DisplayName, string? UserPrincipalName,
-        IReadOnlyList<string> Roles, bool IsGuest);
+        IReadOnlyList<string> Roles, bool IsGuest, IReadOnlyList<string>? ViaGroups = null);
 
     private sealed class PrivilegedAccumulator
     {
@@ -1148,12 +1220,16 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
             new Dictionary<string, KnightAffectedObjectKind>(StringComparer.OrdinalIgnoreCase);
         public IReadOnlyList<PrivilegedUser> PrivilegedUsers = Array.Empty<PrivilegedUser>();
         public bool AllMembersClassifiable = true;
+
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Por que o cruzamento ficou incompleto (grupo não lido, tipo não reconhecido).</summary>
+        public string? UnclassifiableReason;
     }
 
     /// <summary>Traduz a classificação do diretório para a natureza EXPLÍCITA do objeto afetado.</summary>
     private static KnightAffectedObjectKind KindOf(MemberInfo m) => m.Kind switch
     {
         MemberKind.ServicePrincipal => KnightAffectedObjectKind.ServicePrincipal,
+        MemberKind.Group => KnightAffectedObjectKind.Group,
         MemberKind.User => string.Equals(m.UserType, "Guest", StringComparison.OrdinalIgnoreCase)
             ? KnightAffectedObjectKind.Guest
             : KnightAffectedObjectKind.User,
@@ -1167,6 +1243,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         {
             if (odata.Equals("#microsoft.graph.user", StringComparison.OrdinalIgnoreCase)) return MemberKind.User;
             if (odata.Equals("#microsoft.graph.servicePrincipal", StringComparison.OrdinalIgnoreCase)) return MemberKind.ServicePrincipal;
+            // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Grupo atribuível a papel: antes caía em "tipo não reconhecido".
+            if (odata.Equals("#microsoft.graph.group", StringComparison.OrdinalIgnoreCase)) return MemberKind.Group;
             return MemberKind.Other;
         }
         return Str(m, "userType") is not null ? MemberKind.User : MemberKind.Other;

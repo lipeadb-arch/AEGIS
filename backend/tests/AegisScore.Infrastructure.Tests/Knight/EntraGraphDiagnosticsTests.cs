@@ -55,7 +55,8 @@ public sealed class EntraGraphDiagnosticsTests
         result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted)
             .Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
         result.Capabilities.Where(c => c.Outcome == KnightCapabilityOutcome.NotAttempted).Select(c => c.Capability)
-            .Should().BeEquivalentTo(new[] { KnightCapability.PrivilegedAccountDetails });
+            .Should().BeEquivalentTo(new[] { KnightCapability.PrivilegedAccountDetails, KnightCapability.EntraGroupMembership },
+                "[AEGIS-KNIGHT-COLLECTION-GAPS-01] o pertencimento depende das políticas e dos papéis — sem eles, não é tentado");
         result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.NotAttempted).Should().OnlyContain(c => c.Detail != null &&
             c.Detail.Contains("HTTP 403") &&
             c.Detail.Contains("Graph: Authorization_RequestDenied") &&

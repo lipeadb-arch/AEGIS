@@ -45,6 +45,8 @@ public static class KnightCollectorCapabilities
         KnightCapability.M365AppsAndServicesSettings,
         KnightCapability.M365FormsSettings,
         KnightCapability.ActivityBasedTimeoutPolicy,
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento dos grupos referenciados pelas políticas e pelos papéis.
+        KnightCapability.EntraGroupMembership,
     };
 
     /// <summary>

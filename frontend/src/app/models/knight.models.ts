@@ -530,6 +530,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   MfaRegistration: 'Registro de múltiplo fator',
   GuestAccounts: 'Contas de convidado',
   ConditionalAccessPolicies: 'Políticas de acesso condicional',
+  EntraGroupMembership: 'Pertencimento dos grupos referenciados',
   ApplicationInventory: 'Credenciais de aplicações',
   ServiceAccountExemptions: 'Exceções de contas de serviço',
   SecurityBaseline: 'Configuração de segurança padrão',

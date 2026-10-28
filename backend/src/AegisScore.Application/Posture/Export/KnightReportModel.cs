@@ -623,6 +623,7 @@ public static class KnightCapabilityLabels
     public static string Label(KnightCapability c) => c switch
     {
         KnightCapability.PrivilegedRoleInventory => "Inventário de papéis privilegiados",
+        KnightCapability.EntraGroupMembership => "Pertencimento dos grupos referenciados (políticas e papéis)",
         KnightCapability.MfaRegistration => "Registro de métodos de MFA",
         KnightCapability.GuestAccounts => "Contas de convidado",
         KnightCapability.ConditionalAccessPolicies => "Políticas de acesso condicional",
@@ -754,6 +755,7 @@ public static class KnightCapabilityLabels
         KnightSourceType.MicrosoftEntraId => c switch
         {
             KnightCapability.PrivilegedRoleInventory => "Directory.Read.All (aplicativo)",
+            KnightCapability.EntraGroupMembership => "Directory.Read.All (aplicativo); grupos de pertencimento oculto exigem Member.Read.Hidden, que o AEGIS não solicita",
             KnightCapability.MfaRegistration => "AuditLog.Read.All (aplicativo)",
             KnightCapability.GuestAccounts => "User.Read.All (aplicativo)",
             KnightCapability.ConditionalAccessPolicies => "Policy.Read.All (aplicativo)",
