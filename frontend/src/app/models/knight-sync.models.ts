@@ -101,11 +101,23 @@ export interface SyncView {
   previousRunId: string | null;
   /** Diagnóstico técnico seguro (etapa, pedido, SQLSTATE, campo e tamanhos), quando o servidor o registrou. */
   technical?: string | null;
+  /**
+   * [AEGIS-KNIGHT-COLLECTION-GAPS-01] Resumo do escopo do Azure (assinaturas listadas, selecionadas, desabilitadas, pedidas sem
+   * acesso e o token do Resource Manager) — o que explica um Azure sem avaliação sem que alguém precise ler logs.
+   */
+  scope?: string | null;
 }
 
 /** [AEGIS-KNIGHT-PERSISTENCE-01] Categoria da falha de GRAVAÇÃO — espelha KnightSyncWorker.PersistenceErrorCategory. */
 export const PERSISTENCE_ERROR = 'PersistenceError';
 const TECHNICAL_MARKER = 'Diagnóstico técnico — ';
+/** [AEGIS-KNIGHT-COLLECTION-GAPS-01] Espelha KnightSyncWorker.AzureScopeMarker. */
+export const AZURE_SCOPE_MARKER = 'Escopo do Azure — ';
+
+function scopeOf(message: string | null): string | null {
+  const at = message?.indexOf(AZURE_SCOPE_MARKER) ?? -1;
+  return at >= 0 ? message!.slice(at + AZURE_SCOPE_MARKER.length).trim() || null : null;
+}
 
 const SOURCE_STATE_TEXT: Record<string, string> = {
   Completed: 'coleta completa',
@@ -164,6 +176,7 @@ export function syncView(r: KnightSyncRequest): SyncView {
         detail: partial ? 'Os controles que dependiam das capacidades não lidas ficam “Não avaliado” — nunca aprovados.' : null,
         runId: r.runId,
         previousRunId: null,
+        scope: scopeOf(r.message),
       };
     }
     case 'Failed':

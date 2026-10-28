@@ -126,7 +126,7 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
             "admin/sharepoint/settings", "SharePointTenantSettings.Read.All", ct));
         probes.Add(SharePointAdminNotRequested());
         probes.Add(await ProbeGraphReadAsync(credentials, "Microsoft Intune",
-            "deviceManagement?$select=settings", "DeviceManagementConfiguration.Read.All", ct));
+            IntuneKnightCollector.SettingsUrl, "DeviceManagementConfiguration.Read.All", ct));
         if (_appTokens is not null && _rest is not null)
             probes.Add(await ProbeRestAsync(credentials, "Microsoft Fabric", FabricKnightCollector.Scope, FabricKnightCollector.TenantSettingsUrl,
                 "a configuração “entidades de serviço podem usar as APIs de administração somente leitura” e o grupo de segurança da aplicação", ct));
@@ -409,7 +409,10 @@ public sealed class KnightIdentityPostureConnector : IEvidenceConnector
                                $"{Azure.AzureArmPlan.ArmHost}/subscriptions?api-version={Azure.AzureArmPlan.SubscriptionsApi}", ct))
                 n++;
             return n == 0
-                ? new Probe(false, $"{label}: conexão aceita, mas nenhuma assinatura visível — atribua o papel Leitor do Azure RBAC à aplicação nas assinaturas a avaliar.")
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Lista vazia não prova falta de papel: diz o fato e o que conferir, sem concluir.
+                ? new Probe(false, $"{label}: conexão aceita, mas nenhuma assinatura visível à aplicação neste locatário. Isso não "
+                    + "prova, sozinho, que falte o papel Leitor do Azure RBAC (a assinatura pode estar em outro diretório ou a atribuição "
+                    + "ser recente) — confira a atribuição do papel Leitor à aplicação nas assinaturas a avaliar.")
                 : new Probe(true, $"{label}: leitura de verificação confirmada — {n} assinatura(s) visível(is) à aplicação.");
         }
         catch (EntraGraphException ex)

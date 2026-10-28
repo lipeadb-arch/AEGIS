@@ -220,6 +220,7 @@ const MICROSOFT_SERVICE_KEYS: MicrosoftServiceKey[] = [
                           {{ v.title }}
                         </span>
                         @if (v.detail) { <span class="sync-detail">{{ v.detail }}</span> }
+                        @if (v.scope) { <span class="sync-detail sync-technical">Escopo do Azure: {{ v.scope }}</span> }
                         @if (v.technical) { <span class="sync-detail sync-technical">Diagnóstico técnico: {{ v.technical }}</span> }
                         @if (src.requirement) { <span class="sync-detail">{{ src.requirement }}</span> }
                         <span class="sync-actions">

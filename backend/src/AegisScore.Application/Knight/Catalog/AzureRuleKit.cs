@@ -79,7 +79,10 @@ public sealed class AzureView
         var scope = subs.Items.Where(s => s.InScope).OrderBy(s => s.SubscriptionId, StringComparer.Ordinal).ToList();
         var missing = scope.Count == 0
             // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Assinaturas pedidas e não visíveis agora ficam no escopo (como não lidas).
-            ? "nenhuma assinatura no escopo desta coleta (nenhuma visível à aplicação, ou todas desabilitadas) — isso não prova falta de papel, ausência de recursos nem conformidade."
+            // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Com o resumo da descoberta, o motivo diz QUAL caso ocorreu (lista vazia válida,
+            // todas desabilitadas, fora do escopo pedido); coletas anteriores ao resumo mantêm o texto genérico.
+            ? cfg.Read<AzureDiscoverySummary>().Single?.NoScopeReason()
+              ?? "nenhuma assinatura no escopo desta coleta (nenhuma visível à aplicação, ou todas desabilitadas) — isso não prova falta de papel, ausência de recursos nem conformidade."
             : null;
         return new AzureView(missing, scope, res.Items, caps, now);
     }

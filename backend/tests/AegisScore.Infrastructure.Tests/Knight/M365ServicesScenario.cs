@@ -98,7 +98,8 @@ public sealed class M365ServicesScenario
         }
 
         if (url.Contains("/deviceManagement/deviceEnrollmentConfigurations", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, Enrollment());
-        if (url.Contains("/deviceManagement?", StringComparison.OrdinalIgnoreCase)) return (HttpStatusCode.OK, IntuneSettings());
+        if (url.Contains("/deviceManagement?", StringComparison.OrdinalIgnoreCase) || url.EndsWith("/v1.0/deviceManagement", StringComparison.OrdinalIgnoreCase))
+            return (HttpStatusCode.OK, IntuneSettingsBody ?? IntuneSettings());
         if (url.Contains("/admin/sharepoint/settings", StringComparison.OrdinalIgnoreCase))
             return _v == Variant.SharePointGraphDenied
                 ? (HttpStatusCode.Forbidden, """{"error":{"code":"accessDenied","message":"sintético"}}""")
@@ -119,6 +120,9 @@ public sealed class M365ServicesScenario
         }
         return (HttpStatusCode.NotFound, """{"error":{"code":"NotFound","message":"rota sintética inexistente"}}""");
     }
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Corpo literal da leitura do deviceManagement (objeto/propriedade ausente, tipo errado).</summary>
+    public string? IntuneSettingsBody { get; init; }
 
     private string IntuneSettings() =>
         $$"""{"settings":{"secureByDefault":{{(Ok ? "true" : "false")}},"deviceComplianceCheckinThresholdDays":30} }""";

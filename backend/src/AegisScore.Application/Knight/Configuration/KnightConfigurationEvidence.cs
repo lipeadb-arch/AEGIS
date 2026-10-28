@@ -48,6 +48,8 @@ public static class KnightConfigurationEvidence
     {
         var map = new Dictionary<string, KnightConfigurationObjects>(StringComparer.Ordinal);
         var analysis = ConditionalAccessAnalyzer.Analyze(result.DirectoryConfiguration);
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O MESMO pertencimento que o analisador usou (relido da aquisição).
+        var membership = new GroupMembershipIndex(result.DirectoryConfiguration?.GroupMemberships);
 
         var defaults = result.Facts.Get(KnightSignalKey.SecurityDefaultsEnabled);
         var defaultsObject = defaults.IsCollected
@@ -67,8 +69,17 @@ public static class KnightConfigurationEvidence
             .GroupBy(o => o.ExternalId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        // Quem detém papel via grupo não está no inventário de membros diretos: o nome vem do pertencimento lido (só contas privilegiadas).
+        var viaGroup = (result.DirectoryConfiguration?.GroupMemberships ?? Array.Empty<EntraGroupMembership>())
+            .SelectMany(g => g.Members)
+            .Where(m => m.DisplayName is not null || m.UserPrincipalName is not null)
+            .GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
         string MemberLabel(string id) =>
-            names.TryGetValue(id, out var o) ? (o.DisplayName ?? o.UserPrincipalName ?? id) : id;
+            names.TryGetValue(id, out var o) ? (o.DisplayName ?? o.UserPrincipalName ?? id)
+            : viaGroup.TryGetValue(id, out var m) ? (m.DisplayName ?? m.UserPrincipalName ?? id)
+            : id;
 
         var legacy = new List<KnightIndicatorObject>();
         var admin = new List<KnightIndicatorObject>();
@@ -87,7 +98,7 @@ public static class KnightConfigurationEvidence
                 var p = r.Policy;
 
                 if (r.Blocks && ConditionalAccessAnalyzer.TouchesLegacy(p))
-                    legacy.Add(PolicyObject(r, LegacyDetail(r, analysis.LegacyAuth, MemberLabel)));
+                    legacy.Add(PolicyObject(r, LegacyDetail(r, analysis.LegacyAuth, MemberLabel, membership)));
 
                 var targetsAdmins = r.TargetsAllUsers || p.IncludeRoles.Count > 0
                     || p.IncludeUsers.Any(u => names.ContainsKey(u));
@@ -98,21 +109,21 @@ public static class KnightConfigurationEvidence
                     var detail = !fullMfa
                         ? "Não conta como exigência para papéis administrativos: " + Gap(r) + "."
                         : reached > 0
-                            ? $"Exige MFA em todas as aplicações e alcança membros de {reached} papel(éis) privilegiado(s)" + Exceptions(p, MemberLabel) + "."
+                            ? $"Exige MFA em todas as aplicações e alcança membros de {reached} papel(éis) privilegiado(s)" + Exceptions(p, MemberLabel, membership) + "."
                             : "Exige MFA em todas as aplicações" + (r.TargetsAllUsers ? " com alvo declarado em todos os usuários" : "")
-                              + Exceptions(p, MemberLabel) + ", mas não alcança comprovadamente nenhum membro privilegiado.";
+                              + Exceptions(p, MemberLabel, membership) + ", mas não alcança comprovadamente nenhum membro privilegiado.";
                     admin.Add(PolicyObject(r, detail));
                 }
 
                 if (r.IsEnforced && r.RequiresMfa)
-                    baseline.Add(PolicyObject(r, BaselineDetail(r, analysis.Baseline, MemberLabel)));
+                    baseline.Add(PolicyObject(r, BaselineDetail(r, analysis.Baseline, MemberLabel, membership)));
             }
 
             foreach (var c in analysis.AdminMfa.Roles)
             {
                 var roleName = c.Role.DisplayName ?? c.Role.TemplateId;
                 var members = $"{c.Role.MemberCount} membro(s)";
-                var detail = RoleDetail(c, MemberLabel, PolicyName);
+                var detail = RoleDetail(c, MemberLabel, PolicyName, membership.Collected);
                 var obj = new KnightIndicatorObject(
                     c.State == RoleMfaCoverageState.NotCovered ? KnightObjectRelation.Affected : KnightObjectRelation.Evidence,
                     KnightAffectedObjectKind.DirectoryRole, c.Role.TemplateId, roleName, null, Array.Empty<string>(),
@@ -143,7 +154,7 @@ public static class KnightConfigurationEvidence
     /// O papel em palavras, membro a membro: quem é coberto e por qual política, quem ficou de fora e por quê. O
     /// texto segue o estado do papel — um papel com exceções nunca é descrito como coberto.
     /// </summary>
-    private static string RoleDetail(RoleMfaCoverage c, Func<string, string> member, Func<string, string> policy)
+    private static string RoleDetail(RoleMfaCoverage c, Func<string, string> member, Func<string, string> policy, bool membershipCollected)
     {
         string Who(IEnumerable<MemberMfaCoverage> ms, bool withPolicies) => string.Join(", ", ms.Select(m =>
             member(m.MemberId) + (withPolicies && m.PolicyIds.Count > 0
@@ -176,6 +187,19 @@ public static class KnightConfigurationEvidence
                 parts.Add("Exceção(ões) sem outra política que exija MFA: " + Who(excepted, true) + ". " + ExceptionCaveat
                     + " Por isso o papel não é contado como coberto.");
                 break;
+            case RoleMfaCoverageState.NoUserMembers:
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01] As notas dizem quantas identidades de aplicação; nada a cobrir com MFA de usuário.
+                break;
+            case RoleMfaCoverageState.Unresolved when membershipCollected:
+                parts.Add(unresolved.Count > 0
+                    ? "Cobertura não resolvida para: " + Who(unresolved, true)
+                      + " — depende de grupo com pertencimento não lido por completo, da condição de convidado ou de papel detido via grupo."
+                    : "Cobertura não resolvida — há grupo atribuído ao papel com pertencimento não lido por completo, ou membro de tipo não reconhecido.");
+                if (excepted.Count > 0)
+                    parts.Add("Excluídos explicitamente, sem outra política: " + Who(excepted, true) + ". " + ExceptionCaveat);
+                if (covered.Count > 0)
+                    parts.Add("Cobertos: " + Who(covered, false) + ".");
+                break;
             case RoleMfaCoverageState.Unresolved:
                 parts.Add(unresolved.Count > 0
                     ? "Cobertura não resolvida para: " + Who(unresolved, true) + " — depende de grupo ou da condição de convidado, cujo pertencimento não é coletado."
@@ -198,7 +222,7 @@ public static class KnightConfigurationEvidence
     }
 
     private static string LegacyDetail(
-        ConditionalAccessPolicyReading r, LegacyAuthConclusion legacy, Func<string, string> member)
+        ConditionalAccessPolicyReading r, LegacyAuthConclusion legacy, Func<string, string> member, GroupMembershipIndex membership)
     {
         var p = r.Policy;
         var clients = ConditionalAccessAnalyzer.CoversAllLegacyClients(p) && !p.ClientAppTypes.Contains("exchangeActiveSync", StringComparer.OrdinalIgnoreCase)
@@ -210,13 +234,13 @@ public static class KnightConfigurationEvidence
             if (!r.TargetsAllUsers)
                 return "Bloqueia a autenticação legada para contas excluídas de outra política de bloqueio — cobre essas exceções" + clients + ".";
             return r.HasExclusions
-                ? "Bloqueia a autenticação legada para todos os usuários e aplicações" + clients + Exceptions(p, member)
+                ? "Bloqueia a autenticação legada para todos os usuários e aplicações" + clients + Exceptions(p, member, membership)
                   + "; cada exceção é coberta por outra política de bloqueio habilitada."
                 : "Bloqueia a autenticação legada para todos os usuários e aplicações, sem exclusões" + clients + ".";
         }
 
         if (legacy.ExceptionPolicyIds.Contains(p.Id))
-            return "Bloqueia a autenticação legada em todas as aplicações para todos os usuários" + clients + Exceptions(p, member)
+            return "Bloqueia a autenticação legada em todas as aplicações para todos os usuários" + clients + Exceptions(p, member, membership)
                 + " — nas exceções, o bloqueio não se aplica. " + ExceptionCaveat
                 + (legacy.Blocked
                     ? " O bloqueio para todos é comprovado por outra política."
@@ -225,16 +249,26 @@ public static class KnightConfigurationEvidence
         return "Não conta como bloqueio completo: " + LegacyGap(r) + ".";
     }
 
-    private static string BaselineDetail(ConditionalAccessPolicyReading r, MfaBaselineConclusion baseline, Func<string, string> member)
+    private static string BaselineDetail(
+        ConditionalAccessPolicyReading r, MfaBaselineConclusion baseline, Func<string, string> member, GroupMembershipIndex membership)
     {
         var p = r.Policy;
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O alcance conta a conta, quando o pertencimento foi lido.
+        var reach = baseline.Reach is { } map && map.TryGetValue(p.Id, out var why) ? why : null;
         if (baseline.BaselinePolicyIds.Contains(p.Id))
-            return "Sustenta a base mínima: exige MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite"
-                + Exceptions(p, member) + ".";
+            return r.TargetsAllUsers
+                ? "Sustenta a base mínima: exige MFA com alvo declarado em todos os usuários, em todas as aplicações e sem condição que a estreite"
+                  + Exceptions(p, member, membership) + (reach is null ? "" : "; " + reach) + "."
+                // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Dirigida a grupo: sustenta só porque cada conta habilitada foi conferida pela identidade.
+                : "Sustenta a base mínima: exige MFA em todas as aplicações, sem condição que a estreite; " + reach
+                  + Exceptions(p, member, membership) + ".";
         if (baseline.UnresolvedPolicyIds.Contains(p.Id))
-            return "Exige MFA em todas as aplicações, mas o alcance depende de grupo(s) cujo pertencimento não é coletado"
-                + Exceptions(p, member) + " — não sustenta, sozinha, uma conclusão sobre o ambiente.";
-        return "Não sustenta a base mínima: " + RestrictedScope(r) + ".";
+            return reach is not null
+                ? "Exige MFA em todas as aplicações, mas o alcance sobre todas as contas não foi comprovado: " + reach
+                  + Exceptions(p, member, membership) + " — não sustenta, sozinha, uma conclusão sobre o ambiente."
+                : "Exige MFA em todas as aplicações, mas o alcance depende de grupo(s) cujo pertencimento não é coletado"
+                  + Exceptions(p, member, membership) + " — não sustenta, sozinha, uma conclusão sobre o ambiente.";
+        return "Não sustenta a base mínima: " + (reach ?? RestrictedScope(r)) + ".";
     }
 
     private static string RestrictedScope(ConditionalAccessPolicyReading r)
@@ -260,7 +294,7 @@ public static class KnightConfigurationEvidence
         new(KnightObjectRelation.Evidence, KnightAffectedObjectKind.Policy, r.Policy.Id,
             r.Policy.DisplayName, null, Array.Empty<string>(), detail, r.Summary);
 
-    private static string Exceptions(ConditionalAccessPolicyConfiguration p, Func<string, string> label)
+    private static string Exceptions(ConditionalAccessPolicyConfiguration p, Func<string, string> label, GroupMembershipIndex membership)
     {
         var parts = new List<string>();
         var users = p.ExcludeUsers.Where(u => !u.Equals("GuestsOrExternalUsers", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -268,7 +302,13 @@ public static class KnightConfigurationEvidence
             parts.Add($"{users.Count} usuário(s) excluído(s): " + string.Join(", ", users.Take(10).Select(label))
                 + (users.Count > 10 ? "…" : ""));
         if (p.ExcludeGroups.Count > 0)
-            parts.Add($"{p.ExcludeGroups.Count} grupo(s) excluído(s) — pertencimento não verificado nesta coleta");
+            parts.Add(p.ExcludeGroups.All(membership.IsComplete)
+                ? $"{p.ExcludeGroups.Count} grupo(s) excluído(s), com "
+                  + $"{p.ExcludeGroups.SelectMany(g => membership.Get(g)!.UserIds).Distinct(StringComparer.OrdinalIgnoreCase).Count()} conta(s) pelo pertencimento lido: "
+                  + string.Join(", ", p.ExcludeGroups.Select(membership.Describe))
+                : membership.Collected
+                    ? $"{p.ExcludeGroups.Count} grupo(s) excluído(s) — " + string.Join(", ", p.ExcludeGroups.Select(membership.Describe))
+                    : $"{p.ExcludeGroups.Count} grupo(s) excluído(s) — pertencimento não verificado nesta coleta");
         if (p.ExcludeRoles.Count > 0)
             parts.Add($"{p.ExcludeRoles.Count} papel(éis) excluído(s)");
         if (p.ExcludesGuestsOrExternalUsers || p.ExcludeUsers.Contains("GuestsOrExternalUsers", StringComparer.OrdinalIgnoreCase))

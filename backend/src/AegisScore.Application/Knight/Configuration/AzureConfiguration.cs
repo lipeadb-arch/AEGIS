@@ -29,17 +29,110 @@ public sealed record AzureFamilyRead(KnightCapability Capability, KnightCapabili
 /// encontrou. Fica no escopo, com as famílias não lidas — o controle não aprova "todas as assinaturas" sem ela. Inventários
 /// anteriores não têm o campo e valem como visíveis (o padrão).
 /// </remarks>
+/// <remarks>
+/// [AEGIS-KNIGHT-COLLECTION-GAPS-01] <paramref name="Access"/> diz COMO a assinatura chegou ao inventário (ver
+/// <see cref="AzureSubscriptionAccess"/>), <paramref name="AccessDetail"/> o resultado da consulta individual de uma assinatura
+/// pedida e não listada (status, código, endpoint) e <paramref name="TenantId"/> o diretório que a Microsoft informou. Campos
+/// aditivos com padrão nulo: inventários anteriores continuam legíveis na mesma versão do contrato.
+/// </remarks>
 public sealed record AzureSubscriptionInventory(
     string SubscriptionId,
     string? DisplayName,
     string? State,
     bool InScope,
     IReadOnlyList<AzureFamilyRead> Reads,
-    bool Visible = true)
+    bool Visible = true,
+    string? Access = null,
+    string? AccessDetail = null,
+    string? TenantId = null)
 {
     public const string SchemaVersion = "aegis-config-azure-subscription-v1";
 
     public AzureFamilyRead? ReadOf(KnightCapability family) => Reads.FirstOrDefault(r => r.Capability == family);
+}
+
+/// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Como uma assinatura entrou no inventário da descoberta.</summary>
+public static class AzureSubscriptionAccess
+{
+    /// <summary>Listada pelo Resource Manager (GET /subscriptions).</summary>
+    public const string Listed = "Listed";
+
+    /// <summary>Pedida, não listada, e confirmada pela consulta individual (GET /subscriptions/{id}): é lida.</summary>
+    public const string DirectRead = "DirectRead";
+
+    /// <summary>Pedida, não listada, e a consulta individual foi RECUSADA (403): selecionada, sem acesso.</summary>
+    public const string Denied = "Denied";
+
+    /// <summary>Pedida, não listada, e a consulta individual respondeu 404: inexistente ou não visível neste locatário.</summary>
+    public const string NotFound = "NotFound";
+
+    /// <summary>Pedida, não listada, e a consulta individual falhou por outro motivo (serviço, tempo, contrato).</summary>
+    public const string Unverified = "Unverified";
+}
+
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Resumo VERIFICÁVEL da descoberta das assinaturas de UMA coleta: o que foi listado,
+/// selecionado, desabilitado e pedido sem acesso — contados SEPARADAMENTE — e a identidade do token do Resource Manager
+/// (recurso e locatário, lidos das declarações do próprio token; nunca o token). É daqui que Integrações e o motivo dos
+/// controles dizem por que nenhuma assinatura entrou no escopo, sem que alguém precise ler logs.
+/// </summary>
+/// <param name="Listed">Assinaturas devolvidas pela listagem (lista válida, possivelmente vazia).</param>
+/// <param name="Selected">Assinaturas efetivamente lidas (no escopo e acessíveis).</param>
+/// <param name="Disabled">Listadas em estado Disabled ou Deleted (fora da seleção automática).</param>
+/// <param name="OutsideRequestedScope">Listadas e fora da lista explícita pedida.</param>
+/// <param name="Requested">Tamanho da lista explícita pedida (0 = todas as habilitadas).</param>
+/// <param name="RequestedNotListed">Pedidas e ausentes da listagem.</param>
+/// <param name="RequestedDirectRead">Pedidas, não listadas, confirmadas pela consulta individual (lidas).</param>
+/// <param name="RequestedDenied">Pedidas, não listadas, com a consulta individual recusada (selecionadas sem acesso).</param>
+/// <param name="RequestedNotFound">Pedidas, não listadas, com 404 na consulta individual.</param>
+/// <param name="RequestedUnverified">Pedidas, não listadas, cuja consulta individual falhou por outro motivo.</param>
+/// <param name="OtherDirectory">Listadas cujo diretório informado difere do locatário configurado.</param>
+/// <param name="TokenAudience">Declaração <c>aud</c> do token do Resource Manager (nula quando o token não é legível).</param>
+/// <param name="TokenTenantMatches">A declaração <c>tid</c> confere com o locatário configurado (nulo = não verificável).</param>
+public sealed record AzureDiscoverySummary(
+    int Listed,
+    int Selected,
+    int Disabled,
+    int OutsideRequestedScope,
+    int Requested,
+    int RequestedNotListed,
+    int RequestedDirectRead,
+    int RequestedDenied,
+    int RequestedNotFound,
+    int RequestedUnverified,
+    int OtherDirectory,
+    string? TokenAudience,
+    bool? TokenTenantMatches)
+{
+    public const string SchemaVersion = "aegis-config-azure-discovery-v1";
+    public const string ExternalId = "azureDiscovery";
+
+    /// <summary>Por que NENHUMA assinatura foi lida — em palavras, com o que isso prova e o que não prova.</summary>
+    public string NoScopeReason()
+    {
+        string why;
+        if (Listed == 0 && Requested == 0)
+            why = "a listagem do Resource Manager respondeu com lista válida e VAZIA, e nenhuma assinatura foi pedida explicitamente";
+        else if (Listed == 0)
+            why = $"a listagem respondeu com lista válida e vazia, e {Requested} assinatura(s) pedida(s) não foi(ram) confirmada(s) pela consulta individual ("
+                  + Parts() + ")";
+        else
+            why = $"{Listed} assinatura(s) listada(s) e nenhuma selecionada ("
+                  + string.Join(", ", new[]
+                  {
+                      Disabled > 0 ? $"{Disabled} desabilitada(s)" : null,
+                      OutsideRequestedScope > 0 ? $"{OutsideRequestedScope} fora do escopo pedido" : null,
+                      RequestedNotListed > 0 ? Parts() : null,
+                  }.Where(x => x is not null)) + ")";
+        return $"nenhuma assinatura no escopo desta coleta: {why}. Isso não prova, sozinho, falta do papel Leitor, ausência de recursos nem conformidade.";
+    }
+
+    private string Parts() => string.Join(", ", new[]
+    {
+        RequestedDenied > 0 ? $"{RequestedDenied} com autorização recusada" : null,
+        RequestedNotFound > 0 ? $"{RequestedNotFound} não encontrada(s) neste locatário" : null,
+        RequestedUnverified > 0 ? $"{RequestedUnverified} sem resposta conclusiva" : null,
+    }.Where(x => x is not null));
 }
 
 /// <summary>Um recurso do Azure com os fatos que as regras usam (lista fechada por tipo).</summary>

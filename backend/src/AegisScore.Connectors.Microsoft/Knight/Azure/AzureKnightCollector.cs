@@ -109,16 +109,22 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
     {
         var scope = (configuration as KnightMicrosoftServiceConfiguration)?.SubscriptionScope ?? Array.Empty<string>();
         var token = await _tokens.AcquireAsync(cfg, AzureArmPlan.ArmScope, ct);
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Recurso e locatário do token, lidos das declarações dele (nunca gravado, nunca logado).
+        var (tokenAudience, tokenTenantMatches) = ArmTokenClaims(token, cfg.AzureTenantId);
 
         // ---- 1) Descoberta ---------------------------------------------------------------------------------
-        List<(string Id, string? Name, string? State)> visible;
+        List<Subscription> visible;
         try
         {
             visible = new();
+            // A lista é conferida pelo cliente: página sem "value" é falha de CONTRATO e o teto com continuação é leitura
+            // INCOMPLETA — nenhuma das duas vira "nenhuma assinatura".
             await foreach (var s in _rest.GetPagedAsync(token, $"{AzureArmPlan.ArmHost}/subscriptions?api-version={AzureArmPlan.SubscriptionsApi}", ct))
             {
                 var id = KnightJson.Str(s, "subscriptionId");
-                if (id is not null) visible.Add((id, KnightJson.Str(s, "displayName"), KnightJson.Str(s, "state")));
+                if (id is not null)
+                    visible.Add(new Subscription(id, KnightJson.Str(s, "displayName"), KnightJson.Str(s, "state"), KnightJson.Str(s, "tenantId"),
+                        AzureSubscriptionAccess.Listed, null));
             }
         }
         catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
@@ -134,11 +140,39 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             return;
         }
 
-        var requested = scope.Select(s => s.ToLowerInvariant()).ToHashSet();
-        var inScope = visible
-            .Where(s => requested.Count == 0 ? !string.Equals(s.State, "Disabled", StringComparison.OrdinalIgnoreCase) : requested.Contains(s.Id.ToLowerInvariant()))
+        var requested = scope.Select(s => s.Trim().ToLowerInvariant()).Where(s => s.Length > 0).ToHashSet();
+        var listedInScope = visible
+            .Where(s => requested.Count == 0 ? !IsDisabled(s.State) : requested.Contains(s.Id.ToLowerInvariant()))
             .ToList();
-        var notVisible = requested.Where(r => visible.All(v => !string.Equals(v.Id, r, StringComparison.OrdinalIgnoreCase))).ToList();
+        var notListed = requested.Where(r => visible.All(v => !string.Equals(v.Id, r, StringComparison.OrdinalIgnoreCase))).ToList();
+
+        // ---- 1b) [AEGIS-KNIGHT-COLLECTION-GAPS-01] Consulta individual das pedidas e não listadas ----------------------
+        // GET /subscriptions/{id} (documentado, mesma versão da listagem) esclarece o porquê: lida (a listagem não a trouxe, a
+        // consulta sim), recusada (403), inexistente/não visível (404) ou sem resposta conclusiva. A seleção é preservada em
+        // todos os casos — a assinatura pedida nunca some do escopo.
+        var probed = new List<Subscription>();
+        foreach (var id in notListed)
+            probed.Add(await ProbeSubscriptionAsync(token, id, ct));
+        var inScope = listedInScope.Concat(probed.Where(p => p.Access == AzureSubscriptionAccess.DirectRead)).ToList();
+        var notVisible = probed.Where(p => p.Access != AzureSubscriptionAccess.DirectRead).ToList();
+
+        var summary = new AzureDiscoverySummary(
+            Listed: visible.Count,
+            Selected: inScope.Count,
+            Disabled: visible.Count(s => IsDisabled(s.State)),
+            OutsideRequestedScope: requested.Count == 0 ? 0 : visible.Count(s => !requested.Contains(s.Id.ToLowerInvariant())),
+            Requested: requested.Count,
+            RequestedNotListed: notListed.Count,
+            RequestedDirectRead: probed.Count(p => p.Access == AzureSubscriptionAccess.DirectRead),
+            RequestedDenied: probed.Count(p => p.Access == AzureSubscriptionAccess.Denied),
+            RequestedNotFound: probed.Count(p => p.Access == AzureSubscriptionAccess.NotFound),
+            RequestedUnverified: probed.Count(p => p.Access == AzureSubscriptionAccess.Unverified),
+            OtherDirectory: Guid.TryParse(cfg.AzureTenantId, out var configuredTenant)
+                ? visible.Count(s => Guid.TryParse(s.TenantId, out var t) && t != configuredTenant)
+                : 0,
+            TokenAudience: tokenAudience,
+            TokenTenantMatches: tokenTenantMatches);
+        recorder.Documents.Add(KnightTenantConfiguration.Document(AzureDiscoverySummary.ExternalId, "Descoberta das assinaturas do Azure", summary));
 
         var resources = new List<Building>();
         var outcomes = inScope.ToDictionary(s => s.Id, _ => Families.ToDictionary(f => f, _ => new FamilyOutcome()), StringComparer.OrdinalIgnoreCase);
@@ -191,7 +225,7 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             var doc = new AzureResource(r.Id, r.Type, r.Name, r.SubscriptionId, r.ResourceGroup, r.Location, r.Kind, r.Family, r.Facts, r.ParentId);
             recorder.Documents.Add(KnightTenantConfiguration.Document(AzureResource.CompactId(r.Id), r.Name, doc));
         }
-        foreach (var s in visible)
+        foreach (var s in visible.Concat(probed.Where(p => p.Access == AzureSubscriptionAccess.DirectRead)))
         {
             var isIn = outcomes.TryGetValue(s.Id, out var fam);
             var reads = isIn
@@ -203,36 +237,29 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                     .ToList()
                 : new List<AzureFamilyRead>();
             recorder.Documents.Add(KnightTenantConfiguration.Document(s.Id, s.Name,
-                new AzureSubscriptionInventory(s.Id, s.Name, s.State, isIn, reads)));
+                new AzureSubscriptionInventory(s.Id, s.Name, s.State, isIn, reads, Visible: true, s.Access, s.AccessDetail, s.TenantId)));
         }
 
         // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Assinatura PEDIDA e não visível entra no inventário como parte do escopo, com
         // todas as famílias não lidas. Antes ela simplesmente sumia: o escopo avaliado encolhia sem aviso e um controle podia
         // ser aprovado "em todas as assinaturas" sem a que faltava. Agora a regra a vê como não lida e não aprova o escopo.
-        const string notVisibleReason =
-            "Assinatura pedida no escopo e não visível à aplicação nesta descoberta: nenhuma família foi consultada nela. Não "
-            + "prova que falte o papel Leitor (a assinatura pode não existir neste locatário, estar em outro diretório ou ter "
-            + "sido digitada errada) e não prova ausência de recursos.";
-        foreach (var id in notVisible)
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O motivo agora traz o resultado da consulta individual (recusada, 404, inconclusiva).
+        foreach (var p in notVisible)
         {
+            var reason = KnightRuleText.Trim(
+                $"Assinatura pedida no escopo e não visível na listagem do Resource Manager; consulta individual: {p.AccessDetail} "
+                + "Nenhuma família foi consultada nela. Isso não prova, sozinho, que falte o papel Leitor (a assinatura pode não existir "
+                + "neste locatário, estar em outro diretório ou ter sido digitada errada) nem ausência de recursos.", 480);
             var reads = Families
                 .Where(f => f is not (KnightCapability.AzureSubscriptions or KnightCapability.AzureTenantDiagnostics))
-                .Select(f => new AzureFamilyRead(f, KnightCapabilityOutcome.NotAttempted, false, notVisibleReason))
+                .Select(f => new AzureFamilyRead(f, KnightCapabilityOutcome.NotAttempted, false, reason))
                 .ToList();
-            recorder.Documents.Add(KnightTenantConfiguration.Document(id, null,
-                new AzureSubscriptionInventory(id, null, null, true, reads, Visible: false)));
+            recorder.Documents.Add(KnightTenantConfiguration.Document(p.Id, p.Name,
+                new AzureSubscriptionInventory(p.Id, p.Name, p.State, true, reads, Visible: false, p.Access, p.AccessDetail, p.TenantId)));
         }
 
         // A descoberta CONCLUIU (a lista foi lida). O que ela encontrou é dito com o que prova e o que não prova.
-        var discoveryDetail = inScope.Count == 0 && notVisible.Count == 0
-            ? $"Descoberta concluída: {visible.Count} assinatura(s) visível(is) e nenhuma no escopo"
-              + (visible.Count == 0 ? " — a aplicação não enxerga assinatura alguma neste locatário." : " (todas desabilitadas ou fora do escopo pedido).")
-              + " Isso não prova, sozinho, que falte o papel Leitor, nem que não existam recursos, nem conformidade."
-            : $"Descoberta concluída: {inScope.Count} assinatura(s) consultada(s) de {visible.Count} visível(is)."
-              + (notVisible.Count > 0
-                  ? $" {notVisible.Count} assinatura(s) pedida(s) não está(ão) visível(is) e fica(m) no escopo como não lida(s) — a abrangência é parcial."
-                  : "");
-        recorder.Record(KnightCapability.AzureSubscriptions, KnightCapabilityOutcome.Collected, discoveryDetail);
+        recorder.Record(KnightCapability.AzureSubscriptions, KnightCapabilityOutcome.Collected, DescribeDiscovery(summary));
 
         foreach (var family in Families.Where(f => f is not (KnightCapability.AzureSubscriptions or KnightCapability.AzureTenantDiagnostics)))
         {
@@ -243,8 +270,8 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             {
                 recorder.Record(family, KnightCapabilityOutcome.NotAttempted,
                     notVisible.Count > 0
-                        ? "Família não consultada: nenhuma das assinaturas pedidas está visível à aplicação."
-                        : "Família não consultada: nenhuma assinatura no escopo desta coleta.",
+                        ? "Família não consultada: nenhuma das assinaturas pedidas está visível nem acessível à aplicação (ver a descoberta das assinaturas)."
+                        : "Família não consultada: nenhuma assinatura no escopo desta coleta (ver a descoberta das assinaturas).",
                     new KnightCapabilityDiagnostic("discovery", KnightFailureKind.NoScope));
                 continue;
             }
@@ -279,7 +306,110 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                     first.Diagnostic);
             }
         }
-        recorder.Record(KnightCapability.AzureTenantDiagnostics, tenantDiag.Outcome, tenantDiag.Detail, tenantDiag.Diagnostic);
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O diagnóstico do Entra ID é lido no escopo do LOCATÁRIO (/providers/microsoft.aadiam),
+        // não numa assinatura: a recusa dele não diz nada sobre o acesso às assinaturas, e o texto deixa isso explícito.
+        recorder.Record(KnightCapability.AzureTenantDiagnostics, tenantDiag.Outcome,
+            tenantDiag.Detail is null ? null : KnightRuleText.Trim(TenantScopeNote + tenantDiag.Detail, 480), tenantDiag.Diagnostic);
+    }
+
+    internal const string TenantScopeNote =
+        "Leitura no escopo do locatário (/providers/microsoft.aadiam), independente do acesso às assinaturas — ";
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Uma assinatura da descoberta, com o caminho por que chegou ao inventário.</summary>
+    private sealed record Subscription(string Id, string? Name, string? State, string? TenantId, string Access, string? AccessDetail);
+
+    /// <summary>Disabled e Deleted (estados documentados da assinatura) ficam fora da seleção automática.</summary>
+    private static bool IsDisabled(string? state) =>
+        string.Equals(state, "Disabled", StringComparison.OrdinalIgnoreCase) || string.Equals(state, "Deleted", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Consulta individual documentada (<c>GET /subscriptions/{id}</c>) de uma assinatura
+    /// pedida e ausente da listagem. Nunca derruba a coleta: o desfecho vira o caminho de acesso dela no inventário.
+    /// </summary>
+    private async Task<Subscription> ProbeSubscriptionAsync(string token, string id, CancellationToken ct)
+    {
+        try
+        {
+            var s = await _rest.GetAsync(token,
+                $"{AzureArmPlan.ArmHost}/subscriptions/{Uri.EscapeDataString(id)}?api-version={AzureArmPlan.SubscriptionsApi}", ct);
+            var sid = KnightJson.Str(s, "subscriptionId");
+            if (!string.Equals(sid, id, StringComparison.OrdinalIgnoreCase))
+                return new Subscription(id, null, null, null, AzureSubscriptionAccess.Unverified,
+                    "HTTP 200 fora do contrato documentado (sem o subscriptionId pedido).");
+            return new Subscription(sid!, KnightJson.Str(s, "displayName"), KnightJson.Str(s, "state"), KnightJson.Str(s, "tenantId"),
+                AzureSubscriptionAccess.DirectRead, "ausente da listagem, confirmada pela consulta individual (HTTP 200) e lida.");
+        }
+        catch (EntraGraphException ex)
+        {
+            var reason = KnightFailureClassifier.FromHttp(ex, Label, "discovery").Reason;
+            var access = ex.Kind == EntraGraphErrorKind.InsufficientPermission ? AzureSubscriptionAccess.Denied
+                : ex.HttpStatusCode == 404 ? AzureSubscriptionAccess.NotFound
+                : AzureSubscriptionAccess.Unverified;
+            return new Subscription(id, null, null, null, access, access switch
+            {
+                AzureSubscriptionAccess.Denied => "autorização recusada. " + reason,
+                AzureSubscriptionAccess.NotFound => "não encontrada neste locatário. " + reason,
+                _ => "sem resposta conclusiva. " + reason,
+            });
+        }
+        catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
+        {
+            return new Subscription(id, null, null, null, AzureSubscriptionAccess.Unverified,
+                "sem resposta conclusiva. " + KnightFailureClassifier.Classify(ex, Label, "discovery").Reason);
+        }
+    }
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] O detalhe da descoberta: cada contagem separada, o token e o que não se prova.</summary>
+    internal static string DescribeDiscovery(AzureDiscoverySummary s)
+    {
+        var parts = new List<string>
+        {
+            $"Descoberta concluída: {s.Selected} assinatura(s) consultada(s) de {s.Listed} visível(is) na listagem",
+        };
+        if (s.Disabled > 0) parts.Add($"{s.Disabled} desabilitada(s)");
+        if (s.OutsideRequestedScope > 0) parts.Add($"{s.OutsideRequestedScope} fora do escopo pedido");
+        if (s.OtherDirectory > 0) parts.Add($"{s.OtherDirectory} de outro diretório");
+        if (s.RequestedNotListed > 0)
+            parts.Add($"{s.RequestedNotListed} pedida(s) e não listada(s): "
+                + string.Join(", ", new[]
+                {
+                    s.RequestedDirectRead > 0 ? $"{s.RequestedDirectRead} confirmada(s) pela consulta individual e lida(s)" : null,
+                    s.RequestedDenied > 0 ? $"{s.RequestedDenied} com autorização recusada (selecionada(s) sem acesso)" : null,
+                    s.RequestedNotFound > 0 ? $"{s.RequestedNotFound} não encontrada(s) neste locatário" : null,
+                    s.RequestedUnverified > 0 ? $"{s.RequestedUnverified} sem resposta conclusiva" : null,
+                }.Where(x => x is not null)));
+        var text = string.Join("; ", parts) + ".";
+        text += s.TokenAudience is null
+            ? " Token do Resource Manager: declarações não legíveis (recurso e locatário não verificados)."
+            : $" Token do Resource Manager: recurso {s.TokenAudience}"
+              + (s.TokenTenantMatches switch { true => ", locatário configurado.", false => ", locatário DIFERENTE do configurado.", _ => "." });
+        if (s.Selected == 0 && s.RequestedNotListed == s.RequestedDirectRead)
+            text += " " + char.ToUpperInvariant(s.NoScopeReason()[0]) + s.NoScopeReason()[1..];
+        return KnightRuleText.Trim(text, 900);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] <c>aud</c> e <c>tid</c> do token do Resource Manager, lidos da parte de declarações do
+    /// JWT SEM validá-lo (só para diagnóstico: o serviço é quem valida). Token ilegível → nulos, nunca exceção.
+    /// </summary>
+    internal static (string? Audience, bool? TenantMatches) ArmTokenClaims(string token, string configuredTenant)
+    {
+        try
+        {
+            var parts = token.Split('.');
+            if (parts.Length != 3) return (null, null);
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            var aud = KnightJson.Str(doc.RootElement, "aud");
+            var tid = KnightJson.Str(doc.RootElement, "tid");
+            bool? matches = Guid.TryParse(tid, out var t) && Guid.TryParse(configuredTenant, out var c) ? t == c : null;
+            return (aud is { Length: <= 120 } && Uri.IsWellFormedUriString(aud, UriKind.Absolute) ? aud : aud is null ? null : "(não reconhecido)", matches);
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException)
+        {
+            return (null, null);
+        }
     }
 
     // ---- Leituras ------------------------------------------------------------------------------------------

@@ -342,10 +342,15 @@ public static class IdentityKnightBoundary
         // é "coletado, lista vazia" e o que é "não coletado" — a lista de objetos sozinha não distingue os dois.
         bool Collected(KnightCapability c) =>
             capabilities.Any(x => x.Capability == c && x.Outcome == KnightCapabilityOutcome.Collected);
+        // [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário relida da MESMA aquisição, com as capacidades dela.
+        var tenant = KnightTenantConfiguration.FromObserved(record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(), capabilities);
         var configuration = DirectoryConfigurationDocuments.FromObserved(
             record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(),
             Collected(KnightCapability.ConditionalAccessPolicies),
-            Collected(KnightCapability.PrivilegedRoleInventory));
+            Collected(KnightCapability.PrivilegedRoleInventory),
+            // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Pertencimento dos grupos e a contagem COMPLETA de contas habilitadas da mesma coleta.
+            Collected(KnightCapability.EntraGroupMembership),
+            EnabledAccountIds(tenant));
 
         return new KnightCollectionResult(
             record.Origin.Provider,
@@ -359,9 +364,16 @@ public static class IdentityKnightBoundary
             facts.AuthenticationPosture,
             affected,
             configuration,
-            // [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário relida da MESMA aquisição, com as capacidades dela.
-            KnightTenantConfiguration.FromObserved(record.Configurations ?? Array.Empty<IdentityObservedConfiguration>(), capabilities));
+            tenant);
     }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Ids das contas habilitadas pela enumeração da MFA por usuário — só quando ela foi
+    /// coletada, não parou no teto e guardou os ids (aquisições anteriores não os têm). É a população da base mínima conta a
+    /// conta; o coletor usa a MESMA leitura, para que o veredito da coleta e a evidência relida não divirjam.
+    /// </summary>
+    public static IReadOnlyList<string>? EnabledAccountIds(KnightTenantConfiguration tenant) =>
+        tenant.Read<EntraPerUserMfaInventory>() is { Collected: true, Single: { Truncated: false, EnabledAccountIds: { } ids } } ? ids : null;
 
     /// <summary>
     /// [AEGIS-ADM-02] O texto que impede uma lista vazia de passar por ausência. Diz as TRÊS coisas que

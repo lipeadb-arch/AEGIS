@@ -504,6 +504,9 @@ public static class KnightConfigurationKinds
             AzureSubscriptionInventory.SchemaVersion, typeof(AzureSubscriptionInventory)),
         new Spec(ConfigurationObjectKind.AzureResource, KnightCapability.AzureSubscriptions,
             AzureResource.SchemaVersion, typeof(AzureResource)),
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Resumo da descoberta concluída; a descoberta que falha fica no desfecho da capacidade.
+        new Spec(ConfigurationObjectKind.AzureDiscovery, KnightCapability.AzureSubscriptions,
+            AzureDiscoverySummary.SchemaVersion, typeof(AzureDiscoverySummary)),
 
         // ---- [AEGIS-KNIGHT-CLOSURE-01] Versão beta do Microsoft Graph, sessão ociosa e mensagens denunciadas ---------
         new Spec(ConfigurationObjectKind.PerUserMfaInventory, KnightCapability.PerUserMfaStates,

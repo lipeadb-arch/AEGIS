@@ -5,7 +5,7 @@
  * acompanhado, não duplicado; (3) coleta parcial não aparece como sucesso pleno; (4) falha nunca apresenta a
  * avaliação anterior como resultado do pedido que falhou.
  */
-import { KnightSyncRequest, isActiveSync, isCurrentSyncResponse, syncView } from '../src/app/models/knight-sync.models';
+import { AZURE_SCOPE_MARKER, KnightSyncRequest, isActiveSync, isCurrentSyncResponse, syncView } from '../src/app/models/knight-sync.models';
 
 let failures = 0;
 let count = 0;
@@ -104,6 +104,15 @@ test('concluído com coleta parcial é alerta, não sucesso pleno', () => {
   ok(v.title.includes('coleta parcial'), 'estado da fonte');
   ok((v.detail ?? '').includes('nunca aprovados'), 'não avaliado ≠ aprovado');
   eq(v.runId, 'run-9', 'a avaliação parcial existe e é acessível');
+});
+
+test('[AEGIS-KNIGHT-COLLECTION-GAPS-01] concluído do Azure mostra o resumo do escopo, separado da mensagem', () => {
+  const summary = 'Descoberta concluída: 0 assinatura(s) consultada(s) de 2 visível(is) na listagem; 2 desabilitada(s).';
+  const v = syncView(req({ status: 'Completed', runId: 'run-9', resultSourceState: 'PartialCollection',
+    message: 'Coleta parcial: parte das capacidades não pôde ser lida. ' + AZURE_SCOPE_MARKER + summary }));
+  eq(v.scope, summary, 'o resumo vem inteiro, sem a frase de estado');
+  eq(syncView(req({ status: 'Completed', runId: 'run-9', resultSourceState: 'Completed', message: 'Coleta concluída e avaliação registrada.' })).scope,
+    null, 'sem marcador, sem resumo');
 });
 
 test('falha mantém a avaliação anterior como anterior, nunca como resultado', () => {

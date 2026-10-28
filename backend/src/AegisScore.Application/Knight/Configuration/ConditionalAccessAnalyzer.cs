@@ -77,6 +77,12 @@ public enum RoleMfaCoverageState
     /// cobertura: a exceção não é irregular por si, mas também não comprova proteção.
     /// </summary>
     CoveredWithExceptions = 3,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] O papel só tem identidades de APLICAÇÃO: a exigência de MFA por política de usuários
+    /// não se aplica a elas. O papel não entra na contagem (nem coberto, nem lacuna).
+    /// </summary>
+    NoUserMembers = 4,
 }
 
 /// <summary>Situação da exigência de MFA para UM membro privilegiado (usuário) de um papel.</summary>
@@ -146,11 +152,43 @@ public sealed record LegacyAuthConclusion(
 /// <param name="UnresolvedPolicyIds">Políticas que seriam base mínima, mas cujo alcance depende de grupo(s) não coletado(s).</param>
 /// <param name="RestrictedPolicyIds">Políticas habilitadas que exigem MFA com alcance restrito (usuários, papéis, grupos, aplicações ou condições).</param>
 /// <param name="InconclusiveReason">Preenchido quando não há base comprovada e o alcance da candidata depende de grupo.</param>
+/// <param name="Reach">[AEGIS-KNIGHT-COLLECTION-GAPS-01] Alcance por conta das políticas dirigidas a grupo (ou com exclusão de
+/// grupo) cujo pertencimento foi lido — o porquê de cada uma ser base, não base ou não resolvida.</param>
 public sealed record MfaBaselineConclusion(
     IReadOnlyList<string> BaselinePolicyIds,
     IReadOnlyList<string> UnresolvedPolicyIds,
     IReadOnlyList<string> RestrictedPolicyIds,
-    string? InconclusiveReason);
+    string? InconclusiveReason,
+    IReadOnlyDictionary<string, string>? Reach = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Índice do pertencimento lido: membro (listado), não membro (leitura COMPLETA sem ele) ou
+/// desconhecido (grupo não lido, leitura parcial, recusada ou não encontrada). Sem pertencimento coletado (aquisições
+/// anteriores), TODO grupo é desconhecido — a leitura de antes, intacta.
+/// </summary>
+public sealed class GroupMembershipIndex
+{
+    private readonly Dictionary<string, EntraGroupMembership>? _groups;
+
+    public GroupMembershipIndex(IReadOnlyList<EntraGroupMembership>? groups) =>
+        _groups = groups?.GroupBy(g => g.GroupId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+    public static GroupMembershipIndex None { get; } = new(null);
+
+    /// <summary>O pertencimento foi coletado nesta aquisição (mesmo que algum grupo tenha falhado).</summary>
+    public bool Collected => _groups is not null;
+
+    public EntraGroupMembership? Get(string groupId) => _groups is not null && _groups.TryGetValue(groupId, out var g) ? g : null;
+
+    public bool? Holds(string groupId, string userId) => Get(groupId)?.Holds(userId);
+
+    public bool IsComplete(string groupId) => Get(groupId)?.IsComplete == true;
+
+    public string Describe(string groupId) => Get(groupId) is { } g
+        ? $"“{g.DisplayName ?? groupId}” ({EntraGroupMembership.Label(g.State)})"
+        : $"“{groupId}” (pertencimento não lido)";
+}
 
 /// <summary>Resultado completo da leitura das políticas de uma coleta.</summary>
 public sealed record ConditionalAccessAnalysis(
@@ -186,11 +224,12 @@ public static class ConditionalAccessAnalyzer
             .Select(Read)
             .ToList();
 
+        var membership = new GroupMembershipIndex(configuration!.GroupMemberships);
         return new ConditionalAccessAnalysis(
             readings,
-            ConcludeAdminMfa(readings, configuration!.PrivilegedRoles),
+            ConcludeAdminMfa(readings, configuration.PrivilegedRoles, membership),
             ConcludeLegacy(readings, configuration.PrivilegedRoles),
-            ConcludeBaseline(readings));
+            ConcludeBaseline(readings, membership, configuration.PrivilegedRoles, configuration.EnabledAccountIds));
     }
 
     // ---- Leitura de uma política ---------------------------------------------------------------------
@@ -264,19 +303,38 @@ public static class ConditionalAccessAnalyzer
     /// convidado não são resolvidos nesta entrega → <see cref="Reach.Unknown"/>, nunca suposição.
     /// <see cref="Reach.Excluded"/> só é devolvido quando a política o teria como alvo.
     /// </summary>
-    internal static Reach ReachOf(ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles)
+    internal static Reach ReachOf(ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles) =>
+        ReachOf(r, userId, userRoles, Array.Empty<string>(), GroupMembershipIndex.None);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] O alcance com o pertencimento LIDO: o usuário listado num grupo incluído é alvo; listado
+    /// num grupo excluído, excluído; ausente de um grupo lido por completo, fora dele. Grupo não lido, lido em parte, recusado
+    /// ou não encontrado continua desconhecido para quem não está listado — nunca associação presumida, nunca exclusão
+    /// ignorada. <paramref name="groupRoles"/> são os papéis que o usuário detém SÓ via grupo: a documentação do acesso
+    /// condicional não afirma que a política dirigida ao papel alcance quem o detém por grupo, então esse caminho fica
+    /// desconhecido (o grupo em si, quando é alvo, continua valendo pelo pertencimento).
+    /// </summary>
+    internal static Reach ReachOf(
+        ConditionalAccessPolicyReading r, string userId, IReadOnlyCollection<string> userRoles,
+        IReadOnlyCollection<string> groupRoles, GroupMembershipIndex membership)
     {
         var p = r.Policy;
+        bool AnyGroup(IReadOnlyList<string> groups, bool? state) => groups.Any(g => membership.Holds(g, userId) == state);
+
         var targeted = r.TargetsAllUsers
             || p.IncludeUsers.Contains(userId, Ci)
-            || p.IncludeRoles.Any(role => userRoles.Contains(role, Ci));
-        var maybeTargeted = !targeted && (p.IncludeGroups.Count > 0 || IncludesGuests(p));
+            || p.IncludeRoles.Any(role => userRoles.Contains(role, Ci))
+            || AnyGroup(p.IncludeGroups, true);
+        var maybeTargeted = !targeted
+            && (AnyGroup(p.IncludeGroups, null) || p.IncludeRoles.Any(role => groupRoles.Contains(role, Ci)) || IncludesGuests(p));
 
-        var excluded = p.ExcludeUsers.Contains(userId, Ci) || p.ExcludeRoles.Any(role => userRoles.Contains(role, Ci));
+        var excluded = p.ExcludeUsers.Contains(userId, Ci) || p.ExcludeRoles.Any(role => userRoles.Contains(role, Ci))
+            || AnyGroup(p.ExcludeGroups, true);
         if (excluded) return targeted ? Reach.Excluded : Reach.NotTargeted;
         if (!targeted && !maybeTargeted) return Reach.NotTargeted;
 
-        var maybeExcluded = p.ExcludeGroups.Count > 0 || ExcludesGuests(p);
+        var maybeExcluded = AnyGroup(p.ExcludeGroups, null) || p.ExcludeRoles.Any(role => groupRoles.Contains(role, Ci))
+            || ExcludesGuests(p);
         return targeted && !maybeExcluded ? Reach.Applies : Reach.Unknown;
     }
 
@@ -291,7 +349,8 @@ public static class ConditionalAccessAnalyzer
         r.IsEnforced && r.RequiresMfa && r.CoversAllApplications && r.Narrowing.Count == 0;
 
     private static AdminMfaConclusion ConcludeAdminMfa(
-        IReadOnlyList<ConditionalAccessPolicyReading> readings, IReadOnlyList<DirectoryRoleConfiguration>? roles)
+        IReadOnlyList<ConditionalAccessPolicyReading> readings, IReadOnlyList<DirectoryRoleConfiguration>? roles,
+        GroupMembershipIndex membership)
     {
         var full = readings.Where(IsFullMfa).ToList();
 
@@ -314,19 +373,18 @@ public static class ConditionalAccessAnalyzer
         }
 
         // Papéis que cada usuário DETÉM — a inclusão/exclusão por papel vale para quem tem o papel.
-        var rolesOf = roles
-            .SelectMany(role => role.UserMemberIds.Select(m => (m, role.TemplateId)))
-            .GroupBy(x => x.m, Ci)
-            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
+        var (rolesOf, groupRolesOf) = RoleHoldings(roles, membership);
 
         var coverages = new List<RoleMfaCoverage>();
         foreach (var role in roles
                      .Where(r => r.MemberCount > 0)
                      .OrderBy(r => r.DisplayName ?? r.TemplateId, StringComparer.OrdinalIgnoreCase))
         {
-            coverages.Add(role.UserMemberIds.Count == 0
-                ? RoleLevelCoverage(role, readings, full)
-                : MemberLevelCoverage(role, readings, full, rolesOf));
+            coverages.Add(!role.MemberTypesCaptured
+                ? role.UserMemberIds.Count == 0
+                    ? RoleLevelCoverage(role, readings, full)
+                    : MemberLevelCoverage(role, role.UserMemberIds, readings, full, rolesOf, groupRolesOf, membership)
+                : TypedCoverage(role, readings, full, rolesOf, groupRolesOf, membership));
         }
 
         var uncovered = coverages.Count(c => c.State == RoleMfaCoverageState.NotCovered);
@@ -344,15 +402,40 @@ public static class ConditionalAccessAnalyzer
         {
             var parts = new List<string>();
             if (unresolved.Count > 0)
-                parts.Add($"{Plural(unresolved.Count, "papel privilegiado depende", "papéis privilegiados dependem")} de "
-                    + "política direcionada a grupos ou a convidados, ou de exclusão de grupos, cujo pertencimento não é "
-                    + "coletado nesta entrega — a cobertura não pode ser afirmada nem negada.");
+                parts.Add(membership.Collected
+                    ? $"{Plural(unresolved.Count, "papel privilegiado tem", "papéis privilegiados têm")} cobertura não resolvida: "
+                      + "depende de grupo com pertencimento não lido por completo, da condição de convidado ou usuário externo, ou de "
+                      + "papel detido via grupo (a política dirigida ao papel não comprova alcançar quem o detém por grupo) — a cobertura "
+                      + "não pode ser afirmada nem negada; os membros e os grupos aparecem nomeados na evidência."
+                    : $"{Plural(unresolved.Count, "papel privilegiado depende", "papéis privilegiados dependem")} de "
+                      + "política direcionada a grupos ou a convidados, ou de exclusão de grupos, cujo pertencimento não é "
+                      + "coletado nesta entrega — a cobertura não pode ser afirmada nem negada.");
             if (excepted.Count > 0)
                 parts.Add(ExceptionsReason(excepted));
             return new AdminMfaConclusion(false, string.Join(" ", parts), 0, coverages, universal);
         }
 
         return new AdminMfaConclusion(true, null, 0, coverages, universal);
+    }
+
+    /// <summary>
+    /// Papéis que cada usuário detém DIRETAMENTE e, à parte, [AEGIS-KNIGHT-COLLECTION-GAPS-01] os que detém por pertencer a um
+    /// grupo atribuído ao papel (pertencimento lido).
+    /// </summary>
+    private static (Dictionary<string, IReadOnlyCollection<string>> Direct, Dictionary<string, IReadOnlyCollection<string>> ViaGroup) RoleHoldings(
+        IReadOnlyList<DirectoryRoleConfiguration> roles, GroupMembershipIndex membership)
+    {
+        var direct = roles
+            .SelectMany(role => role.UserMemberIds.Select(m => (m, role.TemplateId)))
+            .GroupBy(x => x.m, Ci)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
+        var viaGroup = roles
+            .SelectMany(role => (role.GroupMemberIds ?? Array.Empty<string>())
+                .SelectMany(g => membership.Get(g)?.UserIds ?? Array.Empty<string>())
+                .Select(u => (u, role.TemplateId)))
+            .GroupBy(x => x.u, Ci)
+            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
+        return (direct, viaGroup);
     }
 
     private static string ExceptionsReason(IReadOnlyList<RoleMfaCoverage> excepted)
@@ -366,23 +449,80 @@ public static class ConditionalAccessAnalyzer
             + "aprovado nem reprovado; as contas aparecem nomeadas na evidência.";
     }
 
-    private static RoleMfaCoverage MemberLevelCoverage(
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Papel com membros por tipo (v2): os usuários diretos e os usuários dos grupos atribuídos
+    /// ao papel são avaliados conta a conta; identidades de aplicação não são contas sujeitas à MFA de usuários; grupo com
+    /// pertencimento não lido por completo e objeto de tipo não reconhecido deixam a cobertura NÃO RESOLVIDA (nunca coberta).
+    /// </summary>
+    private static RoleMfaCoverage TypedCoverage(
         DirectoryRoleConfiguration role,
         IReadOnlyList<ConditionalAccessPolicyReading> readings,
         IReadOnlyList<ConditionalAccessPolicyReading> full,
-        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf)
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> groupRolesOf,
+        GroupMembershipIndex membership)
+    {
+        var groups = role.GroupMemberIds ?? Array.Empty<string>();
+        var users = role.UserMemberIds
+            .Concat(groups.SelectMany(g => membership.Get(g)?.UserIds ?? Array.Empty<string>()))
+            .Distinct(Ci).ToList();
+        var openGroups = groups.Where(g => !membership.IsComplete(g)).ToList();
+        var others = role.OtherMemberIds ?? Array.Empty<string>();
+        var apps = role.ServicePrincipalMemberIds ?? Array.Empty<string>();
+
+        if (users.Count == 0 && openGroups.Count == 0 && others.Count == 0)
+            return new RoleMfaCoverage(role, RoleMfaCoverageState.NoUserMembers, Array.Empty<string>(), Array.Empty<MemberMfaCoverage>(),
+                new List<string>
+                {
+                    $"Só {Plural(apps.Count, "identidade de aplicação", "identidades de aplicação")} — a exigência de MFA por política de "
+                    + "usuários não se aplica a elas; o papel não entra na contagem.",
+                });
+
+        var coverage = users.Count == 0
+            ? new RoleMfaCoverage(role, RoleMfaCoverageState.Unresolved, Array.Empty<string>(), Array.Empty<MemberMfaCoverage>(),
+                CandidateNotes(role, readings, full))
+            : MemberLevelCoverage(role, users, readings, full, rolesOf, groupRolesOf, membership);
+
+        var notes = coverage.Notes.ToList();
+        if (groups.Count > 0)
+            notes.Add("Detido via " + Plural(groups.Count, "grupo", "grupos") + ": " + string.Join(", ", groups.Select(membership.Describe)) + ".");
+        if (apps.Count > 0)
+            notes.Add($"{Plural(apps.Count, "identidade de aplicação", "identidades de aplicação")} no papel — fora da exigência de MFA de usuários.");
+        if (others.Count > 0)
+            notes.Add($"{Plural(others.Count, "membro de tipo não reconhecido", "membros de tipo não reconhecido")} na resposta da fonte.");
+
+        // Um grupo não lido por completo ou um membro de tipo desconhecido impede afirmar cobertura — lacuna comprovada continua.
+        var state = coverage.State;
+        if ((openGroups.Count > 0 || others.Count > 0) && state is RoleMfaCoverageState.Covered or RoleMfaCoverageState.CoveredWithExceptions)
+            state = RoleMfaCoverageState.Unresolved;
+        return coverage with { State = state, Notes = notes };
+    }
+
+    private static RoleMfaCoverage MemberLevelCoverage(
+        DirectoryRoleConfiguration role,
+        IReadOnlyList<string> memberIds,
+        IReadOnlyList<ConditionalAccessPolicyReading> readings,
+        IReadOnlyList<ConditionalAccessPolicyReading> full,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf,
+        IReadOnlyDictionary<string, IReadOnlyCollection<string>> groupRolesOf,
+        GroupMembershipIndex membership)
     {
         var members = new List<MemberMfaCoverage>();
         var covering = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var memberId in role.UserMemberIds.Distinct(Ci).OrderBy(m => m, StringComparer.Ordinal))
+        foreach (var memberId in memberIds.Distinct(Ci).OrderBy(m => m, StringComparer.Ordinal))
         {
-            var userRoles = rolesOf.TryGetValue(memberId, out var held) ? held : new[] { role.TemplateId };
+            var direct = role.UserMemberIds.Contains(memberId, Ci);
+            var userRoles = rolesOf.TryGetValue(memberId, out var held) ? held
+                : direct ? new[] { role.TemplateId } : Array.Empty<string>();
+            var viaGroups = groupRolesOf.TryGetValue(memberId, out var viaGroup)
+                ? viaGroup.Where(t => !userRoles.Contains(t, Ci)).ToList()
+                : new List<string>();
             var applies = new List<string>();
             var excludes = new List<string>();
             var unknown = new List<string>();
             foreach (var r in full)
             {
-                switch (ReachOf(r, memberId, userRoles))
+                switch (ReachOf(r, memberId, userRoles, viaGroups, membership))
                 {
                     case Reach.Applies: applies.Add(r.Policy.Id); break;
                     case Reach.Excluded: excludes.Add(r.Policy.Id); break;
@@ -411,7 +551,9 @@ public static class ConditionalAccessAnalyzer
         else state = RoleMfaCoverageState.Covered;
 
         if (state == RoleMfaCoverageState.Unresolved)
-            notes.Add("Parte da cobertura depende de grupo(s) ou da condição de convidado: o pertencimento não é coletado nesta entrega.");
+            notes.Add(membership.Collected
+                ? "Parte da cobertura depende de grupo com pertencimento não lido por completo, da condição de convidado ou de papel detido via grupo."
+                : "Parte da cobertura depende de grupo(s) ou da condição de convidado: o pertencimento não é coletado nesta entrega.");
 
         return new RoleMfaCoverage(role, state, covering.ToList(), members, notes);
     }
@@ -595,27 +737,158 @@ public static class ConditionalAccessAnalyzer
     /// pertencimento não é coletado. Política para um usuário, um papel ou uma aplicação não sustenta uma
     /// conclusão sobre o ambiente.
     /// </summary>
-    private static MfaBaselineConclusion ConcludeBaseline(IReadOnlyList<ConditionalAccessPolicyReading> readings)
+    /// <remarks>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Com o pertencimento lido, o alcance é conferido CONTA A CONTA, pelo critério do controle
+    /// (política habilitada, exigindo MFA, em todas as aplicações e sem condição que a estreite — nada disso é relaxado):
+    ///   • todos os usuários, com exclusão de grupo lido por completo — a exclusão fica delimitada (as contas excluídas são
+    ///     contadas e listadas na evidência), como as nominais: base mínima;
+    ///   • dirigida a grupo(s) — cada conta habilitada da enumeração COMPLETA da mesma coleta é conferida pela identidade:
+    ///     alcançada, excluída explicitamente, fora do alvo ou desconhecida (grupo não lido por completo, condição de
+    ///     convidado, papel detido via grupo). Uma conta fora do alvo prova que não é base para o ambiente; uma desconhecida
+    ///     deixa não resolvida; só todas alcançadas (ou excluídas explicitamente) sustentam a base. Quantidades iguais nunca
+    ///     aprovam — a comparação é por id;
+    ///   • sem a enumeração completa (teto, falha, aquisição anterior sem os ids) — não resolvida, com o motivo.
+    /// Cobrir os administradores não demonstra base mínima para o ambiente: o alcance é sempre o de todas as contas.
+    /// Revisão (catálogo v11): base exige ao menos uma conta efetivamente alcançada — política cujas exclusões alcançam cada
+    /// conta habilitada da enumeração não protege ninguém (alcance restrito, mesmo com alvo declarado em todos), e enumeração
+    /// sem conta habilitada deixa a política dirigida a grupo não resolvida — a ausência de contas nunca aprova.
+    /// </remarks>
+    private static MfaBaselineConclusion ConcludeBaseline(
+        IReadOnlyList<ConditionalAccessPolicyReading> readings, GroupMembershipIndex membership,
+        IReadOnlyList<DirectoryRoleConfiguration>? roles, IReadOnlyList<string>? enabledAccounts)
     {
         var baseline = new List<string>();
         var unresolved = new List<string>();
         var restricted = new List<string>();
+        var reach = new Dictionary<string, string>(StringComparer.Ordinal);
+        var (rolesOf, groupRolesOf) = RoleHoldings(roles ?? Array.Empty<DirectoryRoleConfiguration>(), membership);
+        var population = enabledAccounts?.Distinct(Ci).ToList();
         foreach (var r in readings.Where(r => r.IsEnforced && r.RequiresMfa))
         {
+            var p = r.Policy;
             var broadScope = r.CoversAllApplications && r.Narrowing.Count == 0;
-            if (broadScope && r.TargetsAllUsers && r.Policy.ExcludeGroups.Count == 0) baseline.Add(r.Policy.Id);
-            else if (broadScope && (r.TargetsAllUsers || r.Policy.IncludeGroups.Count > 0)) unresolved.Add(r.Policy.Id);
-            else restricted.Add(r.Policy.Id);
+            if (!broadScope) { restricted.Add(p.Id); continue; }
+
+            if (r.TargetsAllUsers)
+            {
+                // Alvo declarado em todos, mas exclusões que alcançam cada conta habilitada da enumeração: ninguém sujeito ao MFA.
+                if (r.HasExclusions && population is { Count: > 0 }
+                    && population.All(a => ReachOf(r, a, rolesOf.TryGetValue(a, out var held) ? held : Array.Empty<string>(),
+                        Array.Empty<string>(), membership) == Reach.Excluded))
+                {
+                    restricted.Add(p.Id);
+                    reach[p.Id] = "alvo declarado em todos os usuários: " + NoneReached(population.Count, population.Count);
+                    continue;
+                }
+                if (p.ExcludeGroups.Count == 0) { baseline.Add(p.Id); continue; }
+                var open = p.ExcludeGroups.Where(g => !membership.IsComplete(g)).ToList();
+                if (open.Count == 0)
+                {
+                    baseline.Add(p.Id);
+                    var excluded = p.ExcludeGroups.SelectMany(g => membership.Get(g)!.UserIds).Distinct(Ci).Count();
+                    reach[p.Id] = $"exclusão por grupo delimitada pelo pertencimento lido: {Plural(excluded, "conta excluída", "contas excluídas")} via "
+                        + string.Join(", ", p.ExcludeGroups.Select(membership.Describe));
+                }
+                else
+                {
+                    unresolved.Add(p.Id);
+                    if (membership.Collected)
+                        reach[p.Id] = "exclui grupo com pertencimento não lido por completo: " + string.Join(", ", open.Select(membership.Describe));
+                }
+                continue;
+            }
+
+            if (p.IncludeGroups.Count == 0) { restricted.Add(p.Id); continue; }
+
+            // Sem o pertencimento coletado (aquisição anterior), a leitura de antes: não resolvida, texto de então.
+            if (!membership.Collected) { unresolved.Add(p.Id); continue; }
+
+            var target = string.Join(", ", p.IncludeGroups.Select(membership.Describe));
+            var openExcluded = p.ExcludeGroups.Where(g => !membership.IsComplete(g)).ToList();
+            if (openExcluded.Count > 0)
+                target += "; exclui grupo com pertencimento não lido por completo: " + string.Join(", ", openExcluded.Select(membership.Describe));
+            if (population is null)
+            {
+                unresolved.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}, sem a enumeração completa das contas habilitadas do diretório nesta coleta para conferir conta a conta";
+                continue;
+            }
+            if (population.Count == 0)
+            {
+                // Sem contas não há alcance a demonstrar — a ausência de contas nunca aprova.
+                unresolved.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}, mas a enumeração desta coleta não retornou nenhuma conta habilitada — não há alcance a demonstrar";
+                continue;
+            }
+            if (roles is null && (p.IncludeRoles.Count > 0 || p.ExcludeRoles.Count > 0))
+            {
+                unresolved.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target} e a papéis, sem o inventário de papéis nesta coleta para conferir conta a conta";
+                continue;
+            }
+
+            var applies = 0;
+            var excludedAccounts = 0;
+            var outside = 0;
+            var unknown = 0;
+            foreach (var account in population)
+            {
+                var direct = rolesOf.TryGetValue(account, out var d) ? d : Array.Empty<string>();
+                var viaGroup = groupRolesOf.TryGetValue(account, out var v) ? v.Where(t => !direct.Contains(t, Ci)).ToList() : new List<string>();
+                switch (ReachOf(r, account, direct, viaGroup, membership))
+                {
+                    case Reach.Applies: applies++; break;
+                    case Reach.Excluded: excludedAccounts++; break;
+                    case Reach.NotTargeted: outside++; break;
+                    default: unknown++; break;
+                }
+            }
+
+            if (outside > 0)
+            {
+                restricted.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}: {outside} de {population.Count} conta(s) habilitada(s) fora do alvo, conferidas conta a conta — "
+                    + "não é base mínima para o ambiente";
+            }
+            else if (unknown > 0)
+            {
+                unresolved.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}: alcance não comprovado para {unknown} de {population.Count} conta(s) habilitada(s) (grupo não lido "
+                    + "por completo, condição de convidado ou papel detido via grupo)";
+            }
+            else if (applies == 0)
+            {
+                // Todas excluídas explicitamente: nenhuma conta sujeita ao MFA desta política — não protege ninguém.
+                restricted.Add(p.Id);
+                reach[p.Id] = $"dirigida a {target}: {NoneReached(population.Count, excludedAccounts)}";
+            }
+            else
+            {
+                baseline.Add(p.Id);
+                reach[p.Id] = $"alvo em {target}, com alcance comprovado conta a conta: {applies} de {population.Count} conta(s) habilitada(s) alcançada(s)"
+                    + (excludedAccounts > 0 ? $" e {excludedAccounts} excluída(s) explicitamente" : "");
+            }
         }
 
         string? reason = null;
         if (baseline.Count == 0 && unresolved.Count > 0)
-            reason = "Há política habilitada que exige MFA em todas as aplicações, mas o alcance dela depende de grupo(s) "
-                + "cujo pertencimento não é coletado nesta entrega ("
-                + string.Join(", ", unresolved.Select(id => "“" + Name(readings.First(x => x.Policy.Id == id).Policy) + "”"))
-                + ") — não é possível afirmar nem negar uma base mínima para o ambiente.";
-        return new MfaBaselineConclusion(baseline, unresolved, restricted, reason);
+        {
+            string NameOf(string id) => "“" + Name(readings.First(x => x.Policy.Id == id).Policy) + "”";
+            reason = membership.Collected
+                ? "Há política habilitada que exige MFA em todas as aplicações cujo alcance sobre todas as contas não pôde ser comprovado ("
+                  + string.Join("; ", unresolved.Select(id => NameOf(id) + (reach.TryGetValue(id, out var why) ? ": " + why : "")))
+                  + ") — não é possível afirmar nem negar uma base mínima para o ambiente."
+                : "Há política habilitada que exige MFA em todas as aplicações, mas o alcance dela depende de grupo(s) "
+                  + "cujo pertencimento não é coletado nesta entrega ("
+                  + string.Join(", ", unresolved.Select(NameOf))
+                  + ") — não é possível afirmar nem negar uma base mínima para o ambiente.";
+        }
+        return new MfaBaselineConclusion(baseline, unresolved, restricted, reason, reach);
     }
+
+    private static string NoneReached(int population, int excluded) =>
+        $"nenhuma das {population} conta(s) habilitada(s) é alcançada ({excluded} excluída(s) explicitamente) — a política não protege "
+        + "conta alguma e não é base mínima para o ambiente";
 
     // ---- Tradução em sinais do KNIGHT -----------------------------------------------------------------
 

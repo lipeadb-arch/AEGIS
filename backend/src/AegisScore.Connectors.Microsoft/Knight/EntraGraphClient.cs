@@ -47,6 +47,13 @@ public sealed class EntraGraphException : Exception
     /// </summary>
     public string? ServiceRequestId { get; }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] O QUE fugiu do contrato documentado ("objeto settings ausente", "página sem a lista
+    /// value"), em texto do PRÓPRIO AEGIS — nunca texto da fonte. Entra no motivo da falha de contrato, para que objeto
+    /// ausente, propriedade ausente e tipo incompatível não cheguem à tela com a mesma frase genérica.
+    /// </summary>
+    public string? ContractDetail { get; init; }
+
     public EntraGraphException(
         EntraGraphErrorKind kind,
         string? detail = null,

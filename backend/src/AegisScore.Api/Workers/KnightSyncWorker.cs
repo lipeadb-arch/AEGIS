@@ -164,7 +164,7 @@ public sealed class KnightSyncWorker : BackgroundService
                 break;
             case { Assessment: { } assessment }:
                 await FinalizeAsync(lease, assessment.Id, assessment.SourceState,
-                    recovered: outcome.Outcome == KnightSyncRunOutcome.AlreadyRegistered);
+                    recovered: outcome.Outcome == KnightSyncRunOutcome.AlreadyRegistered, ScopeSummary(assessment));
                 break;
             case not null:
                 // Vínculo existe, mas a execução não pôde ser lida agora: a retomada lê o vínculo e finaliza.
@@ -188,6 +188,24 @@ public sealed class KnightSyncWorker : BackgroundService
         return message.Length <= 1000 ? message : message[..999] + "…";
     }
 
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Marcador do resumo do escopo do Azure na mensagem (a tela o separa por ele).</summary>
+    internal const string AzureScopeMarker = "Escopo do Azure — ";
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] O desfecho da descoberta das assinaturas (listadas, selecionadas, desabilitadas, pedidas sem
+    /// acesso, token) e, à parte, o do diagnóstico do Entra ID no escopo do locatário — que não diz nada sobre as assinaturas.
+    /// </summary>
+    internal static string? ScopeSummary(KnightAssessment assessment)
+    {
+        if (assessment.SourceType != KnightSourceType.MicrosoftAzure) return null;
+        var discovery = assessment.Capabilities.FirstOrDefault(c => c.Capability == KnightCapability.AzureSubscriptions);
+        if (discovery?.Detail is not { Length: > 0 } detail) return null;
+        var tenantDiag = assessment.Capabilities.FirstOrDefault(c => c.Capability == KnightCapability.AzureTenantDiagnostics);
+        return tenantDiag is { Outcome: not KnightCapabilityOutcome.Collected }
+            ? detail + " Diagnóstico do Entra ID (escopo do locatário, separado das assinaturas): não lido."
+            : detail;
+    }
+
     private static string MessageFor(KnightSourceState state) => state switch
     {
         KnightSourceState.Completed => "Coleta concluída e avaliação registrada.",
@@ -200,11 +218,14 @@ public sealed class KnightSyncWorker : BackgroundService
     /// afirmado em falso: o vínculo está gravado, e a próxima aquisição do pedido (quando o lease vencer)
     /// finaliza pela retomada, sem coletar de novo.
     /// </summary>
-    private async Task FinalizeAsync(KnightSyncLease lease, Guid runId, KnightSourceState state, bool recovered)
+    private async Task FinalizeAsync(KnightSyncLease lease, Guid runId, KnightSourceState state, bool recovered, string? scope = null)
     {
         var message = MessageFor(state) + (recovered
             ? " A avaliação foi gravada por uma tentativa anterior deste mesmo pedido; a coleta não foi repetida."
             : "");
+        // [AEGIS-KNIGHT-COLLECTION-GAPS-01] O resumo do escopo vai junto, para Integrações dizer a situação sem ninguém ler logs.
+        if (scope is not null) message += " " + AzureScopeMarker + scope;
+        if (message.Length > 1000) message = message[..999] + "…";
         try
         {
             if (!await _queue.CompleteAsync(lease.RequestId, lease.LeaseId, runId, state, message, CancellationToken.None))

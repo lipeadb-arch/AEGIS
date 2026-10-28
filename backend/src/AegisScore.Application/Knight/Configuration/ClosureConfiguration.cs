@@ -28,8 +28,13 @@ public sealed record EntraPerUserMfaInventory(
     int Unread,
     bool Truncated,
     IReadOnlyList<EntraPerUserMfaUser> NotDisabled,
-    string? Limitation)
+    string? Limitation,
+    IReadOnlyList<string>? EnabledAccountIds = null)
 {
+    // [AEGIS-KNIGHT-COLLECTION-GAPS-01] EnabledAccountIds: os ids da MESMA enumeração das contas habilitadas
+    // (GET /v1.0/users?$filter=accountEnabled eq true), sem as excluídas entre a listagem e a leitura. São a população da base
+    // mínima conta a conta; completa só quando Truncated = false. Campo aditivo: documentos anteriores não o têm (nulo) e
+    // continuam legíveis na mesma versão — a base dirigida a grupo, para eles, segue não resolvida.
     public const string SchemaVersion = "aegis-config-entra-per-user-mfa-v1";
     public const string ExternalId = "per-user-mfa";
 
