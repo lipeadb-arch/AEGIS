@@ -303,6 +303,14 @@ public enum ConfigurationObjectKind
 
     /// <summary>Capacidade de MFA dos usuários MEMBROS, pelo mesmo relatório de registro (userRegistrationDetails).</summary>
     MfaCapabilityInventory = 68,
+
+    // ---- [AEGIS-KNIGHT-COLLECTION-GAPS-01] -----------------------------------------------------------------------
+
+    /// <summary>Resumo da descoberta das assinaturas do Azure (listadas, selecionadas, desabilitadas, pedidas sem acesso).</summary>
+    AzureDiscovery = 69,
+
+    /// <summary>Pertencimento TRANSITIVO de um grupo do Entra ID referenciado por política de acesso condicional ou papel.</summary>
+    DirectoryGroupMembership = 70,
 }
 
 /// <summary>

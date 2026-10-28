@@ -101,31 +101,52 @@ public sealed class MicrosoftRestClient : IMicrosoftRestClient
         }
     }
 
+    /// <remarks>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] Três desfechos distintos, nunca confundidos:
+    ///   • COLEÇÃO (possivelmente vazia) — toda página é um objeto com a lista <c>value</c> e a última não tem continuação;
+    ///   • FORA DO CONTRATO — página sem <c>value</c> (ou de outro tipo), corpo vazio, ou continuação de tipo inválido/fora
+    ///     do host: <see cref="EntraGraphErrorKind.Contract"/>. Antes isso virava coleção vazia e, na descoberta do Azure,
+    ///     "nenhuma assinatura";
+    ///   • INCOMPLETA — o teto de páginas chegou com continuação pendente: <see cref="EntraGraphErrorKind.Incomplete"/>. Antes a
+    ///     leitura terminava em silêncio como se fosse o total.
+    /// Os itens das páginas já lidas são entregues ANTES da falha: quem consome preserva o que leu, sem declará-lo completo.
+    /// </remarks>
     public async IAsyncEnumerable<JsonElement> GetPagedAsync(
         string token, string url, [EnumeratorCancellation] CancellationToken ct, int maxPages = 200)
     {
         string? next = url;
         var host = Uri.TryCreate(url, UriKind.Absolute, out var first) ? first.Host : null;
-        for (var page = 0; next is not null && page < maxPages; page++)
+        for (var page = 0; next is not null; page++)
         {
-            var root = await GetAsync(token, next, ct);
-            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("value", out var items) && items.ValueKind == JsonValueKind.Array)
-                foreach (var item in items.EnumerateArray())
-                    yield return item;
+            var path = PathOf(next);
+            if (page >= maxPages)
+                throw new EntraGraphException(EntraGraphErrorKind.Incomplete, "limite de paginação atingido com páginas restantes",
+                    endpointPath: path);
 
-            next = NextLink(root, url);
+            var root = await GetAsync(token, next, ct);
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("value", out var items) || items.ValueKind != JsonValueKind.Array)
+                throw new EntraGraphException(EntraGraphErrorKind.Contract, "página sem a lista value esperada", 200, endpointPath: path);
+            foreach (var item in items.EnumerateArray())
+                yield return item;
+
+            next = NextLink(root, url, path);
             // O próximo link tem de ficar no MESMO host: o token nunca segue para outro destino.
             if (next is not null && (!Uri.TryCreate(next, UriKind.Absolute, out var nu) || !string.Equals(nu.Host, host, StringComparison.OrdinalIgnoreCase)))
-                throw new EntraGraphException(EntraGraphErrorKind.Contract, "próximo link fora do host de origem");
+                throw new EntraGraphException(EntraGraphErrorKind.Contract, "próximo link fora do host de origem", 200, endpointPath: path);
         }
     }
 
-    private static string? NextLink(JsonElement root, string original)
+    private static string? PathOf(string url) => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsolutePath : null;
+
+    private static string? NextLink(JsonElement root, string original, string? path)
     {
-        if (root.ValueKind != JsonValueKind.Object) return null;
         foreach (var name in new[] { "nextLink", "@odata.nextLink", "continuationUri" })
-            if (root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String && v.GetString() is { Length: > 0 } link)
-                return link;
+        {
+            if (!root.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null) continue;
+            if (v.ValueKind != JsonValueKind.String)
+                throw new EntraGraphException(EntraGraphErrorKind.Contract, $"{name} com tipo inválido", 200, endpointPath: path);
+            if (v.GetString() is { Length: > 0 } link) return link;
+        }
         // Fabric: só o token de continuação — a mesma URL com o parâmetro documentado.
         if (root.TryGetProperty("continuationToken", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() is { Length: > 0 } token)
         {

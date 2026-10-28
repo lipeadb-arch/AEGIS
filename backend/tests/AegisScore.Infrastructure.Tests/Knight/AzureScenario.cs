@@ -45,6 +45,16 @@ public sealed class AzureScenario
         DatabricksDeniedInB,
         /// <summary>[AEGIS-KNIGHT-READONLY-01] Conforme, mas o Resource Manager não informa isUcEnabled no workspace.</summary>
         UnityCatalogNotReported,
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] A listagem responde 200 sem a lista "value" (fora do contrato).</summary>
+        ListingContractBroken,
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] As assinaturas listadas estão Disabled e Deleted.</summary>
+        AllDisabled,
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Conforme; B é pedida, não listada, e a consulta individual responde 403.</summary>
+        RequestedDeniedIndividually,
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Conforme; B é pedida, não listada, e a consulta individual a confirma (200).</summary>
+        RequestedFoundIndividually,
+        /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Conforme, mas o diagnóstico do Entra ID no escopo do locatário é recusado (403).</summary>
+        EntraDiagnosticsDenied,
     }
 
     public const string SubA = "00000000-aaaa-4000-8000-00000000000a";
@@ -68,7 +78,11 @@ public sealed class AzureScenario
     }
 
     private bool Ok => _v is Variant.Compliant or Variant.StorageDeniedInB or Variant.VaultDataDenied or Variant.PreviewContractChanged
-        or Variant.DatabricksDeniedInB or Variant.UnityCatalogNotReported;
+        or Variant.DatabricksDeniedInB or Variant.UnityCatalogNotReported or Variant.RequestedDeniedIndividually
+        or Variant.RequestedFoundIndividually or Variant.EntraDiagnosticsDenied;
+
+    /// <summary>[AEGIS-KNIGHT-COLLECTION-GAPS-01] Token devolvido pelo endpoint de token (um JWT sintético, quando o teste o define).</summary>
+    public string AccessToken { get; init; } = "token-sintetico";
 
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Host sintético do workspace do Databricks (informado pelo Resource Manager).</summary>
     public const string DatabricksHost = "adb-0000000000000001.1.azuredatabricks.net";
@@ -145,11 +159,30 @@ public sealed class AzureScenario
     {
         if (_v == Variant.DiscoveryDenied) { Deny("/subscriptions"); return; }
         if (_v == Variant.NoSubscriptions) { List("/subscriptions"); return; }
+        if (_v == Variant.ListingContractBroken) { Route("/subscriptions", new { subscriptions = Array.Empty<object>() }); return; }
+        if (_v == Variant.AllDisabled)
+        {
+            List("/subscriptions",
+                new { subscriptionId = SubA, displayName = "Assinatura Demo Produção", state = "Disabled" },
+                new { subscriptionId = SubB, displayName = "Assinatura Demo Desenvolvimento", state = "Deleted" });
+            return;
+        }
 
-        List("/subscriptions",
-            new { subscriptionId = SubA, displayName = "Assinatura Demo Produção", state = "Enabled" },
-            new { subscriptionId = SubB, displayName = "Assinatura Demo Desenvolvimento", state = "Enabled" },
-            new { subscriptionId = SubC, displayName = "Assinatura Demo Fora do Escopo", state = "Enabled" });
+        var subB = new { subscriptionId = SubB, displayName = "Assinatura Demo Desenvolvimento", state = "Enabled" };
+        if (_v is Variant.RequestedDeniedIndividually or Variant.RequestedFoundIndividually)
+        {
+            // B não vem na listagem; a consulta individual decide.
+            List("/subscriptions",
+                new { subscriptionId = SubA, displayName = "Assinatura Demo Produção", state = "Enabled" },
+                new { subscriptionId = SubC, displayName = "Assinatura Demo Fora do Escopo", state = "Enabled" });
+            if (_v == Variant.RequestedDeniedIndividually) Deny($"/subscriptions/{SubB}");
+            else Route($"/subscriptions/{SubB}", subB);
+        }
+        else
+            List("/subscriptions",
+                new { subscriptionId = SubA, displayName = "Assinatura Demo Produção", state = "Enabled" },
+                subB,
+                new { subscriptionId = SubC, displayName = "Assinatura Demo Fora do Escopo", state = "Enabled" });
 
         foreach (var sub in new[] { SubA, SubB }) SubscriptionLevel(sub);
         Workloads(SubA);
@@ -728,6 +761,7 @@ public sealed class AzureScenario
                 logs = (Ok ? all : new[] { "AuditLogs" }).Select(c => new { category = c, enabled = true }).ToArray(),
             },
         });
+        if (_v == Variant.EntraDiagnosticsDenied) Deny("/providers/microsoft.aadiam/diagnosticSettings");
         Route("/providers/Microsoft.Subscription/policies/default", new
         {
             properties = new { blockSubscriptionsLeavingTenant = Ok, blockSubscriptionsIntoTenant = Ok, exemptedPrincipals = Array.Empty<string>() },
@@ -784,7 +818,7 @@ public sealed class AzureScenario
         {
             var scope = (body ?? "").Split('&').Select(Uri.UnescapeDataString).FirstOrDefault(p => p.StartsWith("scope=", StringComparison.Ordinal));
             lock (TokenScopes) TokenScopes.Add(scope?["scope=".Length..] ?? "");
-            return (HttpStatusCode.OK, """{"token_type":"Bearer","expires_in":3600,"access_token":"token-sintetico"}""");
+            return (HttpStatusCode.OK, J(new { token_type = "Bearer", expires_in = 3600, access_token = AccessToken }));
         }
         if (host == "graph.microsoft.com")
         {

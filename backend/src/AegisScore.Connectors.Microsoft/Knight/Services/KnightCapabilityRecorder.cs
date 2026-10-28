@@ -75,6 +75,10 @@ public sealed class KnightCapabilityRecorder
         }
         catch (Exception ex)
         {
+            // [AEGIS-KNIGHT-COLLECTION-GAPS-01] Leitura interrompida no teto com continuação pendente: o que foi lido é preservado
+            // no ADM, mas a capacidade NÃO fica coletada — a leitura tipada (Read<T>) só usa documentos de capacidade coletada, então
+            // nenhuma regra trata a lista parcial como população completa.
+            if (ex is EntraGraphException { Kind: EntraGraphErrorKind.Incomplete }) Documents.AddRange(pending);
             // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] UMA classificação para tudo: HTTP, tempo do pipeline, circuito aberto,
             // transporte, contrato e defeito interno — sem "erro inesperado" atribuído ao provedor.
             Record(capability, KnightFailureClassifier.Classify(ex, _serviceLabel, "read", ElapsedMs(started), CorrelationId));

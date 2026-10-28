@@ -100,7 +100,9 @@ public static class KnightFailureClassifier
             EntraGraphErrorKind.AuthFailure =>
                 (KnightCapabilityOutcome.AuthenticationFailure, KnightFailureKind.HttpStatus, "Falha de autenticação nesta leitura."),
             EntraGraphErrorKind.Contract =>
-                (KnightCapabilityOutcome.Error, KnightFailureKind.Contract, "A resposta não segue o contrato documentado desta leitura."),
+                (KnightCapabilityOutcome.Error, KnightFailureKind.Contract, string.IsNullOrWhiteSpace(ex.ContractDetail)
+                    ? "A resposta não segue o contrato documentado desta leitura."
+                    : $"A resposta não segue o contrato documentado desta leitura: {ex.ContractDetail}."),
             EntraGraphErrorKind.Incomplete =>
                 (KnightCapabilityOutcome.Error, KnightFailureKind.Incomplete, "Leitura interrompida no teto de paginação do AEGIS com páginas restantes — o que foi lido não é o total."),
             _ when ex.HttpStatusCode is null =>

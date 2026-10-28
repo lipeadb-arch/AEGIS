@@ -87,7 +87,13 @@ public abstract class KnightRestCollectorBase : IKnightCollector
 /// </summary>
 public sealed class IntuneKnightCollector : KnightRestCollectorBase
 {
-    internal const string SettingsUrl = "deviceManagement?$select=settings";
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] GET documentado do singleton (sem <c>$select</c>): o objeto devolve a propriedade
+    /// complexa <c>settings</c> (deviceManagementSettings). A forma anterior (<c>?$select=settings</c>) chegou em produção sem
+    /// <c>secureByDefault</c>, e a capacidade terminava como coletada.
+    /// </summary>
+    internal const string SettingsUrl = "deviceManagement";
+    internal const string SettingsEndpoint = "/v1.0/deviceManagement";
     internal const string EnrollmentUrl = "deviceManagement/deviceEnrollmentConfigurations?$expand=assignments";
 
     /// <summary>Tipo documentado da configuração de restrições de plataforma na v1.0.</summary>
@@ -124,9 +130,9 @@ public sealed class IntuneKnightCollector : KnightRestCollectorBase
         await recorder.RunAsync(KnightCapability.IntuneServiceSettings, async add =>
         {
             var root = await _graph.GetJsonAsync(token, cfg, SettingsUrl, ct);
-            var settings = Prop(root, "settings");
+            var (settings, secureByDefault) = ReadSecureByDefault(root);
             add(KnightTenantConfiguration.Document(IntuneComplianceSettings.ExternalId, "Configurações de conformidade do Intune",
-                new IntuneComplianceSettings(Bool(settings, "secureByDefault"), Int(settings, "deviceComplianceCheckinThresholdDays"))));
+                new IntuneComplianceSettings(secureByDefault, Int(settings, "deviceComplianceCheckinThresholdDays"))));
         }, ct);
 
         await recorder.RunAsync(KnightCapability.IntuneEnrollmentRestrictions, async add =>
@@ -147,6 +153,32 @@ public sealed class IntuneKnightCollector : KnightRestCollectorBase
                     new IntuneEnrollmentRestriction(id, Str(c, "displayName"), priority, isDefault, platforms, Items(c, "assignments").Count())));
             }
         }, ct);
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] <c>settings.secureByDefault</c> como o contrato documenta (Boolean). Objeto ausente
+    /// (ou nulo), objeto de outro tipo, propriedade ausente (ou nula) e propriedade de outro tipo são falhas de CONTRATO
+    /// distintas — a capacidade não fica coletada e o motivo diz qual foi. Nenhuma vira false, conformidade ou sucesso.
+    /// </summary>
+    internal static (JsonElement Settings, bool SecureByDefault) ReadSecureByDefault(JsonElement root)
+    {
+        static EntraGraphException Contract(string code, string detail) =>
+            new(EntraGraphErrorKind.Contract, detail, 200, code, SettingsEndpoint) { ContractDetail = detail };
+
+        if (root.ValueKind != JsonValueKind.Object)
+            throw Contract("DeviceManagementTypeMismatch", "a resposta não é o objeto deviceManagement");
+        if (!root.TryGetProperty("settings", out var settings) || settings.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            throw Contract("SettingsMissing", "objeto settings ausente na resposta do deviceManagement");
+        if (settings.ValueKind != JsonValueKind.Object)
+            throw Contract("SettingsTypeMismatch", "settings com tipo incompatível (esperado objeto deviceManagementSettings)");
+        if (!settings.TryGetProperty("secureByDefault", out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            throw Contract("SecureByDefaultMissing", "propriedade secureByDefault ausente em settings");
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => (settings, true),
+            JsonValueKind.False => (settings, false),
+            _ => throw Contract("SecureByDefaultTypeMismatch", "secureByDefault com tipo incompatível (esperado booleano)"),
+        };
     }
 }
 
