@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using AegisScore.Application.Knight;
 using Microsoft.Extensions.Logging;
 
 namespace AegisScore.Connectors.Microsoft.Knight.PowerShell;
@@ -39,6 +40,8 @@ public abstract class PowerShellAdapterOptions
     /// prazo, a saída é declarada INCOMPLETA. Interno: só os testes o encurtam.
     /// </summary>
     internal TimeSpan DrainTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    internal Func<ContainerMemorySample?> MemoryProbe { get; set; } = ContainerMemorySample.Read;
 }
 
 /// <summary>
@@ -75,6 +78,9 @@ public enum PowerShellTermination
     /// vale; o que não chegou não pode ser confirmado — inclusive o próprio resultado.
     /// </summary>
     OutputIncomplete = 5,
+
+    /// <summary>O AEGIS encerrou somente o adaptador para preservar a API sob pressão de memória do contêiner.</summary>
+    MemoryLimit = 6,
 }
 
 /// <summary>
@@ -273,6 +279,8 @@ public sealed class PowerShellAdapterProcess
         psi.Environment["TEMP"] = workDir;
         psi.Environment["TMP"] = workDir;
 
+        if (_options.MemoryProbe() is not null) ContainerMemorySample.ConfigureChildGc(psi.Environment);
+
         var clock = Stopwatch.StartNew();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_options.Timeout);
@@ -288,11 +296,25 @@ public sealed class PowerShellAdapterProcess
                 $"O runtime do PowerShell não pôde ser iniciado neste ambiente. A coleta do {_adapterLabel} não foi tentada.", ex);
         }
 
-        var frames = new FrameCollector(_options.MaxOutputBytes, () => KillTree(process));
+        var frames = new FrameCollector(_options.MaxOutputBytes, () => KillTree(process), stage =>
+        {
+            // Nunca registrar texto arbitrário do módulo: apenas estágios conhecidos ou capacidades do catálogo.
+            var known = stage is "start" or "input" or "import" or "imported" or "connect" or "connected"
+                or "connect-failed" or "compliance-connect" or "disconnect" or "result";
+            if (stage.StartsWith("read ", StringComparison.Ordinal))
+                known = Enum.TryParse<KnightCapability>(stage[5..], out var capability)
+                    && Enum.IsDefined(capability) && capability.ToString() == stage[5..];
+            if (known) _log?.LogInformation("Adaptador do {Adaptador}: Estagio={Estagio}, DuracaoMs={Duracao}.",
+                _adapterLabel, stage, clock.ElapsedMilliseconds);
+        });
         // Os leitores NÃO observam o tempo limite: depois de encerrar o processo, eles drenam até o fim do cano, para que nada
         // do que foi escrito antes do encerramento se perca.
         var stdout = frames.ReadAsync(process.StandardOutput.BaseStream);
         var stderr = ReadStderrAsync(process.StandardError);
+
+        using var memoryMonitorStop = new CancellationTokenSource();
+        var memoryLimited = 0;
+        var memoryMonitor = MonitorMemoryAsync(process, () => Interlocked.Exchange(ref memoryLimited, 1), memoryMonitorStop.Token);
 
         var timedOut = false;
         try
@@ -321,11 +343,16 @@ public sealed class PowerShellAdapterProcess
             KillTree(process);
             if (ct.IsCancellationRequested)
             {
+                memoryMonitorStop.Cancel();
+                await memoryMonitor;
                 await DrainQuietlyAsync(stdout, stderr);
                 throw;
             }
             timedOut = true;
         }
+
+        memoryMonitorStop.Cancel();
+        await memoryMonitor;
 
         try
         {
@@ -350,7 +377,8 @@ public sealed class PowerShellAdapterProcess
         var noise = PowerShellDiagnosticScrubber.Scrub(frames.NoiseSample.Trim(), knownSecrets);
 
         var outputComplete = !frames.LimitExceeded && frames.ReachedEnd;
-        var termination = PowerShellRunReport.TerminationOf(frames.LimitExceeded, timedOut, exitCode, frames.Result is not null, outputComplete);
+        var termination = memoryLimited != 0 ? PowerShellTermination.MemoryLimit
+            : PowerShellRunReport.TerminationOf(frames.LimitExceeded, timedOut, exitCode, frames.Result is not null, outputComplete);
 
         var report = new PowerShellRunReport(
             termination, exitCode, frames.Stages, frames.StartedReads, frames.FinishedReads, frames.Result is not null,
@@ -374,6 +402,26 @@ public sealed class PowerShellAdapterProcess
                 report.FinishedReads.Count, report.ResultEmitted, report.OutputComplete, report.MalformedFrames, report.DurationMs);
 
         return new PowerShellAdapterRun(frames.Document(), report);
+    }
+
+    private async Task MonitorMemoryAsync(Process process, Action limitReached, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested && !process.HasExited)
+            {
+                if (_options.MemoryProbe() is { UnderPressure: true } memory)
+                {
+                    _log?.LogWarning("Adaptador do {Adaptador}: encerrado para preservar a API. MemoriaAtualBytes={Atual}, LimiteBytes={Limite}.",
+                        _adapterLabel, memory.CurrentBytes, memory.LimitBytes);
+                    limitReached();
+                    KillTree(process);
+                    return;
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(100), ct);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
     }
 
     private static async Task DrainQuietlyAsync(Task stdout, Task stderr)
@@ -429,6 +477,7 @@ public sealed class PowerShellAdapterProcess
 
         private readonly long _maxBytes;
         private readonly Action _kill;
+        private readonly Action<string>? _onStage;
         private readonly List<string> _stages = new();
         private readonly List<string> _started = new();
         private readonly List<string> _finished = new();
@@ -441,10 +490,11 @@ public sealed class PowerShellAdapterProcess
         private bool _frozen;
         private long _total;
 
-        public FrameCollector(int maxBytes, Action kill)
+        public FrameCollector(int maxBytes, Action kill, Action<string>? onStage = null)
         {
             _maxBytes = maxBytes > 0 ? maxBytes : long.MaxValue;
             _kill = kill;
+            _onStage = onStage;
         }
 
         public IReadOnlyList<string> Stages => _stages;
@@ -576,6 +626,7 @@ public sealed class PowerShellAdapterProcess
                     var stage = Bounded(payload.Trim());
                     if (stage.Length == 0) { Malformed++; return; }
                     _stages.Add(stage);
+                    _onStage?.Invoke(stage);
                     if (stage.StartsWith("read ", StringComparison.Ordinal)) _started.Add(stage[5..].Trim());
                     break;
                 case "read":

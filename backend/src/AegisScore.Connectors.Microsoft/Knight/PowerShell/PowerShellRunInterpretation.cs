@@ -95,6 +95,7 @@ public static class PowerShellRunInterpretation
     {
         PowerShellTermination.TimedOut => KnightFailureKind.Timeout,
         PowerShellTermination.OutputLimit => KnightFailureKind.OutputLimit,
+        PowerShellTermination.MemoryLimit => KnightFailureKind.Internal,
         PowerShellTermination.NonZeroExit => KnightFailureKind.ProcessExit,
         PowerShellTermination.NoResult => KnightFailureKind.ProcessNoResult,
         PowerShellTermination.OutputIncomplete => KnightFailureKind.Incomplete,
@@ -115,6 +116,8 @@ public static class PowerShellRunInterpretation
             PowerShellTermination.TimedOut =>
                 $"não terminou no tempo limite e foi encerrado pelo AEGIS após {report.DurationMs / 1000} s",
             PowerShellTermination.OutputLimit => "a saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS",
+            PowerShellTermination.MemoryLimit => "foi encerrado pelo AEGIS por pressão de memória no contêiner, para preservar a aplicação; "
+                + "isso não indica falta de permissão e somente as leituras concluídas foram preservadas",
             PowerShellTermination.NoResult => "terminou com código 0 sem emitir o documento de resultado",
             PowerShellTermination.OutputIncomplete =>
                 "terminou com código 0, mas a saída dele não foi recebida até o fim (a leitura falhou ou o cano não fechou no prazo); "
