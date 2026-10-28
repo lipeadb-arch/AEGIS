@@ -32,6 +32,11 @@ public static class NistReportPdfWriter
 
     public static byte[] Write(PostureSnapshot snapshot, NistMaturityReport r)
     {
+        lock (PostureSnapshotPdfWriter.RenderGate) return Render(snapshot, r);
+    }
+
+    private static byte[] Render(PostureSnapshot snapshot, NistMaturityReport r)
+    {
         var doc = new Document();
         doc.Info.Title = "Relatório de maturidade NIST";
         doc.Info.Author = "AEGIS";

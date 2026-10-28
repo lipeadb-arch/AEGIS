@@ -126,45 +126,69 @@ public sealed record MicrosoftTokenResource(string Name, IReadOnlyList<string> A
 /// <summary>Três estados, nunca confundidos: encontrado, ausência comprovada por leitura completa, não verificável.</summary>
 public enum AccessLookupState { Found, ProvenAbsent, NotVerifiable }
 
-/// <summary>Resultado de UMA consulta à entidade de serviço. <see cref="Failure"/> é status/código já sanitizados.</summary>
-public sealed record AccessLookup<T>(AccessLookupState State, T? Value, string? Failure = null)
+/// <summary>
+/// Resultado de UMA consulta à entidade de serviço. <see cref="Failure"/> é status/código já sanitizados.
+/// <see cref="Unreadable"/> conta os itens que a resposta trouxe sem o campo interpretável: com eles, a leitura é completa,
+/// mas não comprova ausência.
+/// </summary>
+public sealed record AccessLookup<T>(AccessLookupState State, T? Value, string? Failure = null, int Unreadable = 0)
 {
-    public static AccessLookup<T> NotVerifiable(string failure) => new(AccessLookupState.NotVerifiable, default, failure);
+    public static AccessLookup<T> NotVerifiable(string failure, int unreadable = 0) => new(AccessLookupState.NotVerifiable, default, failure, unreadable);
 }
 
-/// <summary>Atribuição ATIVA de papel de diretório à entidade de serviço.</summary>
-public sealed record DirectoryRoleAssignment(string RoleTemplateId, string? RoleName, bool TenantWide);
+/// <summary>Atribuição ATIVA de papel de diretório à entidade de serviço. <c>TenantWide</c> nulo: escopo não informado.</summary>
+public sealed record DirectoryRoleAssignment(string RoleTemplateId, string? RoleName, bool? TenantWide);
 
-/// <summary>Verificações de identidade e recurso a partir das claims do token (sem consulta externa).</summary>
+/// <summary>Comparação de UM campo do token com o pedido: confere, diverge (comprovado) ou não verificável.</summary>
+public enum ClaimComparison { Matches, Differs, NotVerifiable }
+
+/// <summary>Um campo comparado (<c>Field</c> já em português, com artigo). <c>Detail</c>: a divergência ou o motivo de não verificar.</summary>
+public sealed record ClaimCheck(string Field, ClaimComparison State, string? Detail = null);
+
+/// <summary>
+/// Identidade e recurso a partir das claims do token (sem consulta externa), campo a campo: recurso, aplicação e locatário.
+/// Ausência de divergência NÃO é correspondência — campo ausente, ilegível ou não comparável fica não verificável.
+/// </summary>
 public static class TokenIdentityCheck
 {
-    /// <summary>Divergências COMPROVADAS entre o token e o pedido; lista vazia não prova nada além delas.</summary>
-    public static IReadOnlyList<string> Mismatches(AccessTokenClaims claims, IMicrosoftGraphCredentials credentials, MicrosoftTokenResource resource)
-    {
-        var problems = new List<string>();
-        if (claims.Audience is { } aud && resource.OtherKnown(aud) is { } other)
-            problems.Add($"o token pedido para {resource.Name} foi emitido para outro recurso ({other.Name})");
-        // O locatário pode ser configurado pelo domínio: só um GUID permite comparar.
-        if (claims.TenantId is { } tid && System.Guid.TryParse(credentials.AzureTenantId, out var configured)
-            && !string.Equals(tid, configured.ToString("D"), StringComparison.OrdinalIgnoreCase))
-            problems.Add("o token foi emitido por outro locatário, diferente do configurado no conector");
-        if (claims.AppId is { } app && System.Guid.TryParse(credentials.ClientId, out var client)
-            && !string.Equals(app, client.ToString("D"), StringComparison.OrdinalIgnoreCase))
-            problems.Add("o token identifica outra aplicação, diferente da configurada no conector");
-        if (claims.HasDelegatedScopes)
-            problems.Add("o token é delegado (de usuário), não de aplicativo");
-        return problems;
-    }
+    public const string ResourceField = "o recurso";
+    public const string AppField = "a aplicação";
+    public const string TenantField = "o locatário";
 
-    /// <summary>Uma linha de fato: o que o token declara, sem julgamento.</summary>
-    public static string Describe(AccessTokenClaims? claims, IMicrosoftGraphCredentials credentials, MicrosoftTokenResource resource)
+    public static IReadOnlyList<ClaimCheck> Evaluate(AccessTokenClaims claims, IMicrosoftGraphCredentials credentials, MicrosoftTokenResource resource)
     {
-        if (claims is null) return $"Token de {resource.Name}: emitido, mas o conteúdo não pôde ser lido — as verificações de identidade e recurso ficam não verificáveis.";
-        var mismatches = Mismatches(claims, credentials, resource);
-        if (mismatches.Count > 0) return $"Token de {resource.Name}: incompatível — " + string.Join("; ", mismatches) + ".";
-        var audOk = claims.Audience is { } a && resource.Matches(a);
-        return $"Token de {resource.Name}: emitido para a aplicação e o locatário configurados"
-            + (audOk ? ", para o recurso esperado." : $" (recurso declarado: {claims.Audience ?? "não informado"}).");
+        var checks = new List<ClaimCheck>();
+
+        if (claims.Audience is not { } aud)
+            checks.Add(new(ResourceField, ClaimComparison.NotVerifiable, "a claim aud está ausente ou ilegível"));
+        else if (resource.Matches(aud))
+            checks.Add(new(ResourceField, ClaimComparison.Matches));
+        else if (resource.OtherKnown(aud) is { } other)
+            checks.Add(new(ResourceField, ClaimComparison.Differs, $"o token pedido para {resource.Name} foi emitido para outro recurso ({other.Name})"));
+        else
+            checks.Add(new(ResourceField, ClaimComparison.NotVerifiable, $"o recurso declarado ({aud}) não é um identificador conhecido de {resource.Name}"));
+
+        if (claims.AppId is not { } app)
+            checks.Add(new(AppField, ClaimComparison.NotVerifiable, "as claims appid/azp estão ausentes ou ilegíveis"));
+        else if (!System.Guid.TryParse(credentials.ClientId, out var client))
+            checks.Add(new(AppField, ClaimComparison.NotVerifiable, "o identificador da aplicação configurado no conector não é um GUID comparável"));
+        else
+            checks.Add(string.Equals(app, client.ToString("D"), StringComparison.OrdinalIgnoreCase)
+                ? new(AppField, ClaimComparison.Matches)
+                : new(AppField, ClaimComparison.Differs, "o token identifica outra aplicação, diferente da configurada no conector"));
+
+        // O locatário pode ser configurado pelo domínio, e o token só declara o GUID: sem GUID dos dois lados, não há comparação.
+        if (claims.TenantId is not { } tid)
+            checks.Add(new(TenantField, ClaimComparison.NotVerifiable, "a claim tid está ausente ou ilegível"));
+        else if (!System.Guid.TryParse(credentials.AzureTenantId, out var configured))
+            checks.Add(new(TenantField, ClaimComparison.NotVerifiable,
+                "o conector está configurado pelo domínio e o token declara só o identificador do locatário — a correspondência não é demonstrada"));
+        else
+            checks.Add(string.Equals(tid, configured.ToString("D"), StringComparison.OrdinalIgnoreCase)
+                ? new(TenantField, ClaimComparison.Matches)
+                : new(TenantField, ClaimComparison.Differs, "o token foi emitido por outro locatário, diferente do configurado no conector"));
+
+        return checks;
     }
 }
 
@@ -201,24 +225,34 @@ public sealed class ServicePrincipalAccessReader
         }
     }
 
-    /// <summary>Atribuições ATIVAS de papel de diretório da entidade de serviço (leitura completa, todas as páginas).</summary>
+    /// <summary>
+    /// Atribuições ATIVAS e DIRETAS de papel de diretório da entidade de serviço (leitura completa, todas as páginas). Ausência
+    /// só quando a leitura não trouxe nenhuma atribuição; uma atribuição sem <c>roleDefinitionId</c> legível impede concluir.
+    /// </summary>
     public async Task<AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>> DirectoryRolesAsync(
         string graphToken, IMicrosoftGraphCredentials cfg, string servicePrincipalId, CancellationToken ct)
     {
         try
         {
             var list = new List<DirectoryRoleAssignment>();
+            var unreadable = 0;
             var url = $"roleManagement/directory/roleAssignments?$filter=principalId eq '{servicePrincipalId}'&$select=roleDefinitionId,directoryScopeId";
             await foreach (var a in _graph.GetPagedAsync(graphToken, cfg, url, ct))
             {
-                var role = KnightJson.Str(a, "roleDefinitionId");
-                if (!System.Guid.TryParse(role, out var template)) continue;
+                if (a.ValueKind != JsonValueKind.Object || !System.Guid.TryParse(KnightJson.Str(a, "roleDefinitionId"), out var template))
+                {
+                    unreadable++;
+                    continue;
+                }
                 var id = template.ToString("D");
-                list.Add(new DirectoryRoleAssignment(id, DirectoryRoleNames.Name(id), KnightJson.Str(a, "directoryScopeId") == "/"));
+                var scope = KnightJson.Str(a, "directoryScopeId");
+                list.Add(new DirectoryRoleAssignment(id, DirectoryRoleNames.Name(id), scope is null ? null : scope == "/"));
             }
-            return list.Count == 0
+            if (list.Count > 0)
+                return new AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>(AccessLookupState.Found, list, Unreadable: unreadable);
+            return unreadable == 0
                 ? new AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>(AccessLookupState.ProvenAbsent, list)
-                : new AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>(AccessLookupState.Found, list);
+                : AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>.NotVerifiable($"{unreadable} atribuição(ões) sem roleDefinitionId legível", unreadable);
         }
         catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {
@@ -226,17 +260,30 @@ public sealed class ServicePrincipalAccessReader
         }
     }
 
-    /// <summary>Quantos grupos de SEGURANÇA contêm a entidade de serviço, direta ou transitivamente (leitura completa).</summary>
+    /// <summary>
+    /// Quantos grupos de SEGURANÇA contêm a entidade de serviço, direta ou transitivamente (leitura completa). O cast OData
+    /// para <c>microsoft.graph.group</c> é consulta avançada: <c>$count=true</c> e <c>ConsistencyLevel: eventual</c>, como a
+    /// documentação do <c>transitiveMemberOf</c> exige. Grupo com <c>securityEnabled</c> ausente, nulo ou não booleano (o Graph
+    /// devolve só id e tipo dos objetos que a permissão não alcança) não conta como "não é de segurança": sem nenhum grupo de
+    /// segurança legível, ele torna a leitura não verificável em vez de ausência comprovada.
+    /// </summary>
     public async Task<AccessLookup<int>> SecurityGroupCountAsync(
         string graphToken, IMicrosoftGraphCredentials cfg, string servicePrincipalId, CancellationToken ct)
     {
         try
         {
-            var n = 0;
-            var url = $"servicePrincipals/{servicePrincipalId}/transitiveMemberOf/microsoft.graph.group?$select=id,securityEnabled";
-            await foreach (var g in _graph.GetPagedAsync(graphToken, cfg, url, ct))
-                if (g.TryGetProperty("securityEnabled", out var s) && s.ValueKind == JsonValueKind.True) n++;
-            return new AccessLookup<int>(n == 0 ? AccessLookupState.ProvenAbsent : AccessLookupState.Found, n);
+            int security = 0, unreadable = 0;
+            var url = $"servicePrincipals/{servicePrincipalId}/transitiveMemberOf/microsoft.graph.group?$count=true&$select=id,securityEnabled";
+            await foreach (var g in _graph.GetPagedAdvancedAsync(graphToken, cfg, url, ct))
+            {
+                var s = g.ValueKind == JsonValueKind.Object && g.TryGetProperty("securityEnabled", out var v) ? v.ValueKind : JsonValueKind.Undefined;
+                if (s == JsonValueKind.True) security++;
+                else if (s != JsonValueKind.False) unreadable++;
+            }
+            if (security > 0) return new AccessLookup<int>(AccessLookupState.Found, security, Unreadable: unreadable);
+            return unreadable == 0
+                ? new AccessLookup<int>(AccessLookupState.ProvenAbsent, 0)
+                : AccessLookup<int>.NotVerifiable($"{unreadable} grupo(s) sem securityEnabled legível", unreadable);
         }
         catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
         {

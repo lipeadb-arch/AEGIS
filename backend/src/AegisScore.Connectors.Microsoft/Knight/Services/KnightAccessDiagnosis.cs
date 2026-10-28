@@ -97,17 +97,29 @@ public static class KnightAccessDiagnostics
                 + "aplicativo do Teams diz que nenhuma é necessária e que configurá-las pode causar falhas.");
         }
 
-        // Atribuições ativas da entidade de serviço (Graph, leitura completa).
+        // Atribuições ativas da entidade de serviço (Graph, leitura completa). Três estados, nunca confundidos: a ausência do
+        // papel NO TOKEN não comprova ausência de ATRIBUIÇÃO — só a leitura completa e interpretável das atribuições comprova.
         var assigned = graph is null ? null : await AssignmentsAsync(graph, tokens.GraphToken, cfg, verified, unknown, ct);
         if (teamsClaims is not null && tokenRoles!.Count == 0)
         {
-            if (assigned is { State: AccessLookupState.Found } a && a.Value!.Any(r => DirectoryRoleNames.IsTeamsRelevant(r.RoleTemplateId)))
+            var teamsAssignments = assigned is { State: AccessLookupState.Found }
+                ? assigned.Value!.Where(r => DirectoryRoleNames.IsTeamsRelevant(r.RoleTemplateId)).ToList()
+                : new List<DirectoryRoleAssignment>();
+            if (teamsAssignments.Count > 0)
                 actions.Add("a atribuição existe, mas não chegou ao token desta execução (atribuição recente ou restrita a uma unidade administrativa): "
                     + "sincronizar novamente depois da propagação e, persistindo, conferir se o escopo da atribuição é o locatário inteiro.");
+            else if (assigned is { State: AccessLookupState.Found or AccessLookupState.ProvenAbsent, Unreadable: 0 })
+            {
+                actions.Add("atribuir um papel de diretório do Teams à entidade de serviço da aplicação (não à conta do operador): a documentação da "
+                    + "autenticação de aplicativo do Teams exige o papel atribuído à aplicação, e nem o token nem a leitura completa das atribuições "
+                    + "ativas diretas mostram nenhum.");
+                unknown.Add(RoleChoice);
+            }
             else
-                actions.Add("atribuir um papel de diretório do Teams à entidade de serviço da aplicação (não à conta do operador). O de menor privilégio "
-                    + "na tabela de papéis do Teams é Leitor do Teams; como a Microsoft não o associa explicitamente ao módulo PowerShell, "
-                    + "a eficácia dele para os comandos Get-Cs* só se confirma numa nova sincronização.");
+                unknown.Add("se há atribuição de papel do Teams à entidade de serviço: "
+                    + (graph is null ? "a consulta não foi feita nesta execução" : "a consulta das atribuições não foi concluída")
+                    + "; a ausência do papel no token não comprova ausência de atribuição (uma atribuição recente pode não ter chegado ao token), "
+                    + "e nenhuma concessão é apresentada como necessária sem essa leitura.");
         }
 
         // Organization.Read.All — exigida pela documentação do módulo para TODOS os comandos.
@@ -197,12 +209,18 @@ public static class KnightAccessDiagnostics
                                 + "«Entidades de serviço podem acessar APIs de administração somente leitura» (ação de um administrador do Fabric).");
                             break;
                         case AccessLookupState.Found:
-                            verified.Add($"a entidade de serviço da aplicação pertence a {groups.Value} grupo(s) de segurança.");
+                            verified.Add(groups.Unreadable == 0
+                                ? $"a entidade de serviço da aplicação pertence a {groups.Value} grupo(s) de segurança."
+                                : $"a entidade de serviço da aplicação pertence a pelo menos {groups.Value} grupo(s) de segurança "
+                                  + $"(outros {groups.Unreadable} sem securityEnabled legível).");
                             unknown.Add("se algum desses grupos está autorizado na configuração «Entidades de serviço podem acessar APIs de administração "
                                 + "somente leitura» e se ela está habilitada: essa configuração só é legível pela leitura que foi recusada.");
                             break;
                         default:
-                            unknown.Add($"os grupos de segurança da entidade de serviço ({groups.Failure}).");
+                            unknown.Add(groups.Unreadable > 0
+                                ? $"os grupos de segurança da entidade de serviço ({groups.Failure}: o Microsoft Graph devolve só id e tipo dos "
+                                  + "objetos que a permissão não alcança); nada se conclui sobre eles."
+                                : $"os grupos de segurança da entidade de serviço ({groups.Failure}).");
                             break;
                     }
                 }
@@ -226,17 +244,30 @@ public static class KnightAccessDiagnostics
             unknown.Add($"o conteúdo do token de {resource.Name} (identidade, recurso, papéis e permissões declarados), que não pôde ser lido");
             return;
         }
-        var mismatches = TokenIdentityCheck.Mismatches(claims, cfg, resource);
-        if (mismatches.Count > 0)
+        // Campo a campo: só o que confere é verificado; divergência comprovada pede ação; o resto fica não verificável.
+        var checks = TokenIdentityCheck.Evaluate(claims, cfg, resource);
+        var differs = checks.Where(c => c.State == ClaimComparison.Differs).Select(c => c.Detail!).ToList();
+        if (claims.HasDelegatedScopes) differs.Add("o token é delegado (de usuário), não de aplicativo");
+        if (differs.Count > 0)
         {
-            verified.Add($"token de {resource.Name} incompatível: {string.Join("; ", mismatches)}.");
+            verified.Add($"token de {resource.Name} incompatível: {string.Join("; ", differs)}.");
             actions.Add($"conferir o locatário e a aplicação configurados no conector: o token de {resource.Name} não corresponde a eles.");
-            return;
         }
-        verified.Add(claims.Audience is { } a && resource.Matches(a)
-            ? $"token de {resource.Name} emitido para a aplicação e o locatário configurados, para o recurso esperado."
-            : $"token de {resource.Name} emitido para a aplicação e o locatário configurados (recurso declarado: {claims.Audience ?? "não informado"}).");
+        var matches = checks.Where(c => c.State == ClaimComparison.Matches).Select(c => c.Field).ToList();
+        if (matches.Count > 0)
+            verified.Add($"token de {resource.Name}: {FieldList(matches)} {(matches.Count == 1 ? "confere" : "conferem")} com o pedido e com o conector.");
+        foreach (var c in checks.Where(c => c.State == ClaimComparison.NotVerifiable))
+            unknown.Add($"no token de {resource.Name}, {c.Field}: {c.Detail}.");
     }
+
+    private static string FieldList(IReadOnlyList<string> fields) =>
+        fields.Count == 1 ? fields[0] : string.Join(", ", fields.Take(fields.Count - 1)) + " e " + fields[^1];
+
+    /// <summary>A escolha do papel não é ação demonstrada: a tabela oficial não associa o Leitor do Teams ao módulo PowerShell.</summary>
+    private const string RoleChoice =
+        "qual papel basta para os comandos Get-Cs*: a tabela oficial de papéis do Teams associa ao módulo PowerShell o Administrador do Teams, "
+        + "o de Comunicações e o de Telefonia, e cita o Leitor do Teams (de menor privilégio) só para o centro de administração — a eficácia "
+        + "do Leitor do Teams só se confirma numa nova sincronização.";
 
     private static async Task<AccessLookup<IReadOnlyList<DirectoryRoleAssignment>>?> AssignmentsAsync(
         IEntraGraphClient graph, string graphToken, IMicrosoftGraphCredentials cfg, List<string> verified, List<string> unknown, CancellationToken ct)
@@ -255,14 +286,21 @@ public static class KnightAccessDiagnostics
         switch (roles.State)
         {
             case AccessLookupState.ProvenAbsent:
-                verified.Add("a entidade de serviço da aplicação não tem nenhuma atribuição ativa de papel de diretório (leitura completa).");
+                verified.Add("a entidade de serviço da aplicação não tem nenhuma atribuição ativa direta de papel de diretório (leitura completa).");
                 break;
             case AccessLookupState.Found:
                 var relevant = roles.Value!.Where(r => DirectoryRoleNames.IsTeamsRelevant(r.RoleTemplateId)).ToList();
                 verified.Add(relevant.Count == 0
-                    ? $"a entidade de serviço tem {roles.Value!.Count} atribuição(ões) ativa(s) de papel de diretório, nenhuma do Teams nem de leitura global."
+                    ? $"a entidade de serviço tem {roles.Value!.Count} atribuição(ões) ativa(s) de papel de diretório legível(is), nenhuma do Teams nem de leitura global."
                     : "atribuição(ões) ativa(s) da entidade de serviço: "
-                      + string.Join(", ", relevant.Select(r => r.RoleName + (r.TenantWide ? " (locatário inteiro)" : " (escopo restrito)"))) + ".");
+                      + string.Join(", ", relevant.Select(r => r.RoleName + r.TenantWide switch
+                      {
+                          true => " (locatário inteiro)",
+                          false => " (escopo restrito)",
+                          null => " (escopo não informado)",
+                      })) + ".");
+                if (roles.Unreadable > 0)
+                    unknown.Add($"{roles.Unreadable} atribuição(ões) ativa(s) da entidade de serviço sem roleDefinitionId legível; nada se conclui sobre elas.");
                 break;
             default:
                 unknown.Add($"as atribuições ativas de papel da entidade de serviço ({roles.Failure}); nada se conclui sobre elas.");

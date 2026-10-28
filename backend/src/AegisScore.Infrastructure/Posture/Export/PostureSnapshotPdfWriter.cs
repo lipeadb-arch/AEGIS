@@ -40,6 +40,13 @@ public static class PostureSnapshotPdfWriter
     /// <summary>[AEGIS-NIST-JOURNEY-02] A mesma família (e o mesmo resolvedor) para o PDF de maturidade NIST.</summary>
     internal static string ReportFontFamily => FontFamily;
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] Uma geração de PDF por vez no processo. O MigraDoc/PDFsharp compartilha entre
+    /// documentos o estado de fontes e de medição do texto: gerado em paralelo, o MESMO relatório saiu com quebras de linha
+    /// diferentes ("ID.AM-05" partido em "ID.AM-" / "05"); em sequência, sai sempre igual. Os dois escritores usam esta trava.
+    /// </summary>
+    internal static readonly object RenderGate = new();
+
     private static readonly string[] NistFunctionOrder = { "GV", "ID", "PR", "DE", "RS", "RC" };
 
     private static readonly Dictionary<string, string> NistFunctionName = new(StringComparer.Ordinal)
@@ -49,6 +56,11 @@ public static class PostureSnapshotPdfWriter
     };
 
     public static byte[] Write(PostureSnapshot s)
+    {
+        lock (RenderGate) return Render(s);
+    }
+
+    private static byte[] Render(PostureSnapshot s)
     {
         var doc = new Document();
         doc.Info.Title = "Relatório Executivo de Postura";

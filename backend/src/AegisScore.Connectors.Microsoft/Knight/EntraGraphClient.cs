@@ -184,6 +184,15 @@ public interface IEntraGraphClient
     Task<string> AcquireTokenAsync(IMicrosoftGraphCredentials config, CancellationToken ct);
     IAsyncEnumerable<JsonElement> GetPagedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
     Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-TEAMS-FABRIC-ACCESS-01] GET paginado como CONSULTA AVANÇADA de objetos de diretório: envia
+    /// <c>ConsistencyLevel: eventual</c> em todas as páginas (a URL traz <c>$count=true</c>), como a documentação exige para
+    /// cast OData, <c>$search</c>, <c>$filter</c> e <c>$orderby</c> nessas relações. Um cliente que não envia o cabeçalho
+    /// recusa em vez de fingir cumprir o contrato — e o chamador trata a recusa como "não verificável".
+    /// </summary>
+    IAsyncEnumerable<JsonElement> GetPagedAdvancedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        throw new NotSupportedException("este cliente do Microsoft Graph não envia consultas avançadas");
 }
 
 /// <inheritdoc cref="IEntraGraphClient"/>
@@ -260,8 +269,16 @@ public sealed class EntraGraphClient : IEntraGraphClient
             endpointPath: "/oauth2/v2.0/token");
     }
 
-    public async IAsyncEnumerable<JsonElement> GetPagedAsync(
-        string token, IMicrosoftGraphCredentials config, string relativeUrl, [EnumeratorCancellation] CancellationToken ct)
+    public IAsyncEnumerable<JsonElement> GetPagedAsync(
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        PagedAsync(token, relativeUrl, advanced: false, ct);
+
+    public IAsyncEnumerable<JsonElement> GetPagedAdvancedAsync(
+        string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct) =>
+        PagedAsync(token, relativeUrl, advanced: true, ct);
+
+    private async IAsyncEnumerable<JsonElement> PagedAsync(
+        string token, string relativeUrl, bool advanced, [EnumeratorCancellation] CancellationToken ct)
     {
         var next = BuildGraphUrl(relativeUrl);
         var pages = 0;
@@ -272,7 +289,7 @@ public sealed class EntraGraphClient : IEntraGraphClient
                     endpointPath: PathOf(next));
 
             ValidateGraphUrl(next!);
-            var body = await SendGetAsync(token, next!, ct);
+            var body = await SendGetAsync(token, next!, ct, advanced);
             pages++;
 
             var pageItems = new List<JsonElement>();
@@ -338,11 +355,12 @@ public sealed class EntraGraphClient : IEntraGraphClient
         }
     }
 
-    private async Task<string> SendGetAsync(string token, string url, CancellationToken ct)
+    private async Task<string> SendGetAsync(string token, string url, CancellationToken ct, bool advanced = false)
     {
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        if (advanced) req.Headers.Add("ConsistencyLevel", "eventual");
         using var resp = await _http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (resp.StatusCode != HttpStatusCode.OK)

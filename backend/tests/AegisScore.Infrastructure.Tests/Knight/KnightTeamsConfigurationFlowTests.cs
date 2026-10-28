@@ -572,14 +572,16 @@ public sealed class KnightTeamsConfigurationFlowTests : IDisposable
         client.Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
         client.NotEvaluatedReason.Should().Contain("Autorização recusada no comando").And.Contain("HTTP 403")
             .And.Contain("Verificado: ").And.Contain("não declara nenhum papel de diretório do Teams")
-            .And.Contain("Ação necessária: atribuir um papel de diretório do Teams à entidade de serviço da aplicação");
+            .And.Contain("Não verificável: ").And.Contain("a ausência do papel no token não comprova ausência de atribuição")
+            .And.Contain("Nenhuma ação específica é demonstrada pela evidência disponível.");
+        client.NotEvaluatedReason.Should().NotContain("atribuir um papel", "sem a leitura das atribuições, nenhuma concessão é demonstrada");
         run.Indicators.Single(i => i.IndicatorId == "AK-TEAMS-007").NotEvaluatedReason
             .Should().Contain("não é possível determinar qual modelo governa o acesso a aplicativos");
 
         var entity = await db.KnightAssessmentRuns.AsNoTracking().SingleAsync(r => r.Id == run.Id);
         var persisted = KnightCapabilitiesJson.Deserialize(entity.CapabilitiesJson);
         persisted.Single(c => c.Capability == KnightCapability.TeamsClientConfiguration).Detail
-            .Should().Contain("Ação necessária: atribuir um papel de diretório do Teams");
+            .Should().Contain("a ausência do papel no token não comprova ausência de atribuição");
 
         var published = await PostureFor(db, TenantA).PublishAsync(PostureSnapshotType.Knight, KnightSourceType.MicrosoftTeams, run.Id);
         var exporter = new PostureSnapshotExporter(db);

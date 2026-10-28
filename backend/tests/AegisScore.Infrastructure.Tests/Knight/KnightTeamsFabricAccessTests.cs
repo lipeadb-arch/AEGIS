@@ -217,9 +217,11 @@ public sealed class KnightTeamsFabricAccessTests
         var diagnosis = await KnightAccessDiagnostics.TeamsAsync(TeamsConfig(), tokens, graph, CancellationToken.None);
 
         diagnosis.Verified.Should().Contain(v => v.Contains("não declara nenhum papel de diretório do Teams"))
-            .And.Contain(v => v.Contains("não tem nenhuma atribuição ativa de papel de diretório (leitura completa)"))
+            .And.Contain(v => v.Contains("não tem nenhuma atribuição ativa direta de papel de diretório (leitura completa)"))
             .And.Contain(v => v.Contains("Organization.Read.All (exigida pela documentação do módulo para todos os comandos) consta"));
         diagnosis.Actions.Should().ContainSingle(a => a.StartsWith("atribuir um papel de diretório do Teams à entidade de serviço da aplicação (não à conta do operador)"));
+        diagnosis.Actions.Should().NotContain(a => a.Contains("Leitor do Teams"), "a eficácia do Leitor do Teams não é ação demonstrada");
+        diagnosis.NotVerifiable.Should().Contain(u => u.StartsWith("qual papel basta para os comandos Get-Cs*"));
     }
 
     [Fact]
@@ -293,7 +295,7 @@ public sealed class KnightTeamsFabricAccessTests
         var cap = result.Capabilities.Single();
         cap.Outcome.Should().Be(KnightCapabilityOutcome.InsufficientPermission);
         cap.Detail.Should().StartWith("Microsoft Fabric (Power BI): Autorização recusada para esta leitura. HTTP 403 · código: InsufficientScopes · endpoint: /v1/admin/tenantsettings");
-        cap.Detail.Should().Contain("token de API do Microsoft Fabric emitido para a aplicação e o locatário configurados, para o recurso esperado")
+        cap.Detail.Should().Contain("token de API do Microsoft Fabric: o recurso, a aplicação e o locatário conferem com o pedido e com o conector")
             .And.Contain("permissões de aplicativo do serviço Power BI/Fabric com consentimento (Tenant.Read.All)")
             .And.Contain("Ação necessária: remover essas permissões de aplicativo do Power BI/Fabric da aplicação")
             .And.Contain("pertence a 1 grupo(s) de segurança")
@@ -397,9 +399,139 @@ public sealed class KnightTeamsFabricAccessTests
             .And.Contain("Verificado: ").And.Contain("Ação necessária: atribuir um papel de diretório do Teams à entidade de serviço");
     }
 
+    // =====================================================================================================
+    //  7. Revisão do #102: contrato da consulta de grupos, leitura interpretável × insuficiente, papel sem
+    //     evidência e claims ausentes
+    // =====================================================================================================
+
+    [Fact]
+    public async Task GruposDoFabric_RequisicaoEmitida_CumpreOContratoDoCastOData_EmTodasAsPaginas()
+    {
+        var handler = new GraphWireHandler();
+
+        var diagnosis = await KnightAccessDiagnostics.FabricAsync(FabricConfig(), Jwt("https://api.fabric.microsoft.com"),
+            new EntraGraphClient(new HttpClient(handler)), CancellationToken.None);
+
+        // A documentação do transitiveMemberOf: com cast OData, o cabeçalho ConsistencyLevel: eventual e $count=true são obrigatórios.
+        var groups = handler.Requests.Where(r => r.Url.AbsolutePath.Contains("/transitiveMemberOf/", StringComparison.Ordinal)).ToList();
+        groups.Should().HaveCount(2, "a leitura segue o @odata.nextLink até a última página");
+        groups[0].Url.AbsolutePath.Should().Be($"/v1.0/servicePrincipals/{SpObjectId}/transitiveMemberOf/microsoft.graph.group");
+        Uri.UnescapeDataString(groups[0].Url.Query).Should().Contain("$count=true").And.Contain("$select=id,securityEnabled");
+        groups.Should().OnlyContain(r => r.ConsistencyLevel == "eventual", "o cabeçalho acompanha também a página seguinte");
+        diagnosis.Verified.Should().Contain(v => v.Contains("pertence a 1 grupo(s) de segurança"));
+    }
+
+    [Fact]
+    public async Task GruposDoFabric_SecurityEnabledAusenteOuNulo_NaoComprovaAusencia()
+    {
+        var graph = new RoutedGraph().Sp().Route($"servicePrincipals/{SpObjectId}/transitiveMemberOf",
+            body: """[{"id":"g1"},{"id":"g2","securityEnabled":null},{"id":"g3","securityEnabled":"true"},{"id":"g4","securityEnabled":false}]""");
+
+        var diagnosis = await KnightAccessDiagnostics.FabricAsync(FabricConfig(), Jwt("https://api.fabric.microsoft.com"), graph, CancellationToken.None);
+
+        diagnosis.Verified.Should().NotContain(v => v.Contains("não pertence a nenhum grupo de segurança"));
+        diagnosis.Actions.Should().BeEmpty("três grupos sem securityEnabled legível: a falta de grupo de segurança não está comprovada");
+        diagnosis.NotVerifiable.Should().Contain(u => u.Contains("3 grupo(s)") && u.Contains("securityEnabled"));
+        graph.AdvancedUrls.Should().ContainSingle(u => u.Contains("/transitiveMemberOf/microsoft.graph.group?$count=true"));
+    }
+
+    [Fact]
+    public async Task AtribuicaoComPapelIlegivel_NaoComprovaAusencia_NemPedeConcessao()
+    {
+        var graph = new RoutedGraph().Sp().Route("roleManagement/directory/roleAssignments",
+            body: """[{"roleDefinitionId":null,"directoryScopeId":"/"}]""");
+        var tokens = new TeamsAdminCredentials(TenantGuid, GraphToken("Organization.Read.All"), TeamsToken());
+
+        var diagnosis = await KnightAccessDiagnostics.TeamsAsync(TeamsConfig(), tokens, graph, CancellationToken.None);
+
+        diagnosis.Verified.Should().NotContain(v => v.Contains("não tem nenhuma atribuição"));
+        diagnosis.NotVerifiable.Should().Contain(u => u.Contains("1 atribuição(ões)") && u.Contains("roleDefinitionId"));
+        diagnosis.Actions.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SemPapelNoToken_ConsultaDeAtribuicoesRecusada_NenhumaConcessaoComoNecessaria()
+    {
+        var graph = new RoutedGraph().Sp().Route("roleManagement/directory/roleAssignments", forbid: true);
+        var tokens = new TeamsAdminCredentials(TenantGuid, GraphToken("Organization.Read.All"), TeamsToken());
+
+        var diagnosis = await KnightAccessDiagnostics.TeamsAsync(TeamsConfig(), tokens, graph, CancellationToken.None);
+
+        diagnosis.Verified.Should().Contain(v => v.Contains("não declara nenhum papel de diretório do Teams"));
+        diagnosis.NotVerifiable.Should().Contain(u => u.Contains("atribuições ativas de papel da entidade de serviço (HTTP 403 · Authorization_RequestDenied)"))
+            .And.Contain(u => u.Contains("ausência do papel no token não comprova ausência de atribuição"));
+        diagnosis.Actions.Should().BeEmpty("a ausência no token, sozinha, não demonstra que falta uma atribuição");
+        diagnosis.Text.Should().NotContain("atribuir um papel");
+
+        var semConsulta = await KnightAccessDiagnostics.TeamsAsync(TeamsConfig(), tokens, graph: null, CancellationToken.None);
+        semConsulta.Actions.Should().BeEmpty("sem consulta, nada se conclui sobre as atribuições");
+        semConsulta.NotVerifiable.Should().Contain(u => u.Contains("ausência do papel no token não comprova ausência de atribuição"));
+    }
+
+    [Fact]
+    public async Task ClaimsAusentes_NaoConfirmamIdentidade_CadaCampoNaoVerificavel()
+    {
+        var tokens = new TeamsAdminCredentials(TenantGuid, Jwt("https://graph.microsoft.com", tid: null, appid: null,
+            roles: new[] { "Organization.Read.All" }), Jwt("", wids: Array.Empty<string>()));
+
+        var diagnosis = await KnightAccessDiagnostics.TeamsAsync(TeamsConfig(), tokens, graph: null, CancellationToken.None);
+
+        diagnosis.Verified.Should().NotContain(v => v.Contains("locatário configurados"), "ausência de divergência não é correspondência comprovada");
+        diagnosis.Verified.Should().Contain(v => v.StartsWith("token de Microsoft Graph: o recurso confere"));
+        diagnosis.NotVerifiable.Should().Contain(u => u.StartsWith("no token de Microsoft Graph, a aplicação"))
+            .And.Contain(u => u.StartsWith("no token de Microsoft Graph, o locatário"))
+            .And.Contain(u => u.StartsWith("no token de administração do Teams") && u.Contains("o recurso"));
+        diagnosis.Actions.Should().NotContain(a => a.Contains("conferir o locatário"), "nenhuma divergência foi comprovada");
+    }
+
+    [Fact]
+    public async Task LocatarioConfiguradoPorDominio_SemCorrespondenciaDemonstrada()
+    {
+        var cfg = new KnightMicrosoftServiceConfiguration(KnightSourceType.MicrosoftFabric, "demo.example.com", AppGuid, "secret");
+
+        var diagnosis = await KnightAccessDiagnostics.FabricAsync(cfg, Jwt("https://api.fabric.microsoft.com"), graph: null, CancellationToken.None);
+
+        diagnosis.Verified.Should().NotContain(v => v.Contains("locatário configurados"));
+        diagnosis.Verified.Should().Contain(v => v.StartsWith("token de API do Microsoft Fabric: o recurso e a aplicação conferem"));
+        diagnosis.NotVerifiable.Should().Contain(u => u.StartsWith("no token de API do Microsoft Fabric, o locatário") && u.Contains("domínio"));
+    }
+
     // ---- Duplas de teste ------------------------------------------------------------------------------
 
     private static KnightMicrosoftServiceConfiguration FabricConfig() => new(KnightSourceType.MicrosoftFabric, TenantGuid, AppGuid, "secret");
+
+    /// <summary>
+    /// Microsoft Graph sintético no FIO: o <see cref="EntraGraphClient"/> real emite as requisições, e o handler registra URL e
+    /// cabeçalho ConsistencyLevel de cada uma. Grupos em duas páginas encadeadas por @odata.nextLink.
+    /// </summary>
+    private sealed class GraphWireHandler : HttpMessageHandler
+    {
+        private static readonly string NextLink =
+            $"https://graph.microsoft.com/v1.0/servicePrincipals/{SpObjectId}/transitiveMemberOf/microsoft.graph.group?$count=true&$select=id,securityEnabled&$skiptoken=p2";
+
+        public List<(Uri Url, string? ConsistencyLevel)> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var url = request.RequestUri!;
+            if (request.Method == HttpMethod.Post)
+                return Ok(JsonSerializer.Serialize(new { access_token = GraphToken(), token_type = "Bearer" }));
+            Requests.Add((url, request.Headers.TryGetValues("ConsistencyLevel", out var v) ? string.Join(",", v) : null));
+            var path = Uri.UnescapeDataString(url.AbsolutePath);
+            if (path == $"/v1.0/servicePrincipals(appId='{AppGuid}')") return Ok($$"""{"id":"{{SpObjectId}}"}""");
+            if (path == $"/v1.0/servicePrincipals/{SpObjectId}/transitiveMemberOf/microsoft.graph.group")
+                return Ok(url.Query.Contains("skiptoken=p2", StringComparison.Ordinal)
+                    ? """{"value":[{"id":"g2","securityEnabled":true}]}"""
+                    : $$"""{"@odata.count":2,"value":[{"id":"g1","securityEnabled":false}],"@odata.nextLink":"{{NextLink}}"}""");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)
+            {
+                Content = new StringContent("""{"error":{"code":"Request_ResourceNotFound"}}"""),
+            });
+        }
+
+        private static Task<HttpResponseMessage> Ok(string body) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+    }
 
     private static ConnectorConfig ConnectorConfig() => new()
     {
@@ -503,6 +635,15 @@ public sealed class KnightTeamsFabricAccessTests
             var (body, _) = Resolve(relativeUrl);
             using var doc = JsonDocument.Parse(body ?? "[]");
             foreach (var e in doc.RootElement.EnumerateArray()) yield return e.Clone();
+        }
+
+        /// <summary>URLs pedidas como consulta avançada (com ConsistencyLevel: eventual).</summary>
+        public List<string> AdvancedUrls { get; } = new();
+
+        public IAsyncEnumerable<JsonElement> GetPagedAdvancedAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct)
+        {
+            AdvancedUrls.Add(relativeUrl);
+            return GetPagedAsync(token, config, relativeUrl, ct);
         }
 
         public Task<JsonElement> GetJsonAsync(string token, IMicrosoftGraphCredentials config, string relativeUrl, CancellationToken ct)
