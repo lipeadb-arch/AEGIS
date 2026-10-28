@@ -16,6 +16,9 @@ namespace AegisScore.Application.Knight.Configuration;
 //   • só política HABILITADA impõe (somente relatório e desabilitada são listadas, nunca contadas);
 //   • exigência "para todos os usuários" exige alvo declarado em todos os usuários — política dirigida a grupo
 //     depende de pertencimento que esta entrega não coleta e fica não resolvida, nunca aprovada;
+//     [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] com o pertencimento lido, o alcance da política dirigida a grupo (e das exclusões por
+//     grupo) é conferido conta a conta sobre a enumeração completa das contas habilitadas; leitura incompleta continua não
+//     resolvida, e nenhum outro critério da exigência é relaxado;
 //   • exclusão explícita não é irregular por si, mas não comprova cobertura: sem outra política que cubra a
 //     exceção, o controle fica não avaliado, com as exceções nomeadas;
 //   • exigência para administradores é lida MEMBRO A MEMBRO sobre os papéis privilegiados ativos.
@@ -39,7 +42,8 @@ public enum CaCoverageState
     /// <summary>Cumpre para todos, mas com exclusões que nenhuma outra política cobre — não afirmado nem negado.</summary>
     OpenExceptions = 1,
 
-    /// <summary>Só política dirigida a grupo(s) cumpre a exigência — pertencimento não coletado.</summary>
+    /// <summary>Só política dirigida a grupo(s) cumpre a exigência e o alcance não pôde ser comprovado (pertencimento não coletado
+    /// ou não lido por completo, enumeração das contas ausente ou vazia).</summary>
     Unresolved = 2,
 
     /// <summary>Nenhuma política habilitada cumpre a exigência.</summary>
@@ -55,7 +59,9 @@ public sealed record CaRequirementEvaluation(
     IReadOnlyList<ConditionalAccessPolicyReading> Satisfying,
     IReadOnlyList<(ConditionalAccessPolicyReading Policy, string Why)> NotCounting,
     IReadOnlyList<string> OpenExceptions,
-    string? Reason);
+    string? Reason,
+    // [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Alcance conta a conta das políticas sem alvo declarado em todos os usuários.
+    IReadOnlyDictionary<string, string>? Reach = null);
 
 /// <summary>Resultado da leitura de UMA exigência para os papéis privilegiados, papel a papel.</summary>
 public sealed record CaPrivilegedEvaluation(
@@ -103,6 +109,13 @@ public static class ConditionalAccessRequirements
         p.BuiltInControls.Contains(control, Ci);
 
     /// <summary>Lê a exigência para TODOS os usuários.</summary>
+    /// <remarks>
+    /// [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Só políticas que impõem a exigência (habilitadas, sem lacuna de aplicação, condição, sessão
+    /// ou controle) contam. Com o pertencimento lido: a exclusão por grupo lido por completo vira as contas excluídas, cobertas
+    /// ou não por outra dessas políticas; e, sem política com alvo declarado em todos os usuários, as dirigidas a grupo (somadas às
+    /// demais) são conferidas conta a conta sobre a enumeração completa das contas habilitadas (<see cref="ConditionalAccessAnalyzer.CoverageByAccount"/>).
+    /// Sem o pertencimento coletado (aquisições anteriores), a leitura de antes, com o texto de então.
+    /// </remarks>
     public static CaRequirementEvaluation ForAllUsers(
         KnightDirectoryConfiguration? directory, CaRequirement requirement, string? notCollectedReason,
         Func<string, string>? memberLabel = null)
@@ -118,33 +131,41 @@ public static class ConditionalAccessRequirements
                 "A coleta desta avaliação não registrou as condições e os controles de sessão das políticas (coleta anterior à ampliação do catálogo).");
 
         var label = memberLabel ?? (id => id);
-        var readings = policies.OrderBy(p => p.Id, StringComparer.Ordinal).Select(Read).ToList();
+        var scope = new CaScope(directory!);
+        var candidates = policies.OrderBy(p => p.Id, StringComparer.Ordinal).Select(Read).Where(requirement.IsCandidate)
+            .Select(r => (Reading: r, Gap: r.IsEnforced ? requirement.Gap(r) : StateLabel(r.Policy.State)))
+            .ToList();
+        var full = candidates.Where(c => c.Gap is null).Select(c => c.Reading).ToList();
+        var forAll = full.Where(r => r.TargetsAllUsers).ToList();
+        var groupScoped = full.Where(r => !r.TargetsAllUsers && r.Policy.IncludeGroups.Count > 0).ToList();
+        var scoped = forAll.Count == 0 && groupScoped.Count > 0 && scope.Membership.Collected
+            ? CoverageByAccount(full, scope)
+            : null;
+        var counted = scoped?.Verdict == ScopedVerdict.Covered ? scoped.CoveringPolicyIds : Array.Empty<string>();
+
         var satisfying = new List<ConditionalAccessPolicyReading>();
         var notCounting = new List<(ConditionalAccessPolicyReading, string)>();
-        var groupScoped = new List<ConditionalAccessPolicyReading>();
-
-        foreach (var r in readings.Where(requirement.IsCandidate))
+        foreach (var (r, gap) in candidates)
         {
-            var gap = requirement.Gap(r);
-            if (!r.IsEnforced) notCounting.Add((r, StateLabel(r.Policy.State)));
-            else if (gap is not null) notCounting.Add((r, gap));
-            else if (r.TargetsAllUsers) satisfying.Add(r);
-            else if (r.Policy.IncludeGroups.Count > 0) { groupScoped.Add(r); notCounting.Add((r, "dirigida a grupo(s) cujo pertencimento não é coletado")); }
-            else notCounting.Add((r, "o alvo não inclui todos os usuários"));
+            if (gap is not null) notCounting.Add((r, gap));
+            else if (r.TargetsAllUsers || counted.Contains(r.Policy.Id)) satisfying.Add(r);
+            else if (r.Policy.IncludeGroups.Count == 0) notCounting.Add((r, "o alvo não inclui todos os usuários"));
+            else if (!scope.Membership.Collected) notCounting.Add((r, "dirigida a grupo(s) cujo pertencimento não é coletado"));
+            else notCounting.Add((r, scoped is not null && scoped.Reach.TryGetValue(r.Policy.Id, out var reach)
+                ? reach
+                : "dirigida a " + scope.Target(r.Policy) + ", sem alvo declarado em todos os usuários"));
         }
 
-        if (satisfying.Count > 0)
+        var names = string.Join(", ", groupScoped.Select(r => "“" + Name(r.Policy) + "”"));
+        if (forAll.Count > 0)
         {
-            var clean = satisfying.FirstOrDefault(r => !r.HasExclusions);
-            if (clean is not null)
+            if (forAll.Any(r => !r.HasExclusions))
                 return new(CaCoverageState.Satisfied, satisfying, notCounting, Array.Empty<string>(), null);
 
-            var rolesOf = RolesOf(directory!.PrivilegedRoles);
-            var rolesKnown = directory.PrivilegedRoles is not null;
             List<string>? smallest = null;
-            foreach (var r in satisfying)
+            foreach (var r in forAll)
             {
-                var open = OpenExceptions(r, satisfying, rolesOf, rolesKnown, label);
+                var open = OpenExceptions(r, full, scope, label);
                 if (open.Count == 0)
                     return new(CaCoverageState.Satisfied, satisfying, notCounting, Array.Empty<string>(), null);
                 if (smallest is null || open.Count < smallest.Count) smallest = open;
@@ -157,16 +178,40 @@ public static class ConditionalAccessRequirements
                 + "dessas contas — o controle não é aprovado nem reprovado.");
         }
 
-        if (groupScoped.Count > 0)
-            return new(CaCoverageState.Unresolved, satisfying, notCounting, Array.Empty<string>(),
-                $"Só política dirigida a grupo(s) aplica {requirement.Label} ("
-                + string.Join(", ", groupScoped.Select(r => "“" + Name(r.Policy) + "”"))
-                + "); o pertencimento dos grupos não é coletado nesta entrega, então não é possível afirmar que ela alcança todos os usuários.");
+        if (groupScoped.Count == 0)
+            return new(CaCoverageState.NotSatisfied, satisfying, notCounting, Array.Empty<string>(), null);
 
-        return new(CaCoverageState.NotSatisfied, satisfying, notCounting, Array.Empty<string>(), null);
+        if (scoped is null)
+            return new(CaCoverageState.Unresolved, satisfying, notCounting, Array.Empty<string>(),
+                $"Só política dirigida a grupo(s) aplica {requirement.Label} ({names}); o pertencimento dos grupos não é coletado "
+                + "nesta entrega, então não é possível afirmar que ela alcança todos os usuários.");
+
+        return scoped.Verdict switch
+        {
+            ScopedVerdict.Covered => new(CaCoverageState.Satisfied, satisfying, notCounting, Array.Empty<string>(), null, scoped.Reach),
+            ScopedVerdict.Gap or ScopedVerdict.NoneReached => new(CaCoverageState.NotSatisfied, satisfying, notCounting, Array.Empty<string>(),
+                $"Só política dirigida a grupo(s) aplica {requirement.Label} ({names}): {scoped.Detail}.", scoped.Reach),
+            ScopedVerdict.Exceptions => new(CaCoverageState.OpenExceptions, satisfying, notCounting,
+                new[]
+                {
+                    Plural(scoped.ExceptedAccounts.Count, "conta habilitada excluída explicitamente", "contas habilitadas excluídas explicitamente")
+                    + ": " + string.Join(", ", scoped.ExceptedAccounts.Take(10).Select(label)) + (scoped.ExceptedAccounts.Count > 10 ? "…" : ""),
+                },
+                $"Só política dirigida a grupo(s) aplica {requirement.Label} ({names}): {scoped.Detail}. Uma exclusão não é irregular "
+                + "por si, mas não comprova a proteção dessas contas — o controle não é aprovado nem reprovado.", scoped.Reach),
+            _ => new(CaCoverageState.Unresolved, satisfying, notCounting, Array.Empty<string>(),
+                $"Só política dirigida a grupo(s) aplica {requirement.Label} ({names}); {scoped.Detail} — não é possível afirmar nem "
+                + "negar que ela alcança todos os usuários.", scoped.Reach),
+        };
     }
 
     /// <summary>Lê a exigência para os membros dos papéis privilegiados ativos (membro a membro).</summary>
+    /// <remarks>
+    /// [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] A cobertura de cada papel é a MESMA da MFA administrativa
+    /// (<see cref="ConditionalAccessAnalyzer.RoleCoverage"/>): membros diretos e quem detém o papel via grupo (pelo pertencimento
+    /// lido), inclusão e exclusão por grupo resolvidas pelo pertencimento, identidades de aplicação fora da exigência de usuários.
+    /// A política dirigida ao papel não comprova alcançar quem o detém por grupo.
+    /// </remarks>
     public static CaPrivilegedEvaluation ForPrivilegedRoles(
         KnightDirectoryConfiguration? directory, CaRequirement requirement, string? notCollectedReason)
     {
@@ -195,14 +240,12 @@ public static class ConditionalAccessRequirements
             else full.Add(r);
         }
 
-        var rolesOf = RolesOf(directory.PrivilegedRoles);
-        var coverages = new List<RoleMfaCoverage>();
-        foreach (var role in directory.PrivilegedRoles
-                     .Where(r => r.MemberCount > 0)
-                     .OrderBy(r => r.DisplayName ?? r.TemplateId, StringComparer.OrdinalIgnoreCase))
-        {
-            coverages.Add(role.UserMemberIds.Count == 0 ? RoleLevel(role, full) : MemberLevel(role, full, rolesOf));
-        }
+        var scope = new CaScope(directory);
+        var coverages = directory.PrivilegedRoles
+            .Where(r => r.MemberCount > 0)
+            .OrderBy(r => r.DisplayName ?? r.TemplateId, StringComparer.OrdinalIgnoreCase)
+            .Select(role => RoleCoverage(role, full, scope.RolesOf, scope.GroupRolesOf, scope.Membership, Array.Empty<string>()))
+            .ToList();
 
         var uncovered = coverages.Count(c => c.State == RoleMfaCoverageState.NotCovered);
         var unresolved = coverages.Count(c => c.State == RoleMfaCoverageState.Unresolved);
@@ -210,105 +253,12 @@ public static class ConditionalAccessRequirements
         if (uncovered > 0) return new(CaCoverageState.NotSatisfied, coverages, full, notCounting, null);
         if (unresolved > 0)
             return new(CaCoverageState.Unresolved, coverages, full, notCounting,
-                $"{Plural(unresolved, "papel privilegiado depende", "papéis privilegiados dependem")} de política dirigida a grupos, "
-                + "ou de exclusão de grupos, cujo pertencimento não é coletado — a cobertura não pode ser afirmada nem negada.");
+                UnresolvedRolesReason(unresolved, scope.Membership.Collected));
         if (excepted > 0)
             return new(CaCoverageState.OpenExceptions, coverages, full, notCounting,
                 $"{Plural(excepted, "papel privilegiado tem", "papéis privilegiados têm")} membro(s) excluído(s) explicitamente das políticas "
                 + $"que aplicam {requirement.Label}, sem outra política que os cubra. Uma exclusão não é irregular por si, mas não "
                 + "comprova a proteção dessas contas — o controle não é aprovado nem reprovado; as contas aparecem nomeadas na evidência.");
         return new(CaCoverageState.Satisfied, coverages, full, notCounting, null);
-    }
-
-    // ---- Auxiliares ----------------------------------------------------------------------------------
-
-    private static Dictionary<string, IReadOnlyCollection<string>> RolesOf(IReadOnlyList<DirectoryRoleConfiguration>? roles) =>
-        (roles ?? Array.Empty<DirectoryRoleConfiguration>())
-            .SelectMany(role => role.UserMemberIds.Select(m => (m, role.TemplateId)))
-            .GroupBy(x => x.m, Ci)
-            .ToDictionary(g => g.Key, g => (IReadOnlyCollection<string>)g.Select(x => x.TemplateId).ToHashSet(Ci), Ci);
-
-    private static List<string> OpenExceptions(
-        ConditionalAccessPolicyReading policy, IReadOnlyList<ConditionalAccessPolicyReading> satisfying,
-        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf, bool rolesKnown, Func<string, string> label)
-    {
-        var others = satisfying.Where(o => !ReferenceEquals(o, policy)).ToList();
-        var p = policy.Policy;
-        bool CoversUser(ConditionalAccessPolicyReading o, string u) =>
-            (rolesKnown || o.Policy.ExcludeRoles.Count == 0)
-            && ReachOf(o, u, rolesOf.TryGetValue(u, out var held) ? held : Array.Empty<string>()) == Reach.Applies;
-
-        var users = p.ExcludeUsers.Where(u => !u.Equals("GuestsOrExternalUsers", StringComparison.OrdinalIgnoreCase))
-            .Where(u => !others.Any(o => CoversUser(o, u))).ToList();
-        var groups = p.ExcludeGroups
-            .Where(g => !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || o.Policy.IncludeGroups.Contains(g, Ci)))).ToList();
-        var roles = p.ExcludeRoles
-            .Where(role => !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || o.Policy.IncludeRoles.Contains(role, Ci)))).ToList();
-        var guests = ExcludesGuests(p) && !others.Any(o => !o.HasExclusions && (o.TargetsAllUsers || IncludesGuests(o.Policy)));
-
-        var open = new List<string>();
-        if (users.Count > 0)
-            open.Add(Plural(users.Count, "usuário excluído nominalmente", "usuários excluídos nominalmente") + ": "
-                + string.Join(", ", users.Take(10).Select(label)) + (users.Count > 10 ? "…" : ""));
-        if (groups.Count > 0) open.Add(Plural(groups.Count, "grupo excluído", "grupos excluídos") + " (pertencimento não coletado)");
-        if (roles.Count > 0) open.Add(Plural(roles.Count, "papel excluído", "papéis excluídos"));
-        if (guests) open.Add("convidados e usuários externos");
-        return open;
-    }
-
-    private static RoleMfaCoverage MemberLevel(
-        DirectoryRoleConfiguration role, IReadOnlyList<ConditionalAccessPolicyReading> full,
-        IReadOnlyDictionary<string, IReadOnlyCollection<string>> rolesOf)
-    {
-        var members = new List<MemberMfaCoverage>();
-        var covering = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var memberId in role.UserMemberIds.Distinct(Ci).OrderBy(m => m, StringComparer.Ordinal))
-        {
-            var userRoles = rolesOf.TryGetValue(memberId, out var held) ? held : new[] { role.TemplateId };
-            var applies = new List<string>();
-            var excludes = new List<string>();
-            var unknown = new List<string>();
-            foreach (var r in full)
-            {
-                switch (ReachOf(r, memberId, userRoles))
-                {
-                    case Reach.Applies: applies.Add(r.Policy.Id); break;
-                    case Reach.Excluded: excludes.Add(r.Policy.Id); break;
-                    case Reach.Unknown: unknown.Add(r.Policy.Id); break;
-                }
-            }
-            foreach (var id in applies) covering.Add(id);
-            members.Add(applies.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Covered, applies)
-                : unknown.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Unresolved, unknown)
-                : excludes.Count > 0 ? new MemberMfaCoverage(memberId, MemberMfaCoverageState.Excepted, excludes)
-                : new MemberMfaCoverage(memberId, MemberMfaCoverageState.NotTargeted, Array.Empty<string>()));
-        }
-
-        int Count(MemberMfaCoverageState s) => members.Count(m => m.State == s);
-        var state = Count(MemberMfaCoverageState.NotTargeted) > 0 ? RoleMfaCoverageState.NotCovered
-            : Count(MemberMfaCoverageState.Covered) == 0 && Count(MemberMfaCoverageState.Unresolved) == 0 ? RoleMfaCoverageState.NotCovered
-            : Count(MemberMfaCoverageState.Unresolved) > 0 ? RoleMfaCoverageState.Unresolved
-            : Count(MemberMfaCoverageState.Excepted) > 0 ? RoleMfaCoverageState.CoveredWithExceptions
-            : RoleMfaCoverageState.Covered;
-        return new RoleMfaCoverage(role, state, covering.ToList(), members, new List<string>());
-    }
-
-    private static RoleMfaCoverage RoleLevel(DirectoryRoleConfiguration role, IReadOnlyList<ConditionalAccessPolicyReading> full)
-    {
-        var covering = new List<string>();
-        var unknown = new List<string>();
-        foreach (var r in full)
-        {
-            var p = r.Policy;
-            if (p.ExcludeRoles.Contains(role.TemplateId, Ci)) continue;
-            var targeted = r.TargetsAllUsers || p.IncludeRoles.Contains(role.TemplateId, Ci);
-            if (targeted && p.ExcludeGroups.Count == 0 && !ExcludesGuests(p)) covering.Add(p.Id);
-            else if (targeted || p.IncludeGroups.Count > 0) unknown.Add(p.Id);
-        }
-        var state = covering.Count > 0 ? RoleMfaCoverageState.Covered
-            : unknown.Count > 0 ? RoleMfaCoverageState.Unresolved
-            : RoleMfaCoverageState.NotCovered;
-        return new RoleMfaCoverage(role, state, state == RoleMfaCoverageState.Covered ? covering : Array.Empty<string>(),
-            Array.Empty<MemberMfaCoverage>(), new List<string>());
     }
 }
