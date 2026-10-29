@@ -223,9 +223,9 @@ internal sealed class ExchangeCollectionScenario : IExchangeAdminReader
                 }),
 
             v == Variant.MailboxesDenied
-                ? Failed("ExchangeMailboxes", "Get-Mailbox", "InsufficientPermission",
+                ? Failed("ExchangeMailboxes", "Get-EXOMailbox", "InsufficientPermission",
                     "AuthorizationFailed/UnauthorizedAccessException")
-                : Read("ExchangeMailboxes", "Get-Mailbox", Mailboxes(v, ok), truncated),
+                : Read("ExchangeMailboxes", "Get-EXOMailbox", Mailboxes(v, ok), truncated),
 
             Read("ExchangeMailboxSignIn", "Get-User", Accounts(v, ok), truncated),
 
@@ -518,7 +518,7 @@ internal sealed class ExchangeCollectionScenario : IExchangeAdminReader
         ("ExchangeRoleAssignmentPolicies", "Get-RoleAssignmentPolicy"),
         ("ExchangeExternalSenderIdentification", "Get-ExternalInOutlook"),
         ("ExchangeOutboundSpamFilterPolicies", "Get-HostedOutboundSpamFilterPolicy"),
-        ("ExchangeMailboxes", "Get-Mailbox"),
+        ("ExchangeMailboxes", "Get-EXOMailbox"),
         ("ExchangeMailboxSignIn", "Get-User"),
         ("ExchangeCasMailboxes", "Get-CASMailbox"),
         ("ExchangeAuditBypassAssociations", "Get-MailboxAuditBypassAssociation"),

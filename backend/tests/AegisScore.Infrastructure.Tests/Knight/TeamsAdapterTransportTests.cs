@@ -324,8 +324,11 @@ public sealed class TeamsAdapterTransportTests
         });
         await FluentActions.Awaiting(() => reader.CheckRuntimeAsync()).Should().ThrowAsync<TeamsAdminTransportException>();
 
+        // Os diretórios de EXECUÇÃO (aegis-teams-run-*) de testes paralelos casam com o mesmo prefixo e são apagados ao fim de cada
+        // execução: entre listar e ler, um deles pode sumir. Só os de materialização interessam aqui.
         var temporarios = Directory.GetDirectories(Path.GetTempPath(), "aegis-teams-*")
-            .SelectMany(d => Directory.GetFiles(d, "teams-collect.ps1"))
+            .Where(d => !Path.GetFileName(d).StartsWith("aegis-teams-run-", StringComparison.Ordinal))
+            .SelectMany(d => { try { return Directory.GetFiles(d, "teams-collect.ps1"); } catch (DirectoryNotFoundException) { return []; } })
             .ToList();
         temporarios.Should().NotBeEmpty("o script embutido é escrito num diretório temporário próprio do processo");
 

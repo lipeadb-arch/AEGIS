@@ -305,6 +305,18 @@ test('recusa no Azure orienta conferir o papel sem afirmar ausência de atribui�
   ok(graph[0].guidance.includes('consentimento de administrador'), 'o Graph continua com consentimento');
 });
 
+test('interrupção por memória: causa própria, nada a conceder, e não vira falta de permissão', () => {
+  const diagnostic = {
+    stage: 'read ExchangeMailboxes', kind: 'MemoryLimit', durationMs: 4200, httpStatus: null, code: 'MemoryLimit',
+    endpoint: null, correlationId: null, serviceRequestId: null,
+  };
+  const v = limitationViews(assessment([], { capabilities: [{ capability: 'ExchangeMailboxes', outcome: 'Error', detail: null, diagnostic }] }))[0];
+  eq(v.cause, 'Interrompida por memória', 'tipo próprio, não "Erro de coleta" genérico');
+  ok(v.guidance.startsWith('Nada a conceder'), 'pressão de memória não se resolve com permissão');
+  eq(v.failureKind, 'MemoryLimit', 'o tipo sanitizado segue para a tela');
+  ok(v.technical.some((l) => l.includes('pressão de memória')), 'o detalhe técnico diz o tipo em palavras');
+});
+
 // ---- contribuição e rótulos -------------------------------------------------------------------------
 test('contribuição: peso × fator; fora da nota quando não avaliado; ausente em resposta antiga', () => {
   eq(contributionText(ind({ presentation: pres({ weight: 4, factor: 0.5, achievedPoints: 2, possiblePoints: 4 }) })),

@@ -179,7 +179,7 @@ public enum KnightCapability
     /// </summary>
     ExchangeOutboundSpamFilterPolicies = 43,
 
-    /// <summary>Enumeração das caixas de correio (<c>Get-Mailbox</c>) — compartilhadas, auditoria e encaminhamento.</summary>
+    /// <summary>Enumeração das caixas de correio (<c>Get-EXOMailbox</c>, só as propriedades usadas) — compartilhadas, auditoria e encaminhamento.</summary>
     ExchangeMailboxes = 44,
 
     /// <summary>
@@ -464,6 +464,12 @@ public enum KnightFailureKind
 
     /// <summary>Não havia o que consultar (ex.: nenhuma assinatura no escopo) — não é falha nem ausência comprovada.</summary>
     NoScope = 14,
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] O AEGIS encerrou o processo do adaptador por pressão de memória no contêiner, para preservar a
+    /// API. Não é permissão, provedor nem rede; o que foi lido antes vale, o resto não foi coletado.
+    /// </summary>
+    MemoryLimit = 15,
 }
 
 /// <summary>

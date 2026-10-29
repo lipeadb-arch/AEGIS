@@ -401,7 +401,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   { source: 'MicrosoftEntraId', label: 'Microsoft Entra ID', slug: 'entra', provider: 'Microsoft', microsoftConnector: true, consolidable: true, requirement: null },
   {
     source: 'MicrosoftTeams', label: 'Microsoft Teams', slug: 'teams', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'Exige, além da credencial acima, Organization.Read.All (Microsoft Graph, aplicativo — a Microsoft a documenta para todos os cmdlets) nenhuma permissão configurada para «Skype and Teams Tenant Admin API» e um papel de diretório do Teams atribuído a esta aplicação (é no token que a sessão o recebe). O de menor privilégio é Leitor do Teams; a tabela oficial associa ao módulo PowerShell os papéis de administração do Teams.',
+    requirement: 'A documentação da Microsoft indica, além da credencial acima: Organization.Read.All (Microsoft Graph, aplicativo, documentada para todos os cmdlets); nenhuma permissão configurada para «Skype and Teams Tenant Admin API»; e um papel de diretório do Teams atribuído a esta aplicação (é no token que a sessão o recebe). O de menor privilégio é Leitor do Teams; a tabela oficial associa ao módulo PowerShell os papéis de administração do Teams. Uma recusa não indica, sozinha, qual desses itens falta: o diagnóstico de acesso de cada coleta separa o que foi verificado do que não pôde ser.',
   },
   {
     source: 'MicrosoftExchangeOnline', label: 'Exchange Online', slug: 'exchange', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
@@ -414,7 +414,7 @@ export const KNIGHT_SOURCES: KnightSourceDescriptor[] = [
   },
   {
     source: 'MicrosoftPurview', label: 'Microsoft Purview', slug: 'purview', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
-    requirement: 'DLP e rótulos exigem Exchange.ManageAsApp na API Microsoft Exchange Online Protection (sessão do Security & Compliance).',
+    requirement: 'DLP e rótulos vêm da sessão do Security & Compliance, que a documentação da Microsoft informa não estar disponível no PowerShell 7 em Linux: no AEGIS em contêiner Linux, ficam como limitação de plataforma, sem permissão a conceder. Onde a sessão existe, ela usa Exchange.ManageAsApp na API Microsoft Exchange Online Protection.',
   },
   {
     source: 'MicrosoftSharePoint', label: 'SharePoint e OneDrive', slug: 'sharepoint', provider: 'Microsoft', microsoftConnector: true, consolidable: true,
@@ -1415,6 +1415,7 @@ const FAILURE_KIND_LABEL: Record<string, string> = {
   Command: 'comando de leitura falhou na sessão',
   Incomplete: 'leitura incompleta',
   NoScope: 'nada a consultar no escopo',
+  MemoryLimit: 'coleta interrompida pelo AEGIS por pressão de memória (não é falta de permissão)',
 };
 
 /** [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Tipo sanitizado da falha em palavras (o código cru quando o vocabulário não o conhece). */
@@ -1471,7 +1472,10 @@ export function isNotRequestedCapability(capability: string): boolean {
 /** Capacidades não coletadas → causa, controles prejudicados (não avaliados que dependem dela) e orientação. */
 export function limitationViews(a: KnightAssessment): KnightLimitationView[] {
   return problemCapabilities(a.capabilities).map((c) => {
-    const [cause, generic] = CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
+    // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Interrupção por memória é limite do ambiente de execução, não do acesso: nada a conceder.
+    const [cause, generic] = c.diagnostic?.kind === 'MemoryLimit'
+      ? ['Interrompida por memória', 'Nada a conceder: o AEGIS encerrou o processo da coleta por pressão de memória no ambiente de execução, para preservar a aplicação. As leituras concluídas antes disso foram preservadas; as demais ficam não avaliadas até uma coleta completa.']
+      : CAUSE[c.outcome] ?? ['Não coletado', 'Sincronizar novamente em Integrações.'];
     // [AEGIS-KNIGHT-COVERAGE-04] No Azure a autorização é uma atribuição de papel no escopo recusado, não consentimento.
     // [AEGIS-KNIGHT-READONLY-01] Leituras não solicitadas (exigiriam permissão que também escreve): não há o que conceder.
     // Versão preview fora do contrato: não há o que conceder — a leitura fica limitada até a Microsoft estabilizá-la.

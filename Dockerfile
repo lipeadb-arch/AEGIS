@@ -104,7 +104,7 @@ RUN set -eux; \
        Import-Module ExchangeOnlineManagement -ErrorAction Stop; \
        $m = Get-Module ExchangeOnlineManagement; \
        "ExchangeOnlineManagement=" + $m.Version.ToString(); \
-       foreach ($c in @("Connect-ExchangeOnline", "Disconnect-ExchangeOnline")) { \
+       foreach ($c in @("Connect-ExchangeOnline", "Disconnect-ExchangeOnline", "Get-EXOMailbox")) { \
          if (-not (Get-Command $c -Module ExchangeOnlineManagement -ErrorAction SilentlyContinue)) { throw ("comando ausente: " + $c) } \
        }'
 

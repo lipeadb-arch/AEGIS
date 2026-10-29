@@ -83,6 +83,31 @@ jobs:
           AEGIS_TEST_PWSH="$PWSH" dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj \
             -c Release --no-build --filter "FullyQualifiedName~PowerShellFixtureModuleTests" --logger "console;verbosity=normal"
 
+      - name: Exchange large enumeration inside a 512 MiB container (fixture module, real cgroup monitor)
+        run: |
+          set -euo pipefail
+          # [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Mesmo limite do serviço no Render (512 MiB, sem swap). Dentro do contêiner rodam o
+          # processo de TESTE (no lugar da API: carrega mais assemblies que ela) e o adaptador com o pwsh da imagem; o monitor de
+          # pressão e o heap do filho leem o cgroup real. Enumeração do módulo de fixture: 6000 caixas, contas e configurações de
+          # acesso, teto 5000. Não prova o consumo da sessão Microsoft real nem a API em produção.
+          DEST="$RUNNER_TEMP/image-pwsh"
+          PWSH="$(find "$DEST" -maxdepth 2 -name pwsh -type f | head -n1)"
+          DLL="$GITHUB_WORKSPACE/backend/tests/AegisScore.Infrastructure.Tests/bin/Release/net10.0/AegisScore.Infrastructure.Tests.dll"
+          test -f "$DLL"
+          docker run --rm --memory=512m --memory-swap=512m --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e DOTNET_CLI_HOME=/tmp -e DOTNET_NOLOGO=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+            -e AEGIS_PWSH_GATE_REQUIRED=true -e AEGIS_TEST_PWSH="$PWSH" \
+            -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" -v "$DEST:$DEST:ro" -v "$HOME/.nuget:$HOME/.nuget:ro" -w "$GITHUB_WORKSPACE" \
+            mcr.microsoft.com/dotnet/sdk:10.0 sh -c '
+              echo "memory.max=$(cat /sys/fs/cgroup/memory.max)"
+              set +e
+              dotnet test "'"$DLL"'" --filter "FullyQualifiedName~Exchange_EnumeracaoGrande|FullyQualifiedName~Exchange_SucessoControlado" \
+                --logger "console;verbosity=normal"
+              rc=$?
+              echo "memory.peak=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo indisponivel)"
+              echo "--- memory.events ---"; cat /sys/fs/cgroup/memory.events 2>/dev/null || echo indisponivel
+              exit $rc'
+
       - name: Teams collection runtime inside the image (real adapter path, non-root, offline)
         run: |
           set -euo pipefail

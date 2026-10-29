@@ -95,8 +95,8 @@ public interface IExchangeAdminReader
     /// <summary>
     /// Validação de RUNTIME: importa o módulo e confere que os comandos DO MÓDULO existem nesta plataforma.
     ///
-    /// <para><b>O que ela não prova, e é preciso dizer:</b> os comandos de leitura do Exchange (Get-Mailbox,
-    /// Get-OrganizationConfig e os demais) NÃO existem antes de uma conexão — eles são importados pela própria
+    /// <para><b>O que ela não prova, e é preciso dizer:</b> os comandos de leitura do Exchange (Get-OrganizationConfig, Get-User
+    /// e os demais — Get-EXOMailbox é do módulo) NÃO existem antes de uma conexão — eles são importados pela própria
     /// conexão com o locatário. Uma verificação offline não os encontra, e encontrá-los também não diria nada
     /// sobre a AUTORIZAÇÃO para executá-los. Por isso o adaptador os declara como contrato, e não como
     /// verificação aprovada.</para>

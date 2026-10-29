@@ -53,9 +53,13 @@ function Write-AegisStage {
 }
 
 function Add-AegisRead {
-    <# Registra a leitura no documento e a EMITE imediatamente como quadro próprio. #>
+    <#
+        EMITE a leitura imediatamente como quadro próprio — e não a guarda. O quadro é a única cópia que importa: ele já saiu
+        quando a próxima leitura começa, sobrevive à falha dela, e o resumo final não repete leituras.
+    #>
+    # [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Antes, cada registro também ficava numa lista do script que nada lia: uma enumeração de
+    # milhares de objetos permanecia no heap do processo até o fim da coleta, somada à leitura seguinte.
     param($Record)
-    $script:Reads.Add($Record)
     Write-AegisFrame 'read' ($Record | ConvertTo-Json -Depth 12 -Compress)
 }
 
@@ -207,8 +211,6 @@ function Get-ErrorId {
     }
     catch { return 'DiagnosticoIndisponivel' }
 }
-
-$script:Reads = New-Object System.Collections.Generic.List[object]
 
 function Invoke-Read {
     <# Executa UMA leitura fixa e registra o desfecho. Uma falha aqui nunca interrompe as demais. #>

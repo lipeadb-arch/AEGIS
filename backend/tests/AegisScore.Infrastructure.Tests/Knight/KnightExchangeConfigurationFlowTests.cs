@@ -247,7 +247,7 @@ public sealed class KnightExchangeConfigurationFlowTests : IDisposable
 
         var capacidade = run.Capabilities.Single(c => c.Capability == KnightCapability.ExchangeMailboxes);
         capacidade.Outcome.Should().Be(KnightCapabilityOutcome.InsufficientPermission);
-        capacidade.Detail.Should().Contain("Get-Mailbox", "o operador precisa saber QUAL comando foi recusado");
+        capacidade.Detail.Should().Contain("Get-EXOMailbox", "o operador precisa saber QUAL comando foi recusado");
         capacidade.Detail.Should().Contain("Leitor Global", "e qual papel cobriria a leitura");
 
         foreach (var id in new[] { "AK-EXO-001", "AK-EXO-006", "AK-EXO-008" })

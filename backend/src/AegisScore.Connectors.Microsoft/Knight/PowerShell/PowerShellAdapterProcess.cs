@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -481,7 +482,10 @@ public sealed class PowerShellAdapterProcess
         private readonly List<string> _stages = new();
         private readonly List<string> _started = new();
         private readonly List<string> _finished = new();
-        private readonly List<JsonObject> _reads = new();
+        // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Cada leitura fica como o UTF-8 que chegou (já validado como objeto JSON), não como árvore
+        // de nós: a árvore de uma enumeração de milhares de caixas custava várias vezes o texto, ficava no heap da API enquanto o
+        // filho ainda coletava as leituras seguintes, e era clonada inteira para montar o documento.
+        private readonly List<byte[]> _reads = new();
         private readonly StringBuilder _noise = new();
         private readonly MemoryStream _line = new();
         private readonly object _gate = new();
@@ -630,10 +634,10 @@ public sealed class PowerShellAdapterProcess
                     if (stage.StartsWith("read ", StringComparison.Ordinal)) _started.Add(stage[5..].Trim());
                     break;
                 case "read":
-                    if (ParseObject(payload) is { } read)
+                    if (ParseRead(payload) is { } read)
                     {
-                        _reads.Add(read);
-                        if (read["capability"]?.GetValueKind() == JsonValueKind.String) _finished.Add(read["capability"]!.GetValue<string>());
+                        _reads.Add(read.Utf8);
+                        if (read.Capability is { } capability) _finished.Add(capability);
                     }
                     else Malformed++;
                     break;
@@ -659,6 +663,20 @@ public sealed class PowerShellAdapterProcess
             catch (JsonException) { return null; }
         }
 
+        /// <summary>Quadro de leitura: precisa ser um objeto JSON; a capacidade, quando é texto, marca a leitura como concluída.</summary>
+        private static (byte[] Utf8, string? Capability)? ParseRead(string payload)
+        {
+            var utf8 = Encoding.UTF8.GetBytes(payload);
+            try
+            {
+                using var doc = JsonDocument.Parse(utf8);
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return null;
+                return (utf8, root.TryGetProperty("capability", out var c) && c.ValueKind == JsonValueKind.String ? c.GetString() : null);
+            }
+            catch (JsonException) { return null; }
+        }
+
         /// <summary>
         /// O documento no formato que os leitores já interpretam: o resumo, com as leituras vindas dos quadros. Sem resumo, um
         /// documento mínimo — a conexão vale como estabelecida só se o script declarou o estágio dela.
@@ -666,16 +684,32 @@ public sealed class PowerShellAdapterProcess
         public string? Document()
         {
             if (Result is null && _reads.Count == 0 && _stages.Count == 0) return null;
-            var doc = Result is null ? new JsonObject() : (JsonObject)Result.DeepClone();
-            if (Result is null)
+            var buffer = new ArrayBufferWriter<byte>();
+            using (var w = new Utf8JsonWriter(buffer))
             {
-                doc["runtime"] = new JsonObject();
-                doc["connected"] = _stages.Contains("connected");
+                w.WriteStartObject();
+                if (Result is null)
+                {
+                    w.WriteStartObject("runtime");
+                    w.WriteEndObject();
+                    w.WriteBoolean("connected", _stages.Contains("connected"));
+                }
+                else
+                {
+                    foreach (var (name, value) in Result)
+                    {
+                        if (name == "reads") continue;
+                        w.WritePropertyName(name);
+                        if (value is null) w.WriteNullValue();
+                        else value.WriteTo(w);
+                    }
+                }
+                w.WriteStartArray("reads");
+                foreach (var r in _reads) w.WriteRawValue(r, skipInputValidation: true); // validado ao receber o quadro
+                w.WriteEndArray();
+                w.WriteEndObject();
             }
-            var reads = new JsonArray();
-            foreach (var r in _reads) reads.Add(r.DeepClone());
-            doc["reads"] = reads;
-            return doc.ToJsonString();
+            return Encoding.UTF8.GetString(buffer.WrittenSpan);
         }
     }
 

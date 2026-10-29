@@ -62,9 +62,13 @@ function Write-AegisStage {
 }
 
 function Add-AegisRead {
-    <# Registra a leitura no documento e a EMITE imediatamente como quadro próprio. #>
+    <#
+        EMITE a leitura imediatamente como quadro próprio — e não a guarda. O quadro é a única cópia que importa: ele já saiu
+        quando a próxima leitura começa, sobrevive à falha dela, e o resumo final não repete leituras.
+    #>
+    # [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Antes, cada registro também ficava numa lista do script que nada lia: uma enumeração de
+    # milhares de objetos permanecia no heap do processo até o fim da coleta, somada à leitura seguinte.
     param($Record)
-    $script:Reads.Add($Record)
     Write-AegisFrame 'read' ($Record | ConvertTo-Json -Depth 12 -Compress)
 }
 
@@ -84,6 +88,8 @@ function Write-AegisResult {
 # e muito menos a autorização para executá-los. Tratar os dois como a mesma coisa produziria um gate que
 # "aprova" um ambiente em que nenhuma leitura funcionaria.
 
+# Get-EXOMailbox é comando DO MÓDULO (não vem pela conexão, não entra em -CommandName): a verificação offline prova que ele existe
+# na versão instalada — e é ele que a coleta das caixas de correio executa.
 $script:ModuleCommands = @(
     'Connect-ExchangeOnline',
     'Disconnect-ExchangeOnline',
@@ -99,7 +105,6 @@ $script:SessionCommands = @(
     'Get-RoleAssignmentPolicy',
     'Get-ExternalInOutlook',
     'Get-HostedOutboundSpamFilterPolicy',
-    'Get-Mailbox',
     'Get-User',
     'Get-CASMailbox',
     'Get-MailboxAuditBypassAssociation'
@@ -206,8 +211,6 @@ function Get-ErrorId {
     catch { return 'DiagnosticoIndisponivel' }
 }
 
-$script:Reads = New-Object System.Collections.Generic.List[object]
-
 function Invoke-Read {
     <#
         Executa UMA leitura fixa e registra o desfecho. Uma falha aqui nunca interrompe as demais.
@@ -218,6 +221,34 @@ function Invoke-Read {
     Write-AegisStage ('read ' + $Capability)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
+        if ($Enumerated) {
+            # [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Enumeração serializada ITEM A ITEM, à medida que o comando entrega cada objeto: só o
+            # texto JSON acumula. Materializar milhares de projeções e serializá-las num único ConvertTo-Json era o pico de memória
+            # do processo — medido com o módulo de fixture, 5000 caixas: ~150 MiB privados assim, ~52 MiB item a item, com quadro
+            # semanticamente idêntico. O quadro continua UM e só sai inteiro, depois da enumeração: uma falha no meio dela descarta
+            # o texto parcial e registra a falha da leitura, como antes.
+            $json = [System.Text.StringBuilder]::new()
+            $count = 0
+            & $Body | ForEach-Object {
+                if ($count -gt 0) { [void]$json.Append(',') }
+                [void]$json.Append((ConvertTo-Json -InputObject $_ -Depth 12 -Compress))
+                $count++
+            }
+            $head = @{
+                capability    = $Capability
+                command       = $Command
+                ok            = $true
+                truncated     = ($count -ge $script:EnumerationLimit)
+                errorCategory = $null
+                errorId       = $null
+                durationMs    = [long]$sw.ElapsedMilliseconds
+            } | ConvertTo-Json -Compress
+            [Console]::Out.Write('##aegis:read ' + $head.Substring(0, $head.Length - 1) + ',"items":[')
+            [Console]::Out.Write($json)
+            [Console]::Out.WriteLine(']}')
+            [Console]::Out.Flush()
+            return
+        }
         $produced = & $Body
         # `@()` sobre uma List[object] com hashtables lança "Argument types do not match" no PowerShell 7.6.5.
         # Materializar com .ToArray()/cast explícito é o caminho que funciona nas duas famílias de versão.
@@ -371,9 +402,35 @@ function Read-OutboundSpamFilterPolicies {
     }
 }
 
+# [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Caixas de correio por Get-EXOMailbox, pedindo SÓ as propriedades que o KNIGHT usa. Get-Mailbox
+# devolvia o objeto inteiro de cada caixa (centenas de propriedades) para depois aproveitar treze — numa enumeração de milhares de
+# caixas, esse objeto é o que pesava no heap do processo. Todas as treze estão documentadas nos conjuntos de Get-EXOMailbox
+# (Minimum, Audit, Delivery e Policy). A lista é ÚNICA: é ela que vai em -Properties e é ela que a projeção confere em cada objeto.
+# Uma propriedade pedida que não volta no objeto NÃO é tratada como nula, falsa ou lista vazia (isso aprovaria encaminhamento ou
+# auditoria por omissão): a leitura falha com erro de CONTRATO e os controles dela ficam não avaliados.
+# Get-CASMailbox e Get-User continuam como estão: SmtpClientAuthenticationDisabled e OwaMailboxPolicy não constam em nenhum conjunto
+# documentado de Get-EXOCASMailbox, e AccountDisabled não tem equivalente nos cmdlets Get-EXO*.
+$script:MailboxProperties = @(
+    'ExternalDirectoryObjectId', 'UserPrincipalName', 'DisplayName', 'RecipientTypeDetails',
+    'AuditEnabled', 'AuditOwner', 'AuditDelegate', 'AuditAdmin',
+    'ForwardingSmtpAddress', 'ForwardingAddress', 'DeliverToMailboxAndForward',
+    'RoleAssignmentPolicy', 'SharingPolicy'
+)
+
+function Assert-AegisProjection {
+    <# Toda propriedade pedida precisa EXISTIR no objeto devolvido (o valor pode ser nulo — ausência é outra coisa). #>
+    param($Object, [string[]]$Names)
+    foreach ($n in $Names) {
+        if ($null -eq $Object -or $null -eq $Object.PSObject.Properties[$n]) {
+            throw [System.InvalidOperationException]::new('AegisContractPropertyMissing.' + $n)
+        }
+    }
+}
+
 function Read-Mailboxes {
-    Invoke-Read 'ExchangeMailboxes' 'Get-Mailbox' {
-        Get-Mailbox -ResultSize $script:EnumerationLimit -WarningAction SilentlyContinue | ForEach-Object {
+    Invoke-Read 'ExchangeMailboxes' 'Get-EXOMailbox' {
+        Get-EXOMailbox -Properties $script:MailboxProperties -ResultSize $script:EnumerationLimit -WarningAction SilentlyContinue | ForEach-Object {
+            Assert-AegisProjection $_ $script:MailboxProperties
             @{
                 externalDirectoryObjectId  = (Get-Text $_ 'ExternalDirectoryObjectId')
                 userPrincipalName          = (Get-Text $_ 'UserPrincipalName')

@@ -95,7 +95,7 @@ public static class PowerShellRunInterpretation
     {
         PowerShellTermination.TimedOut => KnightFailureKind.Timeout,
         PowerShellTermination.OutputLimit => KnightFailureKind.OutputLimit,
-        PowerShellTermination.MemoryLimit => KnightFailureKind.Internal,
+        PowerShellTermination.MemoryLimit => KnightFailureKind.MemoryLimit,
         PowerShellTermination.NonZeroExit => KnightFailureKind.ProcessExit,
         PowerShellTermination.NoResult => KnightFailureKind.ProcessNoResult,
         PowerShellTermination.OutputIncomplete => KnightFailureKind.Incomplete,
@@ -105,7 +105,10 @@ public static class PowerShellRunInterpretation
 
     public static KnightCapabilityDiagnostic Diagnostic(PowerShellRunReport report, string? correlationId) =>
         new(report.LastStage ?? "process-start", KindOf(report), report.DurationMs,
-            Code: report.ExitCode is { } code ? "exit:" + code.ToString(CultureInfo.InvariantCulture) : report.Termination.ToString(),
+            // Encerrado pelo AEGIS por memória, o código de saída é o do sinal enviado (137) e diria menos que a terminação.
+            Code: report.Termination != PowerShellTermination.MemoryLimit && report.ExitCode is { } code
+                ? "exit:" + code.ToString(CultureInfo.InvariantCulture)
+                : report.Termination.ToString(),
             CorrelationId: correlationId);
 
     /// <summary>Como o processo terminou, em palavras — com o que o código de saída permite afirmar, e só isso.</summary>

@@ -165,7 +165,8 @@ public sealed class PowerShellAdapterProtocolTests
         log.Messages.Should().Contain(x => x.Contains("Estagio=read TeamsAppPermissionPolicies"));
         log.Messages.Should().NotContain(x => x.Contains("segredo-sentinela"));
         var diagnostic = PowerShellRunInterpretation.Diagnostic(output.Process, "corr-demo");
-        diagnostic.Kind.Should().Be(KnightFailureKind.Internal);
+        diagnostic.Kind.Should().Be(KnightFailureKind.MemoryLimit, "interrupção por memória tem tipo próprio — não é falha interna nem permissão");
+        diagnostic.Code.Should().Be("MemoryLimit", "o código do sinal enviado pelo AEGIS (137) não diria a causa do encerramento");
         PowerShellRunInterpretation.How(output.Process).Should().Contain("memória").And.Contain("não indica falta de permissão");
         using var gate = new StringWriter();
         PowerShellRunInterpretation.CheckProcess(gate, output.Process, "memoria").Should().BeFalse();
