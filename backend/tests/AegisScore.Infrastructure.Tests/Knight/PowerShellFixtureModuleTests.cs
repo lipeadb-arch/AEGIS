@@ -168,6 +168,135 @@ public sealed class PowerShellFixtureModuleTests
         var rules = config.Read<ExchangeTransportRuleConfiguration>();
         rules.Collected.Should().BeTrue();
         rules.Items.Should().BeEmpty("leitura com ZERO objetos é lista vazia coletada — não falha");
+
+        // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] As caixas vêm de Get-EXOMailbox com seleção explícita, e as distinções chegam ao ADM:
+        // lista de auditoria vazia ≠ completa, encaminhamento nulo ≠ configurado, falso ≠ verdadeiro, política nula ≠ declarada.
+        var audit = config.Read<ExchangeMailboxAuditInventory>().Items.Single();
+        audit.MailboxTotal.Should().Be(2, "usuário e compartilhada; a sala fica fora do universo da auditoria");
+        audit.MailboxesWithGaps.Should().ContainSingle(r => r.UserPrincipalName == "financeiro@demo.example.com"
+            && r.MissingOwnerActions.Count == ExchangeMailboxAuditInventory.RequiredOwnerActions.Count && r.MissingDelegateActions.Count == 0);
+        var forwarding = config.Read<ExchangeMailboxForwardingInventory>().Items.Single();
+        forwarding.MailboxTotal.Should().Be(3);
+        forwarding.MailboxesWithForwarding.Should().ContainSingle(r => r.ForwardingSmtpAddress == "smtp:arquivo@example.net"
+            && r.ForwardingAddress == null && r.DeliverToMailboxAndForward == true);
+        config.Read<ExchangeSharedMailboxInventory>().Items.Single().Mailboxes.Should()
+            .ContainSingle(m => m.UserPrincipalName == "financeiro@demo.example.com" && m.SignInBlocked == true);
+        var reach = config.Read<ExchangePolicyReachInventory>().Items.Single();
+        reach.MailboxesWithoutDeclaration.Should().Be(1, "a compartilhada não declara política de compartilhamento — nula, não distribuída");
+        reach.Entries.Should().Contain(e => e.PolicyName == "Default Sharing Policy" && e.MailboxCount == 2);
+        var smtp = config.Read<ExchangeSmtpAuthOverrideInventory>().Items.Single();
+        (smtp.InheritingOrganizationCount, smtp.ExplicitlyDisabledCount).Should().Be((1, 1), "nulo herda; verdadeiro desabilita");
+        smtp.ExplicitlyEnabled.Should().ContainSingle(r => r.UserPrincipalName == "financeiro@demo.example.com", "falso HABILITA na caixa");
+        Cap(result, KnightCapability.ExchangeMailboxes).Detail.Should().BeNull("a enumeração cabe no teto: não é truncada");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Enumeração GRANDE (6000 caixas, contas e configurações de acesso no módulo de fixture, teto 5000):
+    /// as leituras chegam inteiras até o teto pelo processo real, são marcadas truncadas e nenhuma lista truncada aprova a organização.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_EnumeracaoGrande_ChegaAteOTeto_TruncadaENuncaCompleta()
+    {
+        if (Pwsh() is not { } pwsh) return;
+
+        var result = await Exchange(pwsh, "cenario-volume");
+
+        foreach (var c in new[] { KnightCapability.ExchangeMailboxes, KnightCapability.ExchangeMailboxSignIn, KnightCapability.ExchangeCasMailboxes })
+        {
+            Cap(result, c).Outcome.Should().Be(KnightCapabilityOutcome.Collected, c.ToString());
+            Cap(result, c).Detail.Should().Contain("atingiu o teto", c.ToString());
+        }
+        Cap(result, KnightCapability.ExchangeMailboxes).Detail.Should().Contain("Get-EXOMailbox");
+        var config = result.TenantConfiguration!;
+        var forwarding = config.Read<ExchangeMailboxForwardingInventory>().Items.Single();
+        forwarding.MailboxTotal.Should().Be(5000, "o teto explícito da enumeração — nada além, nada aquém");
+        forwarding.ListComplete.Should().BeFalse("lista truncada sem encaminhamento não é organização sem encaminhamento");
+        config.Read<ExchangeMailboxAuditInventory>().Items.Single().ListComplete.Should().BeFalse();
+        config.Read<ExchangePolicyReachInventory>().Items.Single().ListComplete.Should().BeFalse();
+        config.Read<ExchangeSmtpAuthOverrideInventory>().Items.Single().Should()
+            .Match<ExchangeSmtpAuthOverrideInventory>(s => s.MailboxTotal == 5000 && s.InheritingOrganizationCount == 5000 && !s.ListComplete);
+        result.Detail.Should().Contain("teto de 5000");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] O processo real morre DEPOIS da enumeração das caixas: sem a lista que o script guardava, a
+    /// leitura grande continua preservada — o quadro dela já tinha saído — e chega ao ADM.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_QuedaDepoisDaEnumeracaoDasCaixas_PreservaAsCaixas()
+    {
+        if (Pwsh() is not { } pwsh) return;
+
+        var result = await Exchange(pwsh, "cenario-queda-tardia");
+
+        Cap(result, KnightCapability.ExchangeMailboxes).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        var signIn = Cap(result, KnightCapability.ExchangeMailboxSignIn);
+        signIn.Outcome.Should().Be(KnightCapabilityOutcome.Error);
+        signIn.Detail.Should().Contain("iniciada").And.Contain("código 137");
+        Cap(result, KnightCapability.ExchangeCasMailboxes).Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted);
+        result.State.Should().Be(KnightSourceState.PartialCollection);
+        result.TenantConfiguration!.Read<ExchangeMailboxForwardingInventory>().Items.Single().MailboxesWithForwarding.Should().ContainSingle();
+        result.TenantConfiguration.Read<ExchangeSharedMailboxInventory>().Items.Single().SignInStateResolved
+            .Should().BeFalse("a leitura das contas não concluiu: o estado de entrada fica desconhecido, nunca bloqueado");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Get-EXOMailbox devolve o objeto SEM uma propriedade pedida: o script não a converte em nulo
+    /// (o que leria "sem encaminhamento"); a leitura falha como erro de CONTRATO, sem inventário de caixas, e as demais seguem.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_PropriedadePedidaAusente_ErroDeContrato_SemInventarioPorOmissao()
+    {
+        if (Pwsh() is not { } pwsh) return;
+
+        var result = await Exchange(pwsh, "cenario-projecao-incompleta");
+
+        var mailboxes = Cap(result, KnightCapability.ExchangeMailboxes);
+        mailboxes.Outcome.Should().Be(KnightCapabilityOutcome.Error);
+        mailboxes.Diagnostic!.Kind.Should().Be(KnightFailureKind.Contract);
+        mailboxes.Diagnostic.Code.Should().StartWith("AegisContractPropertyMissing.ForwardingSmtpAddress");
+        mailboxes.Detail.Should().Contain("ForwardingSmtpAddress").And.Contain("não falta de permissão");
+        result.TenantConfiguration!.Read<ExchangeMailboxForwardingInventory>().Collected.Should().BeFalse();
+        Cap(result, KnightCapability.ExchangeCasMailboxes).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        result.State.Should().Be(KnightSourceState.PartialCollection);
+    }
+
+    private sealed class StageLogger : Microsoft.Extensions.Logging.ILogger<PowerShellExchangeAdminReader>
+    {
+        private int _mailboxes;
+        public bool ReadingMailboxes => Volatile.Read(ref _mailboxes) != 0;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+        public void Log<TState>(Microsoft.Extensions.Logging.LogLevel level, Microsoft.Extensions.Logging.EventId id, TState state,
+            Exception? error, Func<TState, Exception?, string> format)
+        {
+            if (format(state, error).Contains("Estagio=read ExchangeMailboxes", StringComparison.Ordinal)) Interlocked.Exchange(ref _mailboxes, 1);
+        }
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Pressão de memória durante a enumeração das caixas, com o pwsh real: o AEGIS encerra o filho,
+    /// as leituras anteriores ficam, e a caixa interrompida é MemoryLimit — nunca falta de permissão nem coleta concluída.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_PressaoDeMemoriaNaEnumeracao_MemoryLimitSemPermissaoInventada()
+    {
+        if (Pwsh() is not { } pwsh) return;
+        var log = new StageLogger();
+        var options = Options<ExchangePowerShellOptions>(pwsh);
+        options.MemoryProbe = () => new ContainerMemorySample(log.ReadingMailboxes ? 500 : 100, 512);
+        var collector = new ExchangeKnightCollector(new ExchangeTokens("cenario-volume"), new PowerShellExchangeAdminReader(options, log));
+
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir-demo-0001", "client", "secret")));
+
+        Cap(result, KnightCapability.ExchangeOrganizationConfig).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        Cap(result, KnightCapability.ExchangeOutboundSpamFilterPolicies).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        var mailboxes = Cap(result, KnightCapability.ExchangeMailboxes);
+        mailboxes.Outcome.Should().Be(KnightCapabilityOutcome.Error);
+        mailboxes.Diagnostic!.Kind.Should().Be(KnightFailureKind.MemoryLimit);
+        mailboxes.Detail.Should().Contain("memória").And.Contain("não indica falta de permissão");
+        result.Capabilities.Should().NotContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
+        result.State.Should().Be(KnightSourceState.PartialCollection);
     }
 
     private sealed class Dns : IDnsTxtResolver

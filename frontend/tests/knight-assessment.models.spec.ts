@@ -288,12 +288,33 @@ test('capacidade desconhecida degrada para identificador e causa genérica', () 
   eq(v[0].cause, 'Erro de coleta', 'erro');
 });
 
-test('recusa no Azure orienta atribuição de papel, não consentimento de administrador', () => {
+test('Fabric recusado preserva o diagnóstico de grupos sem recomendar novo consentimento', () => {
+  const detail = 'Verificado: a aplicação não pertence a nenhum grupo de segurança. Ação necessária: autorizar um grupo na configuração do Fabric.';
+  const v = limitationViews(assessment([], { capabilities: [{ capability: 'FabricTenantSettings', outcome: 'InsufficientPermission', detail }] }))[0];
+  eq(v.detail, detail, 'a evidência e a ação específicas do serviço não são substituídas');
+  ok(!v.guidance.startsWith('Conceder'), 'HTTP 403 não demonstra qual concessão está faltando');
+  ok(v.guidance.includes('diagnóstico de acesso'), 'a orientação leva à evidência disponível');
+});
+
+test('recusa no Azure orienta conferir o papel sem afirmar ausência de atribuição', () => {
   const az = limitationViews(assessment([], { capabilities: [{ capability: 'AzureStorage', outcome: 'InsufficientPermission', detail: null }] }));
   ok(az[0].guidance.includes('Azure RBAC'), 'papel do Azure RBAC no escopo recusado');
   ok(!az[0].guidance.includes('consentimento'), 'o Azure não usa consentimento de administrador');
+  ok(!az[0].guidance.startsWith('Atribuir'), 'uma recusa não comprova ausência de atribuição de papel');
   const graph = limitationViews(assessment([], { capabilities: [{ capability: 'GuestAccounts', outcome: 'InsufficientPermission', detail: null }] }));
   ok(graph[0].guidance.includes('consentimento de administrador'), 'o Graph continua com consentimento');
+});
+
+test('interrupção por memória: causa própria, nada a conceder, e não vira falta de permissão', () => {
+  const diagnostic = {
+    stage: 'read ExchangeMailboxes', kind: 'MemoryLimit', durationMs: 4200, httpStatus: null, code: 'MemoryLimit',
+    endpoint: null, correlationId: null, serviceRequestId: null,
+  };
+  const v = limitationViews(assessment([], { capabilities: [{ capability: 'ExchangeMailboxes', outcome: 'Error', detail: null, diagnostic }] }))[0];
+  eq(v.cause, 'Interrompida por memória', 'tipo próprio, não "Erro de coleta" genérico');
+  ok(v.guidance.startsWith('Nada a conceder'), 'pressão de memória não se resolve com permissão');
+  eq(v.failureKind, 'MemoryLimit', 'o tipo sanitizado segue para a tela');
+  ok(v.technical.some((l) => l.includes('pressão de memória')), 'o detalhe técnico diz o tipo em palavras');
 });
 
 // ---- contribuição e rótulos -------------------------------------------------------------------------

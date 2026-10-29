@@ -13,6 +13,7 @@ using AegisScore.Connectors.Microsoft.Knight.PowerShell;
 using AegisScore.Connectors.Microsoft.Knight.Teams;
 using AegisScore.Domain;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace AegisScore.Infrastructure.Tests.Knight;
@@ -102,6 +103,74 @@ public sealed class PowerShellAdapterProtocolTests
         new TeamsKnightCollector(new FakeTokens(), reader).CollectAsync(Ctx);
 
     private static KnightCapabilityStatus Cap(KnightCollectionResult r, KnightCapability c) => r.Capabilities.Single(x => x.Capability == c);
+
+    [Fact]
+    public void MemoriaSemLimiteOuContadorInvalido_NaoViraPressaoDeMemoria()
+    {
+        ContainerMemorySample.Parse("100", "max").Should().BeNull();
+        ContainerMemorySample.Parse("-1", "512").Should().BeNull();
+        ContainerMemorySample.Parse("100", "0").Should().BeNull();
+        ContainerMemorySample.Parse(" 448\n", "512\n")!.UnderPressure.Should().BeTrue();
+        ContainerMemorySample.Parse("447", "512")!.UnderPressure.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HeapDoFilho_UsaPercentualHexadecimal_ESemSobrescreverConfiguracaoDoOperador()
+    {
+        var env = new Dictionary<string, string?>();
+        ContainerMemorySample.ConfigureChildGc(env);
+        env["DOTNET_GCHeapHardLimitPercent"].Should().Be("19"); // 25%, não 19% nem 0x25
+        env["DOTNET_GCConserveMemory"].Should().Be("6");
+        env = new() { ["COMPlus_GCHeapHardLimit"] = "8000000", ["DOTNET_GCConserveMemory"] = "7" };
+        ContainerMemorySample.ConfigureChildGc(env);
+        env.Should().NotContainKey("DOTNET_GCHeapHardLimitPercent");
+        env["COMPlus_GCHeapHardLimit"].Should().Be("8000000");
+        env["DOTNET_GCConserveMemory"].Should().Be("7");
+    }
+
+    private sealed class ProgressLogger : ILogger<PowerShellTeamsAdminReader>
+    {
+        private int _reading;
+        public bool Reading => Volatile.Read(ref _reading) != 0;
+        public List<string> Messages { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> format)
+        {
+            var text = format(state, error);
+            lock (Messages) Messages.Add(text);
+            if (text.Contains("Estagio=read TeamsAppPermissionPolicies", StringComparison.Ordinal)) Interlocked.Exchange(ref _reading, 1);
+        }
+    }
+
+    [Fact]
+    public async Task PressaoDeMemoria_EncerraOFilhoPreservaLeitura_EMantemDiagnosticoSemPermissaoInventada()
+    {
+        var helper = Helper(Connected.Append("##aegis:stage read TeamsClientConfiguration").Append(ReadClient)
+            .Append("##aegis:stage segredo-sentinela-nao-e-estagio")
+            .Append("##aegis:stage read TeamsAppPermissionPolicies"), 0, sleepSeconds: 20);
+        var log = new ProgressLogger();
+        var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
+        {
+            Executable = helper, Timeout = TimeSpan.FromSeconds(30),
+            MemoryProbe = () => new(log.Reading ? 490 : 200, 512),
+        }, log);
+
+        var output = await reader.ReadAsync(new TeamsAdminCredentials("dir", "g", "t"));
+        output.Process!.Termination.Should().Be(PowerShellTermination.MemoryLimit);
+        output.Process.Clean.Should().BeFalse();
+        output.Process.FinishedReads.Should().Contain("TeamsClientConfiguration");
+        output.Reads.Should().ContainSingle(x => x.Capability == "TeamsClientConfiguration" && x.Ok);
+        output.Process.DurationMs.Should().BeLessThan(15000, "o monitor encerra o filho antes dos 20 s de espera");
+        log.Messages.Should().Contain(x => x.Contains("Estagio=read TeamsAppPermissionPolicies"));
+        log.Messages.Should().NotContain(x => x.Contains("segredo-sentinela"));
+        var diagnostic = PowerShellRunInterpretation.Diagnostic(output.Process, "corr-demo");
+        diagnostic.Kind.Should().Be(KnightFailureKind.MemoryLimit, "interrupção por memória tem tipo próprio — não é falha interna nem permissão");
+        diagnostic.Code.Should().Be("MemoryLimit", "o código do sinal enviado pelo AEGIS (137) não diria a causa do encerramento");
+        PowerShellRunInterpretation.How(output.Process).Should().Contain("memória").And.Contain("não indica falta de permissão");
+        using var gate = new StringWriter();
+        PowerShellRunInterpretation.CheckProcess(gate, output.Process, "memoria").Should().BeFalse();
+    }
 
     [Fact]
     public async Task SaidaMisturadaComOutroFluxo_NaoInvalidaODocumento()

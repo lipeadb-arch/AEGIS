@@ -17,7 +17,7 @@ namespace AegisScore.Connectors.Microsoft.Knight.Exchange;
 /// <c>PSModulePath</c> a partir da configuração é o leitor, não o shell.</para>
 ///
 /// <para><b>O que esta verificação NÃO prova, e é dito na saída em vez de escondido:</b> os comandos de leitura
-/// do Exchange (<c>Get-OrganizationConfig</c>, <c>Get-Mailbox</c> e os demais) não existem antes de uma conexão.
+/// do Exchange (<c>Get-OrganizationConfig</c>, <c>Get-User</c> e os demais) não existem antes de uma conexão.
 /// Eles são importados pela própria conexão com o locatário. Um gate offline não pode encontrá-los — e, se
 /// pudesse, encontrá-los ainda não diria nada sobre a AUTORIZAÇÃO para executá-los. Por isso eles saem daqui
 /// como CONTRATO DECLARADO, com essa ressalva explícita, e nunca como verificação aprovada. Confundir os dois

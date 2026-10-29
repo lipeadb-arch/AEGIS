@@ -364,6 +364,7 @@ public static class KnightReportModelBuilder
         nameof(KnightFailureKind.Command) => "comando de leitura falhou na sessão",
         nameof(KnightFailureKind.Incomplete) => "leitura incompleta",
         nameof(KnightFailureKind.NoScope) => "nada a consultar no escopo",
+        nameof(KnightFailureKind.MemoryLimit) => "coleta interrompida pelo AEGIS por pressão de memória (não é falta de permissão)",
         _ => kind,
     };
 

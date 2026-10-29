@@ -88,12 +88,12 @@ public abstract class KnightRestCollectorBase : IKnightCollector
 public sealed class IntuneKnightCollector : KnightRestCollectorBase
 {
     /// <summary>
-    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] GET documentado do singleton (sem <c>$select</c>): o objeto devolve a propriedade
-    /// complexa <c>settings</c> (deviceManagementSettings). A forma anterior (<c>?$select=settings</c>) chegou em produção sem
-    /// <c>secureByDefault</c>, e a capacidade terminava como coletada.
+    /// Lê diretamente a propriedade complexa deviceManagementSettings. A leitura do singleton deviceManagement não
+    /// garante a projeção de settings: no tenant real ela respondeu HTTP 200 sem esse objeto (SettingsMissing).
+    /// O recurso devolve secureByDefault na raiz, conforme o contrato deviceManagementSettings do Graph v1.0.
     /// </summary>
-    internal const string SettingsUrl = "deviceManagement";
-    internal const string SettingsEndpoint = "/v1.0/deviceManagement";
+    internal const string SettingsUrl = "deviceManagement/settings";
+    internal const string SettingsEndpoint = "/v1.0/deviceManagement/settings";
     internal const string EnrollmentUrl = "deviceManagement/deviceEnrollmentConfigurations?$expand=assignments";
 
     /// <summary>Tipo documentado da configuração de restrições de plataforma na v1.0.</summary>
@@ -156,9 +156,8 @@ public sealed class IntuneKnightCollector : KnightRestCollectorBase
     }
 
     /// <summary>
-    /// [AEGIS-KNIGHT-COLLECTION-GAPS-01] <c>settings.secureByDefault</c> como o contrato documenta (Boolean). Objeto ausente
-    /// (ou nulo), objeto de outro tipo, propriedade ausente (ou nula) e propriedade de outro tipo são falhas de CONTRATO
-    /// distintas — a capacidade não fica coletada e o motivo diz qual foi. Nenhuma vira false, conformidade ou sucesso.
+    /// Lê secureByDefault do objeto deviceManagementSettings, sem criar um envelope settings que a URL não devolve.
+    /// Objeto ausente ou incompatível e booleano ausente ou incompatível são falhas de contrato; nunca viram false.
     /// </summary>
     internal static (JsonElement Settings, bool SecureByDefault) ReadSecureByDefault(JsonElement root)
     {
@@ -166,11 +165,8 @@ public sealed class IntuneKnightCollector : KnightRestCollectorBase
             new(EntraGraphErrorKind.Contract, detail, 200, code, SettingsEndpoint) { ContractDetail = detail };
 
         if (root.ValueKind != JsonValueKind.Object)
-            throw Contract("DeviceManagementTypeMismatch", "a resposta não é o objeto deviceManagement");
-        if (!root.TryGetProperty("settings", out var settings) || settings.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            throw Contract("SettingsMissing", "objeto settings ausente na resposta do deviceManagement");
-        if (settings.ValueKind != JsonValueKind.Object)
-            throw Contract("SettingsTypeMismatch", "settings com tipo incompatível (esperado objeto deviceManagementSettings)");
+            throw Contract("SettingsTypeMismatch", "a resposta não é o objeto deviceManagementSettings");
+        var settings = root;
         if (!settings.TryGetProperty("secureByDefault", out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
             throw Contract("SecureByDefaultMissing", "propriedade secureByDefault ausente em settings");
         return value.ValueKind switch

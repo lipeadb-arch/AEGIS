@@ -46,10 +46,15 @@ public sealed class ExchangeAdapterTransportTests
         {
             "Get-OrganizationConfig", "Get-TransportConfig", "Get-SharingPolicy", "Get-OwaMailboxPolicy",
             "Get-TransportRule", "Get-RoleAssignmentPolicy", "Get-ExternalInOutlook",
-            "Get-HostedOutboundSpamFilterPolicy", "Get-Mailbox", "Get-User", "Get-CASMailbox",
+            "Get-HostedOutboundSpamFilterPolicy", "Get-EXOMailbox", "Get-User", "Get-CASMailbox",
             "Get-MailboxAuditBypassAssociation",
         })
             script.Should().Contain(comando);
+
+        // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] As caixas vêm de Get-EXOMailbox com seleção explícita; Get-Mailbox (objeto inteiro de cada
+        // caixa) não é mais executado. Get-MailboxAuditBypassAssociation não casa com o limite de palavra.
+        Executado(script).Should().NotMatchRegex(@"Get-Mailbox");
+        Executado(script).Should().Contain("Get-EXOMailbox -Properties $script:MailboxProperties -ResultSize $script:EnumerationLimit");
 
         // Nenhum verbo de escrita. O prefixo genérico não basta: "Set-" apareceria em Set-StrictMode, que é
         // configuração do próprio script — por isso a proibição é sobre os cmdlets do Exchange.
@@ -95,12 +100,35 @@ public sealed class ExchangeAdapterTransportTests
 
         var modulo = Trecho(script, "$script:ModuleCommands", "$script:SessionCommands");
         modulo.Should().Contain("Connect-ExchangeOnline").And.Contain("Disconnect-ExchangeOnline");
-        foreach (var deSessao in new[] { "Get-OrganizationConfig", "Get-Mailbox", "Get-TransportRule" })
+        foreach (var deSessao in new[] { "Get-OrganizationConfig", "Get-User", "Get-TransportRule" })
             modulo.Should().NotContain(deSessao,
                 $"{deSessao} não existe antes da conexão: declará-lo como comando do módulo tornaria o gate offline mentiroso");
+        // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Get-EXOMailbox é do MÓDULO: a verificação offline o encontra, e a conexão não o importa.
+        modulo.Should().Contain("Get-EXOMailbox");
+        Trecho(script, "$script:SessionCommands", "# ---- Utilitários").Should().NotContain("Get-EXOMailbox").And.NotContain("'Get-Mailbox'");
 
         // E a verificação de runtime devolve o contrato de sessão como DECLARAÇÃO, com capacidade própria.
         script.Should().Contain("SessionCommandContract");
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] A lista pedida em -Properties é EXATAMENTE a que a projeção usa e confere. Uma propriedade
+    /// projetada e não pedida voltaria ausente do Get-EXOMailbox — e um encaminhamento ou uma política nula por omissão aprovaria o
+    /// que não foi lido.
+    /// </summary>
+    [Fact]
+    public void ScriptEmbutido_CaixasDeCorreio_PedeExatamenteAsPropriedadesQueProjeta()
+    {
+        var script = Script();
+        var leitura = Trecho(script, "function Read-Mailboxes", "function Read-AccountSignIn");
+        var pedidas = System.Text.RegularExpressions.Regex.Matches(Trecho(script, "$script:MailboxProperties = @(", ")"), "'([A-Za-z]+)'")
+            .Select(m => m.Groups[1].Value).ToList();
+        var projetadas = System.Text.RegularExpressions.Regex.Matches(leitura, @"Get-(?:Text|Bool|List|Int) \$_ '([A-Za-z]+)'")
+            .Select(m => m.Groups[1].Value).ToList();
+
+        pedidas.Should().HaveCount(13).And.OnlyHaveUniqueItems();
+        projetadas.Should().BeEquivalentTo(pedidas);
+        leitura.Should().Contain("Assert-AegisProjection $_ $script:MailboxProperties", "cada objeto é conferido antes da projeção");
     }
 
     [Fact]
@@ -178,7 +206,7 @@ public sealed class ExchangeAdapterTransportTests
               "connected": true,
               "enumerationLimit": 5000,
               "reads": [
-                { "capability": "ExchangeMailboxes", "command": "Get-Mailbox", "ok": true, "items": [], "truncated": true },
+                { "capability": "ExchangeMailboxes", "command": "Get-EXOMailbox", "ok": true, "items": [], "truncated": true },
                 { "capability": "ExchangeCasMailboxes", "command": "Get-CASMailbox", "ok": false, "items": [],
                   "truncated": false, "errorCategory": "InsufficientPermission",
                   "errorId": "AuthorizationFailed/UnauthorizedAccessException" }
@@ -297,7 +325,7 @@ public sealed class ExchangeAdapterTransportTests
                         items = new object[]
                         {
                             new { command = "Get-OrganizationConfig" },
-                            new { command = "Get-Mailbox" },
+                            new { command = "Get-User" },
                             new { command = "Get-TransportRule" },
                         },
                         truncated = false,

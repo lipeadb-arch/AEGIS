@@ -165,7 +165,10 @@ public class KnightAssessmentsController : ControllerBase
     private static KnightCapabilityDto CapabilityDto(KnightCapabilityStatus c) => new(
         c.Capability.ToString(), c.Outcome.ToString(), c.Detail,
         // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Limitação de plataforma não se resolve com permissão: nenhum requisito é exibido.
+        // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Nem interrupção por memória nem resposta fora do contrato: exibir a permissão ao lado delas
+        // a apresentaria como causa.
         c.Outcome == KnightCapabilityOutcome.PlatformUnsupported
+            || c.Diagnostic?.Kind is KnightFailureKind.MemoryLimit or KnightFailureKind.Contract
             ? null
             : AegisScore.Application.Posture.Export.KnightCapabilityLabels.RequiredPermission(c.Capability, KnightSourceType.Consolidated),
         KnightCollectorCapabilities.PreviewApi(c.Capability),

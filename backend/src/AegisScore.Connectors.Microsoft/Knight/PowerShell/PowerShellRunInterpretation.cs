@@ -95,6 +95,7 @@ public static class PowerShellRunInterpretation
     {
         PowerShellTermination.TimedOut => KnightFailureKind.Timeout,
         PowerShellTermination.OutputLimit => KnightFailureKind.OutputLimit,
+        PowerShellTermination.MemoryLimit => KnightFailureKind.MemoryLimit,
         PowerShellTermination.NonZeroExit => KnightFailureKind.ProcessExit,
         PowerShellTermination.NoResult => KnightFailureKind.ProcessNoResult,
         PowerShellTermination.OutputIncomplete => KnightFailureKind.Incomplete,
@@ -104,7 +105,10 @@ public static class PowerShellRunInterpretation
 
     public static KnightCapabilityDiagnostic Diagnostic(PowerShellRunReport report, string? correlationId) =>
         new(report.LastStage ?? "process-start", KindOf(report), report.DurationMs,
-            Code: report.ExitCode is { } code ? "exit:" + code.ToString(CultureInfo.InvariantCulture) : report.Termination.ToString(),
+            // Encerrado pelo AEGIS por memória, o código de saída é o do sinal enviado (137) e diria menos que a terminação.
+            Code: report.Termination != PowerShellTermination.MemoryLimit && report.ExitCode is { } code
+                ? "exit:" + code.ToString(CultureInfo.InvariantCulture)
+                : report.Termination.ToString(),
             CorrelationId: correlationId);
 
     /// <summary>Como o processo terminou, em palavras — com o que o código de saída permite afirmar, e só isso.</summary>
@@ -115,6 +119,8 @@ public static class PowerShellRunInterpretation
             PowerShellTermination.TimedOut =>
                 $"não terminou no tempo limite e foi encerrado pelo AEGIS após {report.DurationMs / 1000} s",
             PowerShellTermination.OutputLimit => "a saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS",
+            PowerShellTermination.MemoryLimit => "foi encerrado pelo AEGIS por pressão de memória no contêiner, para preservar a aplicação; "
+                + "isso não indica falta de permissão e somente as leituras concluídas foram preservadas",
             PowerShellTermination.NoResult => "terminou com código 0 sem emitir o documento de resultado",
             PowerShellTermination.OutputIncomplete =>
                 "terminou com código 0, mas a saída dele não foi recebida até o fim (a leitura falhou ou o cano não fechou no prazo); "

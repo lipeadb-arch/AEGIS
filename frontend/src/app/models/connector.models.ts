@@ -396,7 +396,9 @@ export const KNIGHT_M365_SERVICE_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     permission: 'Exchange.ManageAsApp (API Microsoft Exchange Online Protection)',
     usage: 'NewForM365Services',
     licenseNote: null,
-    action: 'Conceda a permissão na API “Microsoft Exchange Online Protection”; o papel Leitor Global já atende. É outra sessão, com outro token.',
+    // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] A permissão não resolve a limitação de plataforma: a documentação diz que Connect-IPPSSession
+    // não existe no PowerShell 7 em Linux, onde o AEGIS executa em contêiner.
+    action: 'No AEGIS executado em contêiner Linux, DLP e rótulos ficam como limitação de plataforma: a documentação da Microsoft informa que a sessão do Security & Compliance (Connect-IPPSSession) não está disponível no PowerShell 7 em Linux, e nenhuma permissão resolve isso. Onde a sessão existe, ela usa esta permissão na API “Microsoft Exchange Online Protection” e um papel de leitura (Leitor Global ou Leitor de Segurança) — outra sessão, com outro token.',
   },
   {
     name: 'SharePoint e OneDrive (Microsoft Graph)',

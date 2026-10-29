@@ -51,6 +51,9 @@ public sealed class ExchangeKnightCollector : IKnightCollector
 {
     private const string Label = "Exchange Online";
 
+    /// <summary>Prefixo do identificador que o script emite quando uma propriedade pedida não volta no objeto.</summary>
+    internal const string ContractPropertyMissing = "AegisContractPropertyMissing.";
+
     private readonly IExchangeTokenClient _tokens;
     private readonly IExchangeAdminReader _reader;
     private readonly ILogger<ExchangeKnightCollector>? _log;
@@ -199,6 +202,20 @@ public sealed class ExchangeKnightCollector : IKnightCollector
                 }
                 caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.NotAttempted,
                     "O adaptador não registrou esta leitura nesta execução."));
+                continue;
+            }
+
+            if (!read.Ok && read.ErrorId?.StartsWith(ContractPropertyMissing, StringComparison.Ordinal) == true)
+            {
+                // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Propriedade pedida explicitamente que não voltou no objeto: o script recusa
+                // projetá-la como nula, falsa ou lista vazia. É contrato da resposta — não permissão, não indisponibilidade.
+                var property = read.ErrorId[ContractPropertyMissing.Length..].Split('/')[0];
+                caps.Add(new KnightCapabilityStatus(capability, KnightCapabilityOutcome.Error,
+                    $"A resposta do comando {read.Command} não trouxe a propriedade «{property}», pedida explicitamente nesta leitura. "
+                    + "Erro de contrato da resposta, não falta de permissão: a leitura inteira foi descartada para que a ausência não "
+                    + "virasse valor nulo, falso ou lista vazia, e os controles que dependem dela ficam não avaliados.",
+                    new KnightCapabilityDiagnostic("read " + capability, KnightFailureKind.Contract, read.DurationMs,
+                        Code: read.ErrorId, CorrelationId: correlation)));
                 continue;
             }
 
