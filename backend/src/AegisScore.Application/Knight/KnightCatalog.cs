@@ -126,7 +126,11 @@ public static class KnightCatalog
     // demonstrado conta a conta sobre a enumeração completa das contas habilitadas da mesma coleta, e nunca aprova política
     // que não alcança conta alguma; AK-ENTRA-001/008/011 passam a resolver grupos pelo pertencimento lido. Fotografias v10
     // continuam com o catálogo v10 congelado e o comparador recusa v10 × v11.
-    public const string Version = "ak-knight-v11";
+    // v12 [AEGIS-KNIGHT-CA-GROUP-SCOPE-01]: AK-ENTRA-007 (regra "3") e as exigências de acesso condicional AK-ENTRA-040 e 058–070
+    // (regra "2") resolvem política dirigida a grupo, e exclusão por grupo, pelo pertencimento lido — conta a conta sobre a
+    // enumeração completa das contas habilitadas, sem relaxar estado, aplicação, condição, sessão ou controle exigido; leitura
+    // incompleta continua sem conclusão. Fotografias v11 continuam com o catálogo v11 congelado e o comparador recusa v11 × v12.
+    public const string Version = "ak-knight-v12";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 
@@ -396,14 +400,18 @@ public static class KnightCatalog
             }),
 
         new KnightIndicatorDefinition(
-            "AK-ENTRA-007", "2", "Autenticação legada não bloqueada por política",
+            "AK-ENTRA-007", "3", "Autenticação legada não bloqueada por política",
             KnightIndicatorCategory.IdentityGovernance, SeverityLevel.High, EntraOnly,
             new[] { "PR.AA-02", "PR.PS-01" }, new[] { "T1110 · Brute Force" },
             "Bloquear os clientes de autenticação legada (Exchange ActiveSync e outros clientes) por política de acesso condicional habilitada para todos os usuários e aplicações, ou habilitar os security defaults.",
-            "Política HABILITADA bloqueando Exchange ActiveSync e outros clientes (ou todos os tipos de cliente) para todos os usuários e aplicações, sem exclusão que outra política não cubra — OU security defaults habilitados.",
+            "Política HABILITADA bloqueando Exchange ActiveSync e outros clientes (ou todos os tipos de cliente) para todos os usuários e aplicações, sem exclusão que outra política não cubra — OU security defaults habilitados. "
+            + "Bloqueio dirigido a grupo, e exclusão por grupo, são conferidos pelo pertencimento lido, conta a conta sobre a enumeração completa das contas habilitadas; "
+            + "grupo com pertencimento não lido por completo deixa sem conclusão.",
             // [v2] Reprovar exige as DUAS verificações: nenhuma política bloqueia E os security defaults estão
             // comprovadamente desligados. Security defaults não verificado → não há como reprovar. Bloqueio "para
             // todos" com exclusões não cobertas por outra política → sinal ausente com o motivo → não avaliado.
+            // [v3] Bloqueio dirigido a grupo conferido conta a conta pelo pertencimento lido (catálogo v12): todas as contas
+            // habilitadas alcançadas → bloqueado; conta fora do alcance → não bloqueado; leitura incompleta → não avaliado.
             f =>
             {
                 var defaults = f.Get(KnightSignalKey.SecurityDefaultsEnabled);
@@ -411,7 +419,7 @@ public static class KnightCatalog
                 if (defaults.IsCollected && defaults.Flag == true)
                     return Passed("Autenticação legada bloqueada pelos security defaults.");
                 if (blocked.IsCollected && blocked.Flag == true)
-                    return Passed("Autenticação legada bloqueada por política de acesso condicional habilitada, para todos os usuários e aplicações — sem exclusão que outra política não cubra.");
+                    return Passed("Autenticação legada bloqueada por política de acesso condicional habilitada, para todos os usuários (alvo declarado ou alcance conferido conta a conta) e aplicações — sem exclusão que outra política não cubra.");
                 if (!blocked.IsCollected)
                     return NotEvaluated(blocked.MissingReason ?? "políticas de acesso condicional não coletadas");
                 if (!defaults.IsCollected)

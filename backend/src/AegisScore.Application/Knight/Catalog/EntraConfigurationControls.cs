@@ -49,6 +49,29 @@ public static class EntraConfigurationControls
             Evaluate = evaluate,
         };
 
+    // [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Controles sobre exigências de acesso condicional: a regra "2" resolve o alcance de política
+    // dirigida a grupo, e de exclusão por grupo, pelo pertencimento lido (catálogo v12). O critério diz isso explicitamente.
+    private const string AllUsersScope =
+        " O alvo em todos os usuários vale declarado, ou comprovado conta a conta pelo pertencimento lido dos grupos sobre a enumeração "
+        + "completa das contas habilitadas da mesma coleta; grupo com pertencimento não lido por completo, enumeração ausente ou nenhuma "
+        + "conta alcançada nunca aprovam.";
+
+    private const string AdminScope =
+        " Quem detém o papel via grupo, e a inclusão ou exclusão por grupo, são conferidos pelo pertencimento lido; grupo com "
+        + "pertencimento não lido por completo deixa a cobertura sem conclusão.";
+
+    private static KnightIndicatorDefinition CaControl(
+        string id, string title, KnightIndicatorCategory category, SeverityLevel severity,
+        string recommendation, string criterion, Func<KnightEvaluationContext, KnightControlOutcome> evaluate,
+        params KnightReferenceLink[] references) =>
+        Control(id, title, category, severity, recommendation, criterion + AllUsersScope, evaluate, references) with { Version = "2" };
+
+    private static KnightIndicatorDefinition CaAdminControl(
+        string id, string title, KnightIndicatorCategory category, SeverityLevel severity,
+        string recommendation, string criterion, Func<KnightEvaluationContext, KnightControlOutcome> evaluate,
+        params KnightReferenceLink[] references) =>
+        Control(id, title, category, severity, recommendation, criterion + AdminScope, evaluate, references) with { Version = "2" };
+
     // ---- Leitores ------------------------------------------------------------------------------------
 
     private static KnightControlOutcome Single<T>(KnightEvaluationContext c, Func<T, KnightControlOutcome> rule) where T : class
@@ -197,13 +220,15 @@ public static class EntraConfigurationControls
         KnightEvaluationContext c, CaRequirement req, string passed, string exposed)
     {
         var e = ConditionalAccessRequirements.ForAllUsers(c.Directory, req, CaMissing(c), c.MemberLabel);
-        var evidence = e.Satisfying.Select(r => PolicyEvidence(r, $"Aplica {req.Label} para todos os usuários"
-                + (r.HasExclusions ? ", com exceções listadas na configuração." : ", sem exceções.")))
+        var evidence = e.Satisfying.Select(r => PolicyEvidence(r, SatisfyingDetail(r, e, req.Label)))
             .Concat(e.NotCounting.Select(x => PolicyEvidence(x.Policy, $"Não conta para {req.Label}: {x.Why}.")))
             .ToList();
         return e.State switch
         {
             CaCoverageState.Satisfied => KnightControlOutcome.Passed(passed, evidence),
+            // [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Lacuna comprovada conta a conta: o motivo traz os números.
+            CaCoverageState.NotSatisfied when e.Reason is not null => KnightControlOutcome.Exposed(exposed + " " + e.Reason,
+                Array.Empty<KnightIndicatorObject>(), evidence),
             CaCoverageState.NotSatisfied => KnightControlOutcome.Exposed(
                 exposed + (e.NotCounting.Count > 0
                     ? $" {ConditionalAccessAnalyzer.Plural(e.NotCounting.Count, "política trata do tema, mas não conta", "políticas tratam do tema, mas não contam")} (motivos na evidência)."
@@ -213,10 +238,19 @@ public static class EntraConfigurationControls
         };
     }
 
+    /// <summary>Por que a política conta: alvo declarado em todos, ou [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] alcance conferido conta a conta.</summary>
+    private static string SatisfyingDetail(ConditionalAccessPolicyReading r, CaRequirementEvaluation e, string label) =>
+        r.TargetsAllUsers
+            ? $"Aplica {label} para todos os usuários" + (r.HasExclusions ? ", com exceções listadas na configuração." : ", sem exceções.")
+            : e.Reach is { } reach && reach.TryGetValue(r.Policy.Id, out var why)
+                ? $"Aplica {label} — {why}."
+                : $"Aplica {label} às contas que alcança.";
+
     private static KnightControlOutcome PrivilegedRequirement(
         KnightEvaluationContext c, CaRequirement req, string passed, string exposed)
     {
         var e = ConditionalAccessRequirements.ForPrivilegedRoles(c.Directory, req, CaMissing(c));
+        var membershipCollected = c.Directory?.GroupMemberships is not null;
         var evidence = e.Satisfying.Select(r => PolicyEvidence(r, $"Aplica {req.Label}."))
             .Concat(e.NotCounting.Select(x => PolicyEvidence(x.Policy, $"Não conta para {req.Label}: {x.Why}.")))
             .ToList();
@@ -235,6 +269,10 @@ public static class EntraConfigurationControls
                 RoleMfaCoverageState.CoveredWithExceptions => "Exceções sem outra cobertura: " + string.Join(", ", excepted) + ".",
                 // [AEGIS-KNIGHT-COLLECTION-GAPS-01]
                 RoleMfaCoverageState.NoUserMembers => "Só identidades de aplicação — fora da exigência de autenticação de usuários.",
+                // [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Com o pertencimento lido, a leitura que falta é dita (grupo, convidado, papel via grupo).
+                _ when membershipCollected => "Cobertura não resolvida"
+                    + (role.UnresolvedMemberIds.Count > 0 ? " para " + string.Join(", ", role.UnresolvedMemberIds.Select(c.MemberLabel)) : "")
+                    + (role.Notes.Count > 0 ? " — " + string.Join(" ", role.Notes) : "."),
                 _ => "Cobertura não resolvida — depende de grupo(s) cujo pertencimento não é coletado.",
             };
             var obj = new KnightIndicatorObject(
@@ -900,7 +938,7 @@ public static class EntraConfigurationControls
             Ref(M365 + "5.1.8.1")),
 
         // ==== Dispositivos ====
-        Control("AK-ENTRA-040", "Registro ou ingresso de dispositivos sem exigência de MFA", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-040", "Registro ou ingresso de dispositivos sem exigência de MFA", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
             "Exigir MFA para registrar ou ingressar dispositivos — pela política de dispositivos ou por acesso condicional na ação “registrar ou ingressar dispositivos”.",
             "Política de dispositivos com MFA exigida, ou política de acesso condicional habilitada exigindo MFA na ação de registro de dispositivos para todos os usuários.",
             c => Single<EntraDeviceRegistrationConfiguration>(c, p =>
@@ -1229,7 +1267,7 @@ public static class EntraConfigurationControls
             Ref(M365 + "1.3.7")),
 
         // ==== Acesso condicional (além de MFA e autenticação legada) ====
-        Control("AK-ENTRA-058", "Frequência de entrada e sessão não persistente não exigidas para administradores", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.Medium,
+        CaAdminControl("AK-ENTRA-058", "Frequência de entrada e sessão não persistente não exigidas para administradores", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.Medium,
             "Criar política de acesso condicional para os papéis administrativos com frequência de entrada de até 4 horas e sessão de navegador nunca persistente.",
             "Cada membro dos papéis privilegiados ativos alcançado por política habilitada, em todas as aplicações, com frequência de entrada de até 4 horas e navegador nunca persistente.",
             c => PrivilegedRequirement(c, SignInFrequencyAdmins,
@@ -1237,7 +1275,7 @@ public static class EntraConfigurationControls
                 "Frequência de entrada e sessão não persistente não são exigidas de todos os administradores."),
             Ref(M365 + "5.2.2.4")),
 
-        Control("AK-ENTRA-059", "MFA resistente a phishing não exigida para administradores", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High,
+        CaAdminControl("AK-ENTRA-059", "MFA resistente a phishing não exigida para administradores", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.High,
             "Exigir a força de autenticação “MFA resistente a phishing” para os papéis administrativos em todas as aplicações.",
             "Cada membro dos papéis privilegiados ativos alcançado por política habilitada, em todas as aplicações, que exige força de autenticação resistente a phishing.",
             c => PrivilegedRequirement(c, PhishingResistantAdmins,
@@ -1245,70 +1283,70 @@ public static class EntraConfigurationControls
                 "MFA resistente a phishing não é exigida de todos os administradores."),
             Ref(M365 + "5.2.2.5")),
 
-        Control("AK-ENTRA-060", "Política de risco de usuário ausente", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
+        CaControl("AK-ENTRA-060", "Política de risco de usuário ausente", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Criar política de acesso condicional para risco alto de usuário exigindo troca de senha com MFA e reautenticação a cada vez.",
             "Política habilitada para todos os usuários e aplicações, risco de usuário alto, troca de senha e MFA exigidas (operador E) e frequência de entrada “a cada vez”.",
             c => AllUsersRequirement(c, UserRiskPolicy,
                 "Usuários de risco alto precisam trocar a senha com MFA.", "Não há política habilitada que responda ao risco alto de usuário."),
             Ref(M365 + "5.2.2.6")),
 
-        Control("AK-ENTRA-061", "Política de risco de entrada ausente", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
+        CaControl("AK-ENTRA-061", "Política de risco de entrada ausente", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Criar política de acesso condicional para entradas de risco médio e alto exigindo MFA e reautenticação a cada vez.",
             "Política habilitada para todos os usuários e aplicações, riscos de entrada médio e alto, MFA exigida e frequência de entrada “a cada vez”.",
             c => AllUsersRequirement(c, SignInRiskPolicy,
                 "Entradas de risco médio e alto exigem MFA.", "Não há política habilitada que exija MFA em entradas de risco médio e alto."),
             Ref(M365 + "5.2.2.7")),
 
-        Control("AK-ENTRA-062", "Entradas de risco médio e alto não bloqueadas", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-062", "Entradas de risco médio e alto não bloqueadas", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
             "Criar política de acesso condicional que bloqueie entradas de risco médio e alto.",
             "Política habilitada para todos os usuários e aplicações que bloqueia riscos de entrada médio e alto.",
             c => AllUsersRequirement(c, BlockSignInRisk,
                 "Entradas de risco médio e alto são bloqueadas.", "Não há política habilitada que bloqueie entradas de risco médio e alto."),
             Ref(M365 + "5.2.2.8")),
 
-        Control("AK-ENTRA-063", "Dispositivo gerenciado não exigido para autenticação", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-063", "Dispositivo gerenciado não exigido para autenticação", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
             "Exigir dispositivo em conformidade ou ingressado no domínio híbrido para acessar as aplicações da organização.",
             "Política habilitada para todos os usuários e aplicações exigindo dispositivo em conformidade ou ingressado (sem alternativa de outro controle).",
             c => AllUsersRequirement(c, ManagedDevice,
                 "O acesso exige dispositivo gerenciado.", "Não há política habilitada que exija dispositivo gerenciado para todos."),
             Ref(M365 + "5.2.2.9")),
 
-        Control("AK-ENTRA-064", "Registro de informações de segurança sem dispositivo gerenciado", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-064", "Registro de informações de segurança sem dispositivo gerenciado", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
             "Exigir dispositivo em conformidade ou ingressado para a ação “registrar informações de segurança”.",
             "Política habilitada para todos os usuários na ação de registro de informações de segurança exigindo dispositivo gerenciado.",
             c => AllUsersRequirement(c, ManagedDeviceForSecurityInfo,
                 "O registro de informações de segurança exige dispositivo gerenciado.", "Não há política habilitada que exija dispositivo gerenciado para registrar informações de segurança."),
             Ref(M365 + "5.2.2.10")),
 
-        Control("AK-ENTRA-065", "Registro no Intune sem reautenticação a cada vez", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-065", "Registro no Intune sem reautenticação a cada vez", KnightIndicatorCategory.DeviceGovernance, SeverityLevel.Medium,
             "Criar política para o aplicativo de registro do Intune exigindo MFA e frequência de entrada “a cada vez”.",
             "Política habilitada para todos os usuários, alcançando o registro do Intune, com MFA e frequência de entrada “a cada vez”.",
             c => AllUsersRequirement(c, IntuneEnrollmentEveryTime,
                 "O registro de dispositivos no Intune exige reautenticação com MFA a cada vez.", "Não há política habilitada que exija reautenticação a cada vez no registro do Intune."),
             Ref(M365 + "5.2.2.11")),
 
-        Control("AK-ENTRA-066", "Fluxo de código de dispositivo não bloqueado", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
+        CaControl("AK-ENTRA-066", "Fluxo de código de dispositivo não bloqueado", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Bloquear por acesso condicional o fluxo de código de dispositivo para todos os usuários, com exceções só para cenários aprovados.",
             "Política habilitada para todos os usuários e aplicações que bloqueia a transferência “fluxo de código de dispositivo”.",
             c => AllUsersRequirement(c, BlockTransfer("deviceCodeFlow", "bloqueio do fluxo de código de dispositivo"),
                 "O fluxo de código de dispositivo está bloqueado.", "O fluxo de código de dispositivo não está bloqueado por política habilitada."),
             Ref(M365 + "5.2.2.12")),
 
-        Control("AK-ENTRA-067", "Reautenticação periódica não exigida", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
+        CaControl("AK-ENTRA-067", "Reautenticação periódica não exigida", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Exigir reautenticação periódica (frequência de entrada de até 7 dias) para todos os usuários em todas as aplicações.",
             "Política habilitada para todos os usuários e aplicações com frequência de entrada de até 7 dias.",
             c => AllUsersRequirement(c, PeriodicReauthentication,
                 "Todos os usuários precisam se autenticar novamente em até 7 dias.", "Não há política habilitada que exija reautenticação periódica de todos."),
             Ref(M365 + "5.2.2.13")),
 
-        Control("AK-ENTRA-068", "Transferência de autenticação não bloqueada", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
+        CaControl("AK-ENTRA-068", "Transferência de autenticação não bloqueada", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.High,
             "Bloquear por acesso condicional a transferência de autenticação entre dispositivos.",
             "Política habilitada para todos os usuários e aplicações que bloqueia a “transferência de autenticação”.",
             c => AllUsersRequirement(c, BlockTransfer("authenticationTransfer", "bloqueio da transferência de autenticação"),
                 "A transferência de autenticação está bloqueada.", "A transferência de autenticação não está bloqueada por política habilitada."),
             Ref(M365 + "5.2.2.17")),
 
-        Control("AK-ENTRA-069", "Tempo limite de sessão ociosa não imposto por política", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-069", "Tempo limite de sessão ociosa não imposto por política", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
             "Habilitar o tempo limite de sessão ociosa do Microsoft 365 e a política de acesso condicional com restrições impostas pelo aplicativo para navegadores.",
             "Política habilitada para todos os usuários, alcançando o Office 365 no navegador, com “restrições impostas pelo aplicativo”.",
             c => AllUsersRequirement(c, IdleSessionRestriction,
@@ -1319,7 +1357,7 @@ public static class EntraConfigurationControls
 
         // [AEGIS-KNIGHT-COVERAGE-04] Antes declarada "sem leitura na versão estável": a v1.0 do Microsoft Graph expõe
         // conditionalAccessSessionControls.secureSignInSession, e a coleta de acesso condicional já lê as políticas.
-        Control("AK-ENTRA-070", "Sessões de entrada sem proteção de token", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
+        CaControl("AK-ENTRA-070", "Sessões de entrada sem proteção de token", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
             "Criar política de acesso condicional que exija proteção de token nas sessões de entrada do Exchange Online e do SharePoint Online.",
             "Política habilitada para todos os usuários, alcançando o Exchange Online e o SharePoint Online, com o controle de sessão “exigir proteção de token para sessões de entrada”.",
             c => c.Directory?.ConditionalAccessPolicies is { } ps && ps.Any(p => p.SecureSignInSessionEnabled is null)
