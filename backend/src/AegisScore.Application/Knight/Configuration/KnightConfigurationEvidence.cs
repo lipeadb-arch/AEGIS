@@ -229,6 +229,14 @@ public static class KnightConfigurationEvidence
             ? " (alcança todos os tipos de cliente, inclusive os legados)"
             : "";
 
+        // [AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Bloqueio dirigido a grupo conferido conta a conta pelo pertencimento lido.
+        var reach = legacy.Reach is { } map && map.TryGetValue(p.Id, out var why) ? why : null;
+        if (reach is not null)
+            return legacy.BlockingPolicyIds.Contains(p.Id)
+                ? "Bloqueia a autenticação legada em todas as aplicações" + clients + "; " + reach + "."
+                : "Bloqueia a autenticação legada em todas as aplicações" + clients + ", mas não comprova o bloqueio para todos os usuários: "
+                  + reach + (legacy.InconclusiveReason is null ? "." : " — " + legacy.InconclusiveReason);
+
         if (legacy.BlockingPolicyIds.Contains(p.Id))
         {
             if (!r.TargetsAllUsers)

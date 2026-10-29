@@ -330,6 +330,7 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
         public bool PolicyToAllUsersExcludingBreakGlass { get; init; }
         public bool HiddenExclusion { get; init; }
         public bool PagedAdmins { get; init; } = true;
+        public string ExtraPolicies { get; init; } = "";
         public List<string> Requests { get; } = new();
 
         private static string J(object o) => JsonSerializer.Serialize(o);
@@ -413,7 +414,7 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
                            "grantControls":{"operator":"OR","builtInControls":["mfa"]}},
                           {"id":"p-admins","displayName":"Require multifactor authentication for admins","state":"enabled",
                            "conditions":{"users":{"includeRoles":["{{{Ga}}}","{{{Sa}}}","{{{Dev}}}"]},"applications":{"includeApplications":["All"]},"clientAppTypes":["all"]},
-                           "grantControls":{"operator":"OR","builtInControls":["mfa"]}}
+                           "grantControls":{"operator":"OR","builtInControls":["mfa"]}}{{{ExtraPolicies}}}
                         ]}
                         """);
             return null;
@@ -521,6 +522,51 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
         baseline.Status.Should().Be(KnightIndicatorStatus.Passed, baseline.NotEvaluatedReason ?? baseline.Evidence);
     }
 
+    /// <summary>[AEGIS-KNIGHT-CA-GROUP-SCOPE-01] Bloqueios dirigidos ao grupo g-todos (fluxo de código e autenticação legada).</summary>
+    private const string GroupScopedBlocks = """
+        ,
+          {"id":"p-codigo","displayName":"Bloquear o fluxo de código de dispositivo","state":"enabled",
+           "conditions":{"users":{"includeGroups":["g-todos"]},"applications":{"includeApplications":["All"]},"clientAppTypes":["all"],
+                         "authenticationFlows":{"transferMethods":"deviceCodeFlow"}},
+           "grantControls":{"operator":"OR","builtInControls":["block"]}},
+          {"id":"p-legada","displayName":"Bloquear a autenticação legada","state":"enabled",
+           "conditions":{"users":{"includeGroups":["g-todos"]},"applications":{"includeApplications":["All"]},"clientAppTypes":["exchangeActiveSync","other"]},
+           "grantControls":{"operator":"OR","builtInControls":["block"]}}
+        """;
+
+    [Fact]
+    public async Task BloqueiosDirigidosAGrupo_PertencimentoCompletoNoAdm_AvaliadosContaAConta()
+    {
+        var (run, db) = await RunAsync(new GroupTenant { ExtraPolicies = GroupScopedBlocks });
+
+        // O pertencimento que decide é o preservado no ADM, com a procedência das duas políticas novas.
+        var todos = Deserialize<EntraGroupMembership>((await Observations(db, run.Id))
+            .Single(d => d.ExternalId == "g-todos" && d.Kind == ConfigurationObjectKind.DirectoryGroupMembership));
+        todos.State.Should().Be(EntraGroupMembershipState.Complete);
+        todos.ReferencedBy.Should().Contain(new[] { "policy:p-codigo:include", "policy:p-legada:include" });
+
+        var deviceCode = Indicator(run, "AK-ENTRA-066");
+        deviceCode.Status.Should().Be(KnightIndicatorStatus.Passed, deviceCode.NotEvaluatedReason ?? deviceCode.Evidence);
+        var legacy = Indicator(run, "AK-ENTRA-007");
+        legacy.Status.Should().Be(KnightIndicatorStatus.Passed, legacy.NotEvaluatedReason ?? legacy.Evidence);
+
+        var objects = await db.KnightAffectedObjects.AsNoTracking()
+            .Where(o => o.RunId == run.Id && (o.IndicatorId == "AK-ENTRA-066" || o.IndicatorId == "AK-ENTRA-007")).ToListAsync();
+        objects.Should().Contain(o => o.IndicatorId == "AK-ENTRA-066" && o.ExternalId == "p-codigo" && o.Detail!.Contains("9 de 9 conta(s) habilitada(s)"));
+        objects.Should().Contain(o => o.IndicatorId == "AK-ENTRA-007" && o.ExternalId == "p-legada" && o.Detail!.Contains("9 de 9 conta(s) habilitada(s)"));
+    }
+
+    [Fact]
+    public async Task BloqueiosDirigidosAGrupo_GrupoNaoAlcancaTodasAsContas_ReprovaComOsNumeros()
+    {
+        var (run, _) = await RunAsync(new GroupTenant { ExtraPolicies = GroupScopedBlocks, Todos = new[] { "u1", "u2", "u3", "u4", "u5" } });
+
+        var deviceCode = Indicator(run, "AK-ENTRA-066");
+        deviceCode.Status.Should().Be(KnightIndicatorStatus.Exposed, deviceCode.NotEvaluatedReason ?? deviceCode.Evidence);
+        deviceCode.Evidence.Should().Contain("4 de 9 conta(s) habilitada(s)");
+        Indicator(run, "AK-ENTRA-007").Status.Should().Be(KnightIndicatorStatus.Exposed);
+    }
+
     [Fact]
     public async Task PaginacaoInterrompida_GrupoIncompleto_PreservaOsListados_ENaoAprova()
     {
@@ -561,7 +607,7 @@ public sealed class KnightEntraGroupMembershipTests : IDisposable
         var run = await KnightMulticloudReportTests.ServiceFor(db, tenantId, scenario.Handler()).RunAssessmentAsync(KnightSourceType.MicrosoftEntraId);
         foreach (var c in run.Capabilities.Where(c => c.Capability is KnightCapability.EntraGroupMembership or KnightCapability.PrivilegedRoleInventory))
             _output.WriteLine($"cap {c.Capability} {c.Outcome} {c.Detail}");
-        foreach (var i in run.Indicators.Where(i => i.IndicatorId is "AK-ENTRA-001" or "AK-ENTRA-002" or "AK-ENTRA-008" or "AK-ENTRA-011" or "AK-ENTRA-014"))
+        foreach (var i in run.Indicators.Where(i => i.IndicatorId is "AK-ENTRA-001" or "AK-ENTRA-002" or "AK-ENTRA-007" or "AK-ENTRA-008" or "AK-ENTRA-011" or "AK-ENTRA-014" or "AK-ENTRA-066"))
             _output.WriteLine($"{i.IndicatorId} {i.Status} {i.NotEvaluatedReason ?? i.Evidence}");
         return (run, db);
     }
