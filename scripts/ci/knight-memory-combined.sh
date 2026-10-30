@@ -89,7 +89,7 @@ for r in $(seq 1 "$ROUNDS"); do
     call GET "$path" | { [ "$r" = "1" ] && cat || cat >/dev/null; }
   done
   SNAP="$(curl -s -X POST -H "$HDR" -H "Authorization: Bearer $TOKEN" -H "X-Tenant: $TENANT" -H 'Content-Type: application/json' \
-    -d '{"type":"Knight","source":"demo"}' "$BASE/api/v1/posture/snapshots" | tee "$WORK/snap.json" | jq -r '.id // empty' 2>/dev/null)"
+    -d '{"type":"Knight","source":"demo"}' "$BASE/api/v1/posture/snapshots" | tee "$WORK/snap.json" | jq -r '.summary.id // .id // empty' 2>/dev/null)"
   if [ -n "$SNAP" ]; then
     for fmt in pdf html csv; do call GET "/api/v1/posture/snapshots/$SNAP/export?format=$fmt" | { [ "$r" = "1" ] && cat || cat >/dev/null; }; done
   elif [ "$r" = "1" ]; then echo "fotografia sintética não publicada (o aquecimento segue sem exportação): $(head -c 300 "$WORK/snap.json")"; fi

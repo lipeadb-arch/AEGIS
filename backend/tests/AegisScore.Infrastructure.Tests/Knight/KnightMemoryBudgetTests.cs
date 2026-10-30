@@ -147,6 +147,66 @@ public sealed class KnightMemoryBudgetTests
         before.Detail.Should().NotContain("não carregou");
     }
 
+    // ---- Orçamento de memória -----------------------------------------------------------------------------------------------------------
+
+    private static string Stat(long file, long shmem, long mapped, long active, long inactive, long dirty = 0) =>
+        $"anon 1000\nfile {file}\nshmem {shmem}\nfile_mapped {mapped}\nactive_file {active}\ninactive_file {inactive}\nfile_dirty {dirty}\nfile_writeback 0\nkernel 5\n";
+
+    [Fact]
+    public void Pressao_DescontaSoCacheLimpoENaoMapeado()
+    {
+        // 100 de cache sem mapeamento: o kernel devolve isso antes de um OOM.
+        var clean = ContainerMemorySample.Parse("400", "512", Stat(file: 120, shmem: 0, mapped: 20, active: 60, inactive: 60))!;
+        clean.ReclaimableBytes.Should().Be(100);
+        clean.PressureBytes.Should().Be(300);
+
+        // tmpfs e memória compartilhada ficam em file, mas sem swap não têm para onde ir.
+        var tmpfs = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 200, mapped: 0, active: 0, inactive: 0))!;
+        tmpfs.ReclaimableBytes.Should().Be(0);
+        tmpfs.UnderPressure.Should().BeTrue("tmpfs cheio não pode parecer memória recuperável");
+
+        // Código mapeado em uso e página suja também não contam.
+        var mapped = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0, dirty: 50))!;
+        mapped.ReclaimableBytes.Should().Be(0);
+        mapped.UnderPressure.Should().BeTrue();
+
+        ContainerMemorySample.Parse("460", "512")!.UnderPressure.Should().BeTrue("sem memory.stat vale o total");
+        new ContainerMemorySample(447, 512).UnderPressure.Should().BeFalse("o gatilho continua em 87,5%");
+        new ContainerMemorySample(448, 512).UnderPressure.Should().BeTrue("o gatilho continua em 87,5%");
+    }
+
+    [Fact]
+    public async Task SemFolgaParaOAdaptador_NaoIniciaOProcesso_EDizACausa()
+    {
+        // Executável inexistente: se o processo fosse iniciado, o transporte lançaria em vez de devolver o relatório.
+        var reader = new PowerShellTeamsAdminReader(new TeamsPowerShellOptions
+        {
+            Executable = "aegis-executavel-que-nao-existe",
+            MemoryProbe = () => new ContainerMemorySample(400, 512),
+        });
+
+        var result = await new TeamsKnightCollector(new TeamsTokens(), reader)
+            .CollectAsync(new KnightCollectionContext(Tenant, new KnightTeamsConfiguration("dir", "client", "secret")));
+
+        result.Capabilities.Should().NotBeEmpty();
+        result.Capabilities.Should().OnlyContain(c => c.Diagnostic!.Kind == KnightFailureKind.MemoryLimit && c.Diagnostic.Stage == PowerShellAdapterProcess.MemoryPreflightStage);
+        result.Capabilities.Should().OnlyContain(c => c.Detail!.Contains("não foi iniciado") && c.Detail.Contains("não indica falta de permissão"));
+    }
+
+    [Fact]
+    public void AmbienteDoFilho_TemOrcamentoProprio_SemSobrescreverOOperador()
+    {
+        var env = new Dictionary<string, string?>();
+        ContainerMemorySample.ConfigureChildGc(env);
+        env["DOTNET_gcServer"].Should().Be("0");
+        env["DOTNET_gcConcurrent"].Should().Be("0");
+        env["DOTNET_TieredPGO"].Should().Be("0");
+
+        env = new() { ["DOTNET_gcServer"] = "1" };
+        ContainerMemorySample.ConfigureChildGc(env);
+        env["DOTNET_gcServer"].Should().Be("1");
+    }
+
     // ---- Interpretação consultiva determinística ----------------------------------------------------------------------------------------
 
     private static KnightAdvisoryIndicator Indicator(KnightIndicatorDefinition d, KnightIndicatorStatus status, string evidence) =>

@@ -123,6 +123,9 @@ public static class PowerShellRunInterpretation
             PowerShellTermination.TimedOut =>
                 $"não terminou no tempo limite e foi encerrado pelo AEGIS após {report.DurationMs / 1000} s",
             PowerShellTermination.OutputLimit => "a saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS",
+            PowerShellTermination.MemoryLimit when report.Reached(PowerShellAdapterProcess.MemoryPreflightStage) =>
+                "não foi iniciado pelo AEGIS: faltou memória no contêiner para o adaptador, mesmo depois de a aplicação devolver o que não usava; "
+                + "isso não indica falta de permissão",
             PowerShellTermination.MemoryLimit => "foi encerrado pelo AEGIS por pressão de memória no contêiner, para preservar a aplicação; "
                 + "isso não indica falta de permissão e somente as leituras concluídas foram preservadas",
             PowerShellTermination.NoResult => "terminou com código 0 sem emitir o documento de resultado",
@@ -155,6 +158,7 @@ public static class PowerShellRunInterpretation
     public static string StageLabel(string? stage) => stage switch
     {
         null => "antes de o script declarar qualquer estágio (o runtime não chegou a executá-lo)",
+        PowerShellAdapterProcess.MemoryPreflightStage => "verificação de memória antes de iniciar o adaptador",
         "start" => "início do script",
         "input" => "leitura do pedido",
         "import" => "importação do módulo oficial",

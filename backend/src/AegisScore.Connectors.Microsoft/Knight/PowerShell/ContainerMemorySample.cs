@@ -9,6 +9,14 @@ namespace AegisScore.Connectors.Microsoft.Knight.PowerShell;
 internal sealed record ContainerMemoryStat(
     long Anon, long File, long Shmem, long ActiveFile, long InactiveFile, long FileMapped, long FileDirty, long FileWriteback, long Kernel)
 {
+    /// <summary>
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] Só o cache de página limpo e sem mapeamento, que o kernel devolve antes de qualquer OOM. <c>file</c> inteiro
+    /// não serve: inclui memória compartilhada e tmpfs (que não têm para onde ir sem swap) e o código mapeado em uso. <c>file_mapped</c> também
+    /// conta a memória compartilhada mapeada (o código JIT do .NET fica nela), por isso só o que excede <c>shmem</c> é arquivo mapeado.
+    /// </summary>
+    public long ReclaimableFileCache =>
+        Math.Max(0, Math.Min(ActiveFile + InactiveFile, File - Shmem - Math.Max(0, FileMapped - Shmem) - FileDirty - FileWriteback));
+
     internal static ContainerMemoryStat? Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
@@ -29,7 +37,26 @@ internal sealed record ContainerMemoryStat(
 /// <summary>Somente contadores do cgroup v2; ausência de limite não é interpretada como memória esgotada.</summary>
 internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes, ContainerMemoryStat? Stat = null)
 {
-    public bool UnderPressure => CurrentBytes >= LimitBytes - LimitBytes / 8;
+    public long ReclaimableBytes => Stat?.ReclaimableFileCache ?? 0;
+
+    /// <summary>Memória que não pode ser devolvida sem encerrar alguém. Sem o detalhe de <c>memory.stat</c>, vale o total.</summary>
+    public long PressureBytes => CurrentBytes - ReclaimableBytes;
+
+    /// <summary>O gatilho continua em 87,5% do limite do contêiner.</summary>
+    public long TriggerBytes => LimitBytes - LimitBytes / 8;
+
+    public bool UnderPressure => PressureBytes >= TriggerBytes;
+
+    /// <summary>Quanto ainda cabe até o gatilho.</summary>
+    public long HeadroomBytes => TriggerBytes - PressureBytes;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] Folga mínima para iniciar um adaptador. Abaixo dela, o monitor encerraria o filho durante a importação,
+    /// depois de consumir a coleta inteira: é melhor dizer de saída. Valor medido na reprodução combinada do CI.
+    /// </summary>
+    public long StartReserveBytes => LimitBytes / 4;
+
+    public bool CanStartChild => HeadroomBytes >= StartReserveBytes;
 
     public static ContainerMemorySample? Read()
     {
@@ -61,6 +88,16 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
         if (!hasHeapSetting) environment["DOTNET_GCHeapHardLimitPercent"] = "19";
         if (!environment.ContainsKey("DOTNET_GCConserveMemory") && !environment.ContainsKey("COMPlus_GCConserveMemory"))
             environment["DOTNET_GCConserveMemory"] = "6";
+        // [AEGIS-KNIGHT-MEMORY-BUDGET] O pwsh pede GC de servidor em tempo de execução; ele reserva por núcleo, sem relação com o contêiner.
+        SetUnlessPresent(environment, "gcServer", "0");
+        SetUnlessPresent(environment, "gcConcurrent", "0");
+        SetUnlessPresent(environment, "TieredPGO", "0");
+    }
+
+    private static void SetUnlessPresent(IDictionary<string, string?> environment, string setting, string value)
+    {
+        if (!environment.ContainsKey("DOTNET_" + setting) && !environment.ContainsKey("COMPlus_" + setting))
+            environment["DOTNET_" + setting] = value;
     }
 }
 

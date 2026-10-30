@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -179,6 +180,9 @@ public sealed class PowerShellAdapterProcess
     /// <summary>Prefixo dos quadros do protocolo na saída padrão.</summary>
     public const string FramePrefix = "##aegis:";
 
+    /// <summary>Estágio de quem nem chegou a iniciar o processo: não havia memória para o adaptador.</summary>
+    public const string MemoryPreflightStage = "memory-preflight";
+
     private const int MaxStderrChars = 64 * 1024;
     private const int MaxNoiseSampleChars = 4 * 1024;
 
@@ -284,6 +288,8 @@ public sealed class PowerShellAdapterProcess
         if (_options.MemoryProbe() is not null) ContainerMemorySample.ConfigureChildGc(psi.Environment);
 
         var clock = Stopwatch.StartNew();
+        if (PrepareChildStart() is { } notStarted) return notStarted;
+
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_options.Timeout);
 
@@ -421,6 +427,34 @@ public sealed class PowerShellAdapterProcess
         return new PowerShellAdapterRun(frames.Document(), report);
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] A API e o filho dividem o contêiner, e o GC só devolve memória sob pressão que ele próprio enxergue: depois de
+    /// uma coleta grande, o heap da API fica ocupado com lixo e o filho é encerrado na importação. Antes de cada adaptador a API compacta e
+    /// devolve o que não usa. Se ainda assim não couber, o adaptador não é iniciado e a causa é dita sem gastar a importação.
+    /// </summary>
+    private PowerShellAdapterRun? PrepareChildStart()
+    {
+        if (_options.MemoryProbe() is not { } before) return null;
+
+        GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+
+        var after = _options.MemoryProbe() ?? before;
+        var api = ProcessMemorySample.Read(Environment.ProcessId);
+        _log?.LogInformation(
+            "knight-memoria-inicio adaptador={Adaptador} antes={Antes} depois={Depois} recuperavel={Recuperavel} folga={Folga} reserva={Reserva} "
+            + "apiRss={ApiRss} apiAnon={ApiAnon} apiHeap={ApiHeap} limite={Limite}",
+            _adapterLabel, before.PressureBytes, after.PressureBytes, after.ReclaimableBytes, after.HeadroomBytes, after.StartReserveBytes,
+            api?.RssBytes ?? 0, api?.AnonBytes ?? 0, GC.GetTotalMemory(false), after.LimitBytes);
+        if (after.CanStartChild) return null;
+
+        _log?.LogWarning("Adaptador do {Adaptador}: não iniciado por falta de memória. Folga={Folga}, Reserva={Reserva}, Limite={Limite}.",
+            _adapterLabel, after.HeadroomBytes, after.StartReserveBytes, after.LimitBytes);
+        return new PowerShellAdapterRun("""{"runtime":{},"connected":false,"reads":[]}""", new PowerShellRunReport(
+            PowerShellTermination.MemoryLimit, null, new[] { MemoryPreflightStage }, Array.Empty<string>(), Array.Empty<string>(), false, true,
+            0, 0, 0, ""));
+    }
+
     private async Task MonitorMemoryAsync(Process process, MemoryTrack? track, Action limitReached, CancellationToken ct)
     {
         try
@@ -466,7 +500,7 @@ public sealed class PowerShellAdapterProcess
         public void Observe(ContainerMemorySample sample, Process? child)
         {
             _peakContainer = Math.Max(_peakContainer, sample.CurrentBytes);
-            _peakPressure = Math.Max(_peakPressure, sample.CurrentBytes);
+            _peakPressure = Math.Max(_peakPressure, sample.PressureBytes);
             if (sample.Stat is { } stat)
             {
                 _peakAnon = Math.Max(_peakAnon, stat.Anon);
@@ -483,7 +517,7 @@ public sealed class PowerShellAdapterProcess
         }
 
         public PowerShellMemoryUsage Usage(long? childHeap, long? childCommitted) => new(
-            _start.LimitBytes, _start.CurrentBytes, 0, _api?.RssBytes ?? 0, _api?.AnonBytes ?? 0, _apiHeap, _apiCommitted,
+            _start.LimitBytes, _start.CurrentBytes, _start.ReclaimableBytes, _api?.RssBytes ?? 0, _api?.AnonBytes ?? 0, _apiHeap, _apiCommitted,
             _peakContainer, _peakAnon, _peakShmem, _peakFile, _peakActive, _peakInactive, _peakPressure, _childRss, _childAnon,
             childHeap, childCommitted);
     }
