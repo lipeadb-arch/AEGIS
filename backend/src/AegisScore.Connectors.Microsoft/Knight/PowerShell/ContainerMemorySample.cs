@@ -60,7 +60,7 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
 
     /// <summary>
     /// [AEGIS-KNIGHT-MEMORY-BUDGET] Folga mínima para iniciar um adaptador. Abaixo dela, o monitor encerraria o filho durante a importação,
-    /// depois de consumir a coleta inteira: é melhor dizer de saída. Valor medido na reprodução combinada do CI.
+    /// sem nenhuma leitura: é melhor dizer de saída. Na reprodução combinada do CI, a menor importação oficial somou cerca de 120 MiB à pressão.
     /// </summary>
     public long StartReserveBytes => LimitBytes / 4;
 

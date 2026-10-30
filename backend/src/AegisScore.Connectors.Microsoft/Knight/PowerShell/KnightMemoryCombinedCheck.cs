@@ -45,8 +45,8 @@ public static class KnightMemoryCombinedCheck
         void Line(string name, PowerShellRunReport? report, bool success, string detail = "")
         {
             output.WriteLine(
-                $"combinado {name}: {(success ? "ok" : "FALHA")} terminação={report?.Termination.ToString() ?? "?"} "
-                + $"estágios={(report is null ? "?" : string.Join(">", report.Stages))} {detail}".TrimEnd());
+                $"combinado {name}: {(success ? "ok" : "FALHA")} "
+                + (report is null ? detail : $"terminação={report.Termination} estágios={string.Join(">", report.Stages)}"));
             output.Flush();
             ok &= success;
         }
