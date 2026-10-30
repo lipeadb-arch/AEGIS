@@ -29,7 +29,10 @@ COPY backend/ ./backend/
 # Empacota o SPA compilado no wwwroot da API ANTES do publish: o Web SDK inclui o wwwroot no output,
 # e a API o serve same-origin (UseStaticFiles + MapFallbackToFile no Program.cs).
 COPY --from=frontend /src/frontend/dist/aegis-score-frontend/browser/ ./backend/src/AegisScore.Api/wwwroot/
+# [AEGIS-KNIGHT-MEMORY-BUDGET] ReadyToRun: o código da API e das dependências sai pré-compilado e deixa de ocupar memória compartilhada de JIT,
+# que não tem como ser devolvida num contêiner sem swap dividido com o adaptador do PowerShell.
 RUN dotnet publish backend/src/AegisScore.Api/AegisScore.Api.csproj -c Release -o /app/api \
+      -r linux-x64 --self-contained false -p:PublishReadyToRun=true \
     && dotnet publish backend/src/AegisScore.DbMigrator/AegisScore.DbMigrator.csproj -c Release -o /app/migrator
 
 # ---- Stage 2b: runtime do PowerShell + módulos OFICIAIS de Teams e Exchange Online ----
@@ -129,7 +132,8 @@ RUN set -eux; \
 ENV ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://+:8080 \
-    DocumentStorage__RootPath=/app/document-store
+    DocumentStorage__RootPath=/app/document-store \
+    MALLOC_ARENA_MAX=2
 
 # [AEGIS-KNIGHT-COVERAGE-02] Adaptador de coleta do Microsoft Teams: executável e módulo PRÉ-INSTALADOS nesta
 # imagem. São configuração do AMBIENTE — o locatário nunca escolhe executável, comando ou destino. Telemetria e

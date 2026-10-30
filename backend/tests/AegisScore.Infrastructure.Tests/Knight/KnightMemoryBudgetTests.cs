@@ -201,6 +201,8 @@ public sealed class KnightMemoryBudgetTests
         env["DOTNET_gcServer"].Should().Be("0");
         env["DOTNET_gcConcurrent"].Should().Be("0");
         env["DOTNET_TieredPGO"].Should().Be("0");
+        env["DOTNET_TieredCompilation"].Should().Be("0");
+        env["DOTNET_GCgen0MaxBudget"].Should().Be("1000000", "16 MiB em hexadecimal");
 
         env = new() { ["DOTNET_gcServer"] = "1" };
         ContainerMemorySample.ConfigureChildGc(env);

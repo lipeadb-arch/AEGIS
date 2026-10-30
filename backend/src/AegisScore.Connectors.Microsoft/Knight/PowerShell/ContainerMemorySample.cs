@@ -92,6 +92,9 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
         SetUnlessPresent(environment, "gcServer", "0");
         SetUnlessPresent(environment, "gcConcurrent", "0");
         SetUnlessPresent(environment, "TieredPGO", "0");
+        // Processo curto: usa o código pré-compilado do pwsh sem recompilar em segundo plano e limita a geração 0 a 16 MiB (valor hexadecimal).
+        SetUnlessPresent(environment, "TieredCompilation", "0");
+        SetUnlessPresent(environment, "GCgen0MaxBudget", "1000000");
     }
 
     private static void SetUnlessPresent(IDictionary<string, string?> environment, string setting, string value)

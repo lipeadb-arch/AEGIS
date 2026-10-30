@@ -64,8 +64,10 @@ public static class KnightMemoryCombinedCheck
                     new PowerShellExchangeAdminReader(fixtureExchange, logs.CreateLogger<PowerShellExchangeAdminReader>()))
                 .CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir-sintetico", "client", "secret")), ct);
 
+        // Método à parte: o resultado sai de escopo a cada rodada, em vez de ficar preso no estado desta execução e contar como memória da API.
+        async Task Round(string name) => Report(Line, name, await Mailboxes());
         for (var round = 1; round <= warmRounds; round++)
-            Report(Line, $"aquecimento-5000-{round}", await Mailboxes());
+            await Round($"aquecimento-5000-{round}");
         output.WriteLine($"combinado api-carregada: heapApi={GC.GetTotalMemory(false)} comprometido={GC.GetGCMemoryInfo().TotalCommittedBytes}");
 
         // A mesma ordem sequencial da sincronização: cada etapa aguarda a anterior.
@@ -82,7 +84,7 @@ public static class KnightMemoryCombinedCheck
                 new PowerShellTeamsAdminReader(fixtureTeams, logs.CreateLogger<PowerShellTeamsAdminReader>()))
             .CollectAsync(new KnightCollectionContext(Tenant, new KnightTeamsConfiguration("dir-sintetico", "client", "secret")), ct));
 
-        Report(Line, "fixture-exchange-5000", await Mailboxes());
+        await Round("fixture-exchange-5000");
 
         Report(Line, "fixture-defender", await new DefenderForOffice365KnightCollector(new FixtureExchangeTokens("cenario-sucesso"),
                 new PowerShellProtectionAdminReader(fixtureProtection, logs.CreateLogger<PowerShellProtectionAdminReader>()), new NoDns())
