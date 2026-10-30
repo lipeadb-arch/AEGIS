@@ -46,6 +46,10 @@ base64 "$WORK/dp.pfx" > "$WORK/dp.pfx.b64"
 sudo chown root:1000 "$WORK/dp.pfx.b64"; sudo chmod 0640 "$WORK/dp.pfx.b64"
 SECRET_PATH=/etc/secrets/aegis-dataprotection.pfx.b64
 
+# O cache de página é cobrado de quem toca o arquivo primeiro. Sem esvaziá-lo, DLLs da API e dos módulos ficam na conta do `docker build`
+# e o contêiner parece menor do que é em produção, onde a primeira leitura acontece dentro do cgroup.
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null || { echo "não foi possível esvaziar o cache de página"; exit 1; }
+
 CPU_ARG=(); [ "$CPUS" != "none" ] && CPU_ARG=(--cpus="$CPUS")
 echo "== contêiner: memória=$MEMORY sem swap, cpus=$CPUS (produção usa o mesmo ENTRYPOINT: migrator e depois API)"
 docker run -d --name "$APP" --network "$NET" -p "127.0.0.1:$PORT:8080" \
