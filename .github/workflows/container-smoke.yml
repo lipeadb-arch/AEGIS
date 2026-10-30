@@ -10,6 +10,8 @@ on:
       - 'render.yaml'
       - 'global.json'
       - 'backend/**'
+      - 'scripts/ci/**'
+      - 'scripts/ci/**'
       - 'frontend/**'
       - '.github/workflows/container-smoke.yml'
   workflow_dispatch:
@@ -303,6 +305,56 @@ jobs:
           docker rm -f "$APP" "$PG" >/dev/null 2>&1 || true
           docker network rm "$NET" >/dev/null 2>&1 || true
           rm -rf secrets || true
+
+  # [AEGIS-KNIGHT-MEMORY-BUDGET] API real aquecida + módulos OFICIAIS da imagem no mesmo contêiner de 512 MiB. Fixture ou processo de teste
+  # sozinhos não equivalem a este cenário: foi o que deixou o monitor encerrar toda coleta na importação sem nenhum gate acusar.
+  knight-memory-combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILDKIT: '1'
+      IMAGE: aegis-homolog:ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build homologation image
+        run: docker build -t "$IMAGE" .
+
+      - name: Combined scenario — 512 MiB, same CPU as the Render starter plan (0.5)
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Combined scenario — 512 MiB, without CPU limit (GC sees every core)
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh none
+
+  # [AEGIS-KNIGHT-MEMORY-BUDGET] API real aquecida + módulos OFICIAIS da imagem no mesmo contêiner de 512 MiB. Fixture ou processo de teste
+  # sozinhos não equivalem a este cenário: foi o que deixou o monitor encerrar toda coleta na importação sem nenhum gate acusar.
+  knight-memory-combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILDKIT: '1'
+      IMAGE: aegis-homolog:ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build homologation image
+        run: docker build -t "$IMAGE" .
+
+      - name: Combined scenario - 512 MiB, same CPU as the Render starter plan (0.5)
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Combined scenario - 512 MiB, without CPU limit (GC sees every core)
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh none
 
   migrations-pg:
     runs-on: ubuntu-latest

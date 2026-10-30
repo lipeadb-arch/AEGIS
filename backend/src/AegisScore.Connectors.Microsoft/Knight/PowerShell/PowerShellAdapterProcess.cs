@@ -100,7 +100,8 @@ public sealed record PowerShellRunReport(
     long DurationMs,
     int NoiseLines,
     int MalformedFrames,
-    string SafeDiagnostics)
+    string SafeDiagnostics,
+    PowerShellMemoryUsage? Memory = null)
 {
     /// <summary>Terminou íntegro: código 0, resultado emitido, saída completa e nenhum quadro malformado.</summary>
     public bool Clean => Termination == PowerShellTermination.Completed && OutputComplete && ResultEmitted && MalformedFrames == 0;
@@ -315,7 +316,8 @@ public sealed class PowerShellAdapterProcess
 
         using var memoryMonitorStop = new CancellationTokenSource();
         var memoryLimited = 0;
-        var memoryMonitor = MonitorMemoryAsync(process, () => Interlocked.Exchange(ref memoryLimited, 1), memoryMonitorStop.Token);
+        var memoryTrack = MemoryTrack.Begin(_options.MemoryProbe());
+        var memoryMonitor = MonitorMemoryAsync(process, memoryTrack, () => Interlocked.Exchange(ref memoryLimited, 1), memoryMonitorStop.Token);
 
         var timedOut = false;
         try
@@ -384,7 +386,21 @@ public sealed class PowerShellAdapterProcess
         var report = new PowerShellRunReport(
             termination, exitCode, frames.Stages, frames.StartedReads, frames.FinishedReads, frames.Result is not null,
             OutputComplete: outputComplete,
-            (long)clock.Elapsed.TotalMilliseconds, frames.NoiseLines, frames.Malformed, safe);
+            (long)clock.Elapsed.TotalMilliseconds, frames.NoiseLines, frames.Malformed, safe,
+            memoryTrack?.Usage(frames.ChildHeapBytes, frames.ChildCommittedBytes));
+
+        if (report.Memory is { } used)
+            _log?.LogInformation(
+                "knight-memoria adaptador={Adaptador} terminacao={Terminacao} estagio={Estagio} duracaoMs={Duracao} limite={Limite} "
+                + "inicioContainer={InicioContainer} inicioRecuperavel={InicioRecuperavel} apiRss={ApiRss} apiAnon={ApiAnon} apiHeap={ApiHeap} "
+                + "apiComprometido={ApiComprometido} picoContainer={PicoContainer} picoAnon={PicoAnon} picoShmem={PicoShmem} picoFile={PicoFile} "
+                + "picoActiveFile={PicoActive} picoInactiveFile={PicoInactive} picoPressao={PicoPressao} filhoPicoRss={FilhoRss} "
+                + "filhoPicoAnon={FilhoAnon} filhoHeap={FilhoHeap} filhoComprometido={FilhoComprometido}",
+                _adapterLabel, termination, report.LastStage ?? "(nenhum)", report.DurationMs, used.LimitBytes,
+                used.StartContainerBytes, used.StartReclaimableBytes, used.ApiRssBytes, used.ApiAnonBytes, used.ApiManagedHeapBytes,
+                used.ApiCommittedBytes, used.PeakContainerBytes, used.PeakAnonBytes, used.PeakShmemBytes, used.PeakFileBytes,
+                used.PeakActiveFileBytes, used.PeakInactiveFileBytes, used.PeakPressureBytes, used.ChildPeakRssBytes,
+                used.ChildPeakAnonBytes, used.ChildManagedHeapBytes, used.ChildCommittedBytes);
 
         if (safe.Length > 0)
             _log?.LogWarning(
@@ -405,13 +421,15 @@ public sealed class PowerShellAdapterProcess
         return new PowerShellAdapterRun(frames.Document(), report);
     }
 
-    private async Task MonitorMemoryAsync(Process process, Action limitReached, CancellationToken ct)
+    private async Task MonitorMemoryAsync(Process process, MemoryTrack? track, Action limitReached, CancellationToken ct)
     {
         try
         {
             while (!ct.IsCancellationRequested && !process.HasExited)
             {
-                if (_options.MemoryProbe() is { UnderPressure: true } memory)
+                var memory = _options.MemoryProbe();
+                if (memory is not null) track?.Observe(memory, process);
+                if (memory is { UnderPressure: true })
                 {
                     _log?.LogWarning("Adaptador do {Adaptador}: encerrado para preservar a API. MemoriaAtualBytes={Atual}, LimiteBytes={Limite}.",
                         _adapterLabel, memory.CurrentBytes, memory.LimitBytes);
@@ -423,6 +441,51 @@ public sealed class PowerShellAdapterProcess
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    /// <summary>Picos de UMA execução, separando contêiner, API, filho e heap gerenciado. Só leitura de contadores.</summary>
+    private sealed class MemoryTrack
+    {
+        private readonly ContainerMemorySample _start;
+        private readonly ProcessMemorySample? _api;
+        private readonly long _apiHeap;
+        private readonly long _apiCommitted;
+        private long _peakContainer, _peakAnon, _peakShmem, _peakFile, _peakActive, _peakInactive, _peakPressure, _childRss, _childAnon;
+
+        private MemoryTrack(ContainerMemorySample start)
+        {
+            _start = start;
+            _api = ProcessMemorySample.Read(Environment.ProcessId);
+            _apiHeap = GC.GetTotalMemory(false);
+            _apiCommitted = GC.GetGCMemoryInfo().TotalCommittedBytes;
+            Observe(start, null);
+        }
+
+        public static MemoryTrack? Begin(ContainerMemorySample? start) => start is null ? null : new MemoryTrack(start);
+
+        public void Observe(ContainerMemorySample sample, Process? child)
+        {
+            _peakContainer = Math.Max(_peakContainer, sample.CurrentBytes);
+            _peakPressure = Math.Max(_peakPressure, sample.CurrentBytes);
+            if (sample.Stat is { } stat)
+            {
+                _peakAnon = Math.Max(_peakAnon, stat.Anon);
+                _peakShmem = Math.Max(_peakShmem, stat.Shmem);
+                _peakFile = Math.Max(_peakFile, stat.File);
+                _peakActive = Math.Max(_peakActive, stat.ActiveFile);
+                _peakInactive = Math.Max(_peakInactive, stat.InactiveFile);
+            }
+            if (child is not null && ProcessMemorySample.Read(child.Id) is { } memory)
+            {
+                _childRss = Math.Max(_childRss, memory.RssBytes);
+                _childAnon = Math.Max(_childAnon, memory.AnonBytes);
+            }
+        }
+
+        public PowerShellMemoryUsage Usage(long? childHeap, long? childCommitted) => new(
+            _start.LimitBytes, _start.CurrentBytes, 0, _api?.RssBytes ?? 0, _api?.AnonBytes ?? 0, _apiHeap, _apiCommitted,
+            _peakContainer, _peakAnon, _peakShmem, _peakFile, _peakActive, _peakInactive, _peakPressure, _childRss, _childAnon,
+            childHeap, childCommitted);
     }
 
     private static async Task DrainQuietlyAsync(Task stdout, Task stderr)
@@ -510,6 +573,8 @@ public sealed class PowerShellAdapterProcess
         public bool LimitExceeded { get; private set; }
         public bool ReachedEnd { get; private set; }
         public string NoiseSample => _noise.ToString();
+        public long? ChildHeapBytes { get; private set; }
+        public long? ChildCommittedBytes { get; private set; }
 
         /// <summary>
         /// Encerra a aceitação: o que chegou até aqui é o que vale, e um leitor que ainda esteja ativo (cano mantido aberto por
@@ -643,6 +708,16 @@ public sealed class PowerShellAdapterProcess
                     break;
                 case "result":
                     if (ParseObject(payload) is { } result) Result = result;
+                    else Malformed++;
+                    break;
+                case "memory":
+                    // Heap do PRÓPRIO filho, declarado pelo script: "<bytes em uso> <bytes comprometidos>". Só números.
+                    var numbers = payload.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (numbers.Length == 2 && long.TryParse(numbers[0], out var heap) && long.TryParse(numbers[1], out var committed))
+                    {
+                        ChildHeapBytes = Math.Max(ChildHeapBytes ?? 0, heap);
+                        ChildCommittedBytes = Math.Max(ChildCommittedBytes ?? 0, committed);
+                    }
                     else Malformed++;
                     break;
                 default:

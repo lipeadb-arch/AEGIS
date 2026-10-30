@@ -5,8 +5,29 @@ using System.IO;
 
 namespace AegisScore.Connectors.Microsoft.Knight.PowerShell;
 
+/// <summary>Campos de <c>memory.stat</c> (cgroup v2) usados para separar o que cada parte ocupa no contêiner.</summary>
+internal sealed record ContainerMemoryStat(
+    long Anon, long File, long Shmem, long ActiveFile, long InactiveFile, long FileMapped, long FileDirty, long FileWriteback, long Kernel)
+{
+    internal static ContainerMemoryStat? Parse(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var values = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var space = line.IndexOf(' ');
+            if (space > 0 && long.TryParse(line.AsSpan(space + 1).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value))
+                values[line[..space]] = value;
+        }
+        if (!values.ContainsKey("anon") || !values.ContainsKey("file")) return null;
+        long Of(string key) => values.GetValueOrDefault(key);
+        return new(Of("anon"), Of("file"), Of("shmem"), Of("active_file"), Of("inactive_file"), Of("file_mapped"), Of("file_dirty"),
+            Of("file_writeback"), Of("kernel"));
+    }
+}
+
 /// <summary>Somente contadores do cgroup v2; ausência de limite não é interpretada como memória esgotada.</summary>
-internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes)
+internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes, ContainerMemoryStat? Stat = null)
 {
     public bool UnderPressure => CurrentBytes >= LimitBytes - LimitBytes / 8;
 
@@ -15,16 +36,19 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes)
         if (!OperatingSystem.IsLinux()) return null;
         try
         {
+            string? stat = null;
+            try { stat = File.ReadAllText("/sys/fs/cgroup/memory.stat"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sem detalhe: só os totais */ }
             return Parse(File.ReadAllText("/sys/fs/cgroup/memory.current"),
-                File.ReadAllText("/sys/fs/cgroup/memory.max"));
+                File.ReadAllText("/sys/fs/cgroup/memory.max"), stat);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    internal static ContainerMemorySample? Parse(string current, string limit) =>
+    internal static ContainerMemorySample? Parse(string current, string limit, string? stat = null) =>
         long.TryParse(current.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var used)
         && long.TryParse(limit.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var max)
-        && used >= 0 && max > 0 ? new(used, max) : null;
+        && used >= 0 && max > 0 ? new(used, max, ContainerMemoryStat.Parse(stat)) : null;
 
     internal static void ConfigureChildGc(IDictionary<string, string?> environment)
     {
@@ -39,3 +63,57 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes)
             environment["DOTNET_GCConserveMemory"] = "6";
     }
 }
+
+/// <summary>Memória residente de UM processo (<c>/proc/&lt;pid&gt;/status</c>). Nulo fora do Linux ou se o processo já terminou.</summary>
+internal sealed record ProcessMemorySample(long RssBytes, long AnonBytes, long FileBytes, long ShmemBytes)
+{
+    public static ProcessMemorySample? Read(int pid)
+    {
+        if (!OperatingSystem.IsLinux()) return null;
+        try { return Parse(File.ReadAllText($"/proc/{pid.ToString(CultureInfo.InvariantCulture)}/status")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    internal static ProcessMemorySample? Parse(string status)
+    {
+        long rss = -1, anon = 0, file = 0, shmem = 0;
+        foreach (var line in status.Split('\n'))
+        {
+            if (line.StartsWith("VmRSS:", StringComparison.Ordinal)) rss = Kib(line);
+            else if (line.StartsWith("RssAnon:", StringComparison.Ordinal)) anon = Kib(line);
+            else if (line.StartsWith("RssFile:", StringComparison.Ordinal)) file = Kib(line);
+            else if (line.StartsWith("RssShmem:", StringComparison.Ordinal)) shmem = Kib(line);
+        }
+        return rss < 0 ? null : new(rss, anon, file, shmem);
+    }
+
+    private static long Kib(string line)
+    {
+        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 2 && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out var kib) ? kib * 1024 : 0;
+    }
+}
+
+/// <summary>
+/// O que o processo do adaptador e o contêiner ocuparam durante UMA execução: picos observados pelo monitor, memória da API no
+/// início e heap do filho declarado pelo script. Só números, para o log do operador — heap gerenciado não é o limite total do processo.
+/// </summary>
+public sealed record PowerShellMemoryUsage(
+    long LimitBytes,
+    long StartContainerBytes,
+    long StartReclaimableBytes,
+    long ApiRssBytes,
+    long ApiAnonBytes,
+    long ApiManagedHeapBytes,
+    long ApiCommittedBytes,
+    long PeakContainerBytes,
+    long PeakAnonBytes,
+    long PeakShmemBytes,
+    long PeakFileBytes,
+    long PeakActiveFileBytes,
+    long PeakInactiveFileBytes,
+    long PeakPressureBytes,
+    long ChildPeakRssBytes,
+    long ChildPeakAnonBytes,
+    long? ChildManagedHeapBytes,
+    long? ChildCommittedBytes);

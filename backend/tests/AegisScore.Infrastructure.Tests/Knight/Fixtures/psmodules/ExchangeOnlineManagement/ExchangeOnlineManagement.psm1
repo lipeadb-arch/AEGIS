@@ -10,6 +10,13 @@
 # Get-DkimSigningConfig) — o PowerShell trata os três de forma diferente no pipeline e o script precisa entregar sempre uma lista.
 # A conexão EXIGE -EXOModuleBasePath apontando para um diretório existente: prova que o adaptador entrega o diretório privado
 # da execução. Connect-IPPSSession recusa ser chamado fora do Windows: prova que a limitação é detectada ANTES da sessão.
+# [AEGIS-KNIGHT-MEMORY-BUDGET] Com AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT (só na reprodução combinada do CI), o módulo OFICIAL da imagem é
+# importado aqui dentro antes dos substitutos: o percurso com fixture paga o peso real da importação. Nenhum comando oficial é chamado.
+if ($env:AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT) {
+    $official = Get-ChildItem -LiteralPath (Join-Path $env:AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT 'ExchangeOnlineManagement') -Filter 'ExchangeOnlineManagement.psd1' -Recurse | Select-Object -First 1
+    Import-Module $official.FullName -ErrorAction Stop
+}
+
 Set-StrictMode -Version Latest
 
 $script:Scenario = $null

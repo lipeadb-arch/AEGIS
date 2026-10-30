@@ -9,6 +9,13 @@
 #                         CorrelationId; a mensagem também carrega um marcador com forma de segredo, que não pode sair.
 # Formatos de resposta: ZERO objetos (Get-CsGroupPolicyAssignment), UM (Get-CsTeamsClientConfiguration) e VÁRIOS
 # (Get-CsTeamsMeetingPolicy: a global e uma marcada).
+# [AEGIS-KNIGHT-MEMORY-BUDGET] Com AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT (só na reprodução combinada do CI), o módulo OFICIAL da imagem é
+# importado aqui dentro antes dos substitutos: o percurso com fixture paga o peso real da importação. Nenhum comando oficial é chamado.
+if ($env:AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT) {
+    $official = Get-ChildItem -LiteralPath (Join-Path $env:AEGIS_FIXTURE_OFFICIAL_MODULE_ROOT 'MicrosoftTeams') -Filter 'MicrosoftTeams.psd1' -Recurse | Select-Object -First 1
+    Import-Module $official.FullName -ErrorAction Stop
+}
+
 Set-StrictMode -Version Latest
 
 class AllowAllKnownDomains { }
