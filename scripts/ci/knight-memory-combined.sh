@@ -30,7 +30,8 @@ measure() { # rotulo: contadores do cgroup e do processo da API, medidos de dent
     echo "medicao '"$1"': memory.current=$(cat /sys/fs/cgroup/memory.current) memory.peak=$(cat /sys/fs/cgroup/memory.peak 2>/dev/null || echo ?)"
     grep -E "^(anon|file|shmem|active_file|inactive_file|file_mapped|kernel|slab) " /sys/fs/cgroup/memory.stat | tr "\n" " "; echo
     grep -E "^(VmRSS|VmHWM|RssAnon|RssFile|RssShmem):" /proc/$pid/status | tr -s " \t" " " | tr "\n" " "; echo
-    tr "\n" " " < /sys/fs/cgroup/memory.events; echo' 2>&1 | sed "s/^/  /"
+    tr "\n" " " < /sys/fs/cgroup/memory.events; echo
+    echo "psi: $(tr "\n" " " < /sys/fs/cgroup/memory.pressure 2>/dev/null || echo indisponivel)"' 2>&1 | sed "s/^/  /"
 }
 
 docker network create "$NET" >/dev/null || exit 1
@@ -98,8 +99,9 @@ measure "api-aquecida"
 
 # ---- API saudável DURANTE as importações ------------------------------------------------------------------------------
 ( while :; do
-    code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "$HDR" "$BASE/health/ready" 2>/dev/null || true)"
-    echo "$code" >> "$WORK/health.txt"
+    probe="$(curl -s -m 5 -o /dev/null -w '%{http_code} %{time_total}' -H "$HDR" "$BASE/health/ready" 2>/dev/null || true)"
+    echo "${probe%% *}" >> "$WORK/health.txt"
+    echo "${probe##* }" >> "$WORK/latency.txt"
     sleep 2
   done ) &
 HEALTH_PID=$!
@@ -125,7 +127,8 @@ RUNNING="$(docker inspect -f '{{.State.Running}}' "$APP" 2>/dev/null || echo fal
 RESTARTS="$(docker inspect -f '{{.RestartCount}}' "$APP" 2>/dev/null || echo '?')"
 OOM="$(docker inspect -f '{{.State.OOMKilled}}' "$APP" 2>/dev/null || echo '?')"
 KILLS="$(docker exec "$APP" sh -c 'grep "^oom_kill " /sys/fs/cgroup/memory.events | cut -d" " -f2' 2>/dev/null || echo '?')"
-echo "== saúde: sondagens=$TOTAL fora-de-200=$BAD emExecucao=$RUNNING reinicios=$RESTARTS oomKilled=$OOM oom_kill=$KILLS"
+SLOWEST="$(sort -n "$WORK/latency.txt" 2>/dev/null | tail -1)"
+echo "== saúde: sondagens=$TOTAL fora-de-200=$BAD latenciaMaxima=${SLOWEST:-?}s emExecucao=$RUNNING reinicios=$RESTARTS oomKilled=$OOM oom_kill=$KILLS"
 CODE="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "$HDR" "$BASE/health/ready" 2>/dev/null || true)"
 echo "== /health/ready ao fim: $CODE"
 

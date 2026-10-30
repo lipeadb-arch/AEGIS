@@ -153,26 +153,43 @@ public sealed class KnightMemoryBudgetTests
         $"anon 1000\nfile {file}\nshmem {shmem}\nfile_mapped {mapped}\nactive_file {active}\ninactive_file {inactive}\nfile_dirty {dirty}\nfile_writeback 0\nkernel 5\n";
 
     [Fact]
-    public void Pressao_DescontaSoCacheLimpoENaoMapeado()
+    public void Pressao_DescontaCacheLimpo_NuncaMemoriaCompartilhadaTmpfsOuPaginaSuja()
     {
-        // 100 de cache sem mapeamento: o kernel devolve isso antes de um OOM.
+        // 100 de cache de arquivo, 20 mapeados: tudo volta, menos o código em uso.
         var clean = ContainerMemorySample.Parse("400", "512", Stat(file: 120, shmem: 0, mapped: 20, active: 60, inactive: 60))!;
         clean.ReclaimableBytes.Should().Be(100);
         clean.PressureBytes.Should().Be(300);
 
         // tmpfs e memória compartilhada ficam em file, mas sem swap não têm para onde ir.
-        var tmpfs = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 200, mapped: 0, active: 0, inactive: 0))!;
+        var tmpfs = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 200, mapped: 200, active: 0, inactive: 0))!;
         tmpfs.ReclaimableBytes.Should().Be(0);
         tmpfs.UnderPressure.Should().BeTrue("tmpfs cheio não pode parecer memória recuperável");
 
-        // Código mapeado em uso e página suja também não contam.
+        // Página suja não conta, e o piso de 1/8 do limite (64) segura o código mapeado em uso.
         var mapped = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0, dirty: 50))!;
-        mapped.ReclaimableBytes.Should().Be(0);
-        mapped.UnderPressure.Should().BeTrue();
+        mapped.ReclaimableBytes.Should().Be(86);
+        mapped.PressureBytes.Should().Be(374);
+
+        // Código mapeado inteiro abaixo do piso: nada a descontar além do que não está mapeado.
+        var code = ContainerMemorySample.Parse("460", "512", Stat(file: 60, shmem: 0, mapped: 60, active: 60, inactive: 0))!;
+        code.ReclaimableBytes.Should().Be(0);
+        code.UnderPressure.Should().BeTrue();
 
         ContainerMemorySample.Parse("460", "512")!.UnderPressure.Should().BeTrue("sem memory.stat vale o total");
         new ContainerMemorySample(447, 512).UnderPressure.Should().BeFalse("o gatilho continua em 87,5%");
         new ContainerMemorySample(448, 512).UnderPressure.Should().BeTrue("o gatilho continua em 87,5%");
+    }
+
+    [Fact]
+    public void TravamentoPorMemoria_EncerraMesmoAbaixoDoGatilho_ESemPsiNaoInventaPressao()
+    {
+        const string stalled = "some avg10=70.00 avg60=20.00 avg300=5.00 total=1\nfull avg10=41.50 avg60=10.00 avg300=2.00 total=1\n";
+        const string calm = "some avg10=3.00 avg60=1.00 avg300=0.10 total=1\nfull avg10=0.50 avg60=0.10 avg300=0.00 total=1\n";
+
+        ContainerMemorySample.Parse("100", "512", pressure: stalled)!.UnderPressure.Should().BeTrue("o kernel já está travando as tarefas para recuperar memória");
+        ContainerMemorySample.Parse("100", "512", pressure: calm)!.UnderPressure.Should().BeFalse();
+        ContainerMemorySample.Parse("100", "512", pressure: null)!.UnderPressure.Should().BeFalse();
+        ContainerMemorySample.ParseFullStall("linha sem o campo").Should().BeNull();
     }
 
     [Fact]

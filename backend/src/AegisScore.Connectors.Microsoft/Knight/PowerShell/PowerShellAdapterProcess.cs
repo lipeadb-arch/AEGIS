@@ -401,12 +401,12 @@ public sealed class PowerShellAdapterProcess
                 + "inicioContainer={InicioContainer} inicioRecuperavel={InicioRecuperavel} apiRss={ApiRss} apiAnon={ApiAnon} apiHeap={ApiHeap} "
                 + "apiComprometido={ApiComprometido} picoContainer={PicoContainer} picoAnon={PicoAnon} picoShmem={PicoShmem} picoFile={PicoFile} "
                 + "picoActiveFile={PicoActive} picoInactiveFile={PicoInactive} picoPressao={PicoPressao} filhoPicoRss={FilhoRss} "
-                + "filhoPicoAnon={FilhoAnon} filhoHeap={FilhoHeap} filhoComprometido={FilhoComprometido}",
+                + "filhoPicoAnon={FilhoAnon} filhoHeap={FilhoHeap} filhoComprometido={FilhoComprometido} picoTravamento={PicoTravamento}",
                 _adapterLabel, termination, report.LastStage ?? "(nenhum)", report.DurationMs, used.LimitBytes,
                 used.StartContainerBytes, used.StartReclaimableBytes, used.ApiRssBytes, used.ApiAnonBytes, used.ApiManagedHeapBytes,
                 used.ApiCommittedBytes, used.PeakContainerBytes, used.PeakAnonBytes, used.PeakShmemBytes, used.PeakFileBytes,
                 used.PeakActiveFileBytes, used.PeakInactiveFileBytes, used.PeakPressureBytes, used.ChildPeakRssBytes,
-                used.ChildPeakAnonBytes, used.ChildManagedHeapBytes, used.ChildCommittedBytes);
+                used.ChildPeakAnonBytes, used.ChildManagedHeapBytes, used.ChildCommittedBytes, used.PeakFullStallAvg10);
 
         if (safe.Length > 0)
             _log?.LogWarning(
@@ -465,8 +465,9 @@ public sealed class PowerShellAdapterProcess
                 if (memory is not null) track?.Observe(memory, process);
                 if (memory is { UnderPressure: true })
                 {
-                    _log?.LogWarning("Adaptador do {Adaptador}: encerrado para preservar a API. MemoriaAtualBytes={Atual}, LimiteBytes={Limite}.",
-                        _adapterLabel, memory.CurrentBytes, memory.LimitBytes);
+                    _log?.LogWarning("Adaptador do {Adaptador}: encerrado para preservar a API. MemoriaAtualBytes={Atual}, PressaoBytes={Pressao}, "
+                        + "TravamentoAvg10={Travamento}, LimiteBytes={Limite}.",
+                        _adapterLabel, memory.CurrentBytes, memory.PressureBytes, memory.FullStallAvg10, memory.LimitBytes);
                     limitReached();
                     KillTree(process);
                     return;
@@ -485,6 +486,7 @@ public sealed class PowerShellAdapterProcess
         private readonly long _apiHeap;
         private readonly long _apiCommitted;
         private long _peakContainer, _peakAnon, _peakShmem, _peakFile, _peakActive, _peakInactive, _peakPressure, _childRss, _childAnon;
+        private double? _peakStall;
 
         private MemoryTrack(ContainerMemorySample start)
         {
@@ -501,6 +503,7 @@ public sealed class PowerShellAdapterProcess
         {
             _peakContainer = Math.Max(_peakContainer, sample.CurrentBytes);
             _peakPressure = Math.Max(_peakPressure, sample.PressureBytes);
+            if (sample.FullStallAvg10 is { } stall) _peakStall = Math.Max(_peakStall ?? 0, stall);
             if (sample.Stat is { } stat)
             {
                 _peakAnon = Math.Max(_peakAnon, stat.Anon);
@@ -519,7 +522,7 @@ public sealed class PowerShellAdapterProcess
         public PowerShellMemoryUsage Usage(long? childHeap, long? childCommitted) => new(
             _start.LimitBytes, _start.CurrentBytes, _start.ReclaimableBytes, _api?.RssBytes ?? 0, _api?.AnonBytes ?? 0, _apiHeap, _apiCommitted,
             _peakContainer, _peakAnon, _peakShmem, _peakFile, _peakActive, _peakInactive, _peakPressure, _childRss, _childAnon,
-            childHeap, childCommitted);
+            childHeap, childCommitted, _peakStall);
     }
 
     private static async Task DrainQuietlyAsync(Task stdout, Task stderr)

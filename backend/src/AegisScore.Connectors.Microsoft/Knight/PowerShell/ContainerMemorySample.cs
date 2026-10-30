@@ -9,13 +9,11 @@ namespace AegisScore.Connectors.Microsoft.Knight.PowerShell;
 internal sealed record ContainerMemoryStat(
     long Anon, long File, long Shmem, long ActiveFile, long InactiveFile, long FileMapped, long FileDirty, long FileWriteback, long Kernel)
 {
-    /// <summary>
-    /// [AEGIS-KNIGHT-MEMORY-BUDGET] Só o cache de página limpo e sem mapeamento, que o kernel devolve antes de qualquer OOM. <c>file</c> inteiro
-    /// não serve: inclui memória compartilhada e tmpfs (que não têm para onde ir sem swap) e o código mapeado em uso. <c>file_mapped</c> também
-    /// conta a memória compartilhada mapeada (o código JIT do .NET fica nela), por isso só o que excede <c>shmem</c> é arquivo mapeado.
-    /// </summary>
-    public long ReclaimableFileCache =>
-        Math.Max(0, Math.Min(ActiveFile + InactiveFile, File - Shmem - Math.Max(0, FileMapped - Shmem) - FileDirty - FileWriteback));
+    /// <summary>Cache de arquivo limpo: <c>file</c> sem a memória compartilhada e o tmpfs (que sem swap não têm para onde ir) e sem páginas sujas.</summary>
+    public long CleanFileCache => Math.Max(0, Math.Min(ActiveFile + InactiveFile, File - Shmem - FileDirty - FileWriteback));
+
+    /// <summary><c>file_mapped</c> também conta a memória compartilhada mapeada (o código JIT do .NET fica nela): só o que excede <c>shmem</c> é arquivo.</summary>
+    public long MappedFile => Math.Max(0, FileMapped - Shmem);
 
     internal static ContainerMemoryStat? Parse(string? text)
     {
@@ -35,9 +33,19 @@ internal sealed record ContainerMemoryStat(
 }
 
 /// <summary>Somente contadores do cgroup v2; ausência de limite não é interpretada como memória esgotada.</summary>
-internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes, ContainerMemoryStat? Stat = null)
+internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes, ContainerMemoryStat? Stat = null, double? FullStallAvg10 = null)
 {
-    public long ReclaimableBytes => Stat?.ReclaimableFileCache ?? 0;
+    /// <summary>Tarefas paradas juntas esperando memória em ao menos esta fração dos últimos 10 s: o kernel já não recupera sem travar a API.</summary>
+    public const double StallTriggerPercent = 40;
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] O que o kernel devolve sem encerrar ninguém: cache de arquivo limpo, mapeado ou não, menos um piso para o código
+    /// em uso (1/8 do limite), porque descartar código quente sai caro antes de faltar memória. Medido em 512 MiB: dos 450 MiB que disparavam
+    /// o monitor na importação, só 270 MiB eram anon, shmem e kernel.
+    /// </summary>
+    public long ReclaimableBytes => Stat is { } stat
+        ? Math.Max(0, stat.CleanFileCache - Math.Min(stat.MappedFile, LimitBytes / 8))
+        : 0;
 
     /// <summary>Memória que não pode ser devolvida sem encerrar alguém. Sem o detalhe de <c>memory.stat</c>, vale o total.</summary>
     public long PressureBytes => CurrentBytes - ReclaimableBytes;
@@ -45,7 +53,7 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
     /// <summary>O gatilho continua em 87,5% do limite do contêiner.</summary>
     public long TriggerBytes => LimitBytes - LimitBytes / 8;
 
-    public bool UnderPressure => PressureBytes >= TriggerBytes;
+    public bool UnderPressure => PressureBytes >= TriggerBytes || FullStallAvg10 >= StallTriggerPercent;
 
     /// <summary>Quanto ainda cabe até o gatilho.</summary>
     public long HeadroomBytes => TriggerBytes - PressureBytes;
@@ -63,19 +71,36 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
         if (!OperatingSystem.IsLinux()) return null;
         try
         {
-            string? stat = null;
-            try { stat = File.ReadAllText("/sys/fs/cgroup/memory.stat"); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* sem detalhe: só os totais */ }
-            return Parse(File.ReadAllText("/sys/fs/cgroup/memory.current"),
-                File.ReadAllText("/sys/fs/cgroup/memory.max"), stat);
+            return Parse(File.ReadAllText("/sys/fs/cgroup/memory.current"), File.ReadAllText("/sys/fs/cgroup/memory.max"),
+                Optional("/sys/fs/cgroup/memory.stat"), Optional("/sys/fs/cgroup/memory.pressure"));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
-    internal static ContainerMemorySample? Parse(string current, string limit, string? stat = null) =>
+    private static string? Optional(string path)
+    {
+        try { return File.ReadAllText(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    internal static ContainerMemorySample? Parse(string current, string limit, string? stat = null, string? pressure = null) =>
         long.TryParse(current.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var used)
         && long.TryParse(limit.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var max)
-        && used >= 0 && max > 0 ? new(used, max, ContainerMemoryStat.Parse(stat)) : null;
+        && used >= 0 && max > 0 ? new(used, max, ContainerMemoryStat.Parse(stat), ParseFullStall(pressure)) : null;
+
+    /// <summary>Linha <c>full avg10=…</c> de <c>memory.pressure</c>. Nulo quando o kernel não expõe PSI: a guarda fica só no limite de memória.</summary>
+    internal static double? ParseFullStall(string? pressure)
+    {
+        if (string.IsNullOrWhiteSpace(pressure)) return null;
+        foreach (var line in pressure.Split('\n'))
+        {
+            if (!line.StartsWith("full ", StringComparison.Ordinal)) continue;
+            foreach (var part in line.Split(' '))
+                if (part.StartsWith("avg10=", StringComparison.Ordinal)
+                    && double.TryParse(part.AsSpan(6), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)) return value;
+        }
+        return null;
+    }
 
     internal static void ConfigureChildGc(IDictionary<string, string?> environment)
     {
@@ -156,4 +181,5 @@ public sealed record PowerShellMemoryUsage(
     long ChildPeakRssBytes,
     long ChildPeakAnonBytes,
     long? ChildManagedHeapBytes,
-    long? ChildCommittedBytes);
+    long? ChildCommittedBytes,
+    double? PeakFullStallAvg10);
