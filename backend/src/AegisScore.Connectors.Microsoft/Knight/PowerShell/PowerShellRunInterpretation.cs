@@ -45,6 +45,10 @@ public static class PowerShellRunInterpretation
     /// <summary>Desfecho de todas as capacidades quando o script falhou antes de tentar a conexão.</summary>
     public static MissingRead BeforeConnect(string label, PowerShellRunReport report, string? errorId, string? correlationId)
     {
+        // [AEGIS-KNIGHT-MEMORY-BUDGET] Terminação conhecida vem antes do palpite pelo estágio: processo encerrado por memória, tempo ou
+        // limite de saída durante a importação NÃO é "o módulo não carregou". Só o script que terminou e declarou a falha chega abaixo.
+        if (report.Termination != PowerShellTermination.Completed) return BeforeReads(label, report, correlationId);
+
         var stage = report.LastStage;
         var kind = stage is "import" or "imported" ? KnightFailureKind.RuntimeUnavailable : KnightFailureKind.Internal;
         var detail = $"O adaptador de coleta de {label} falhou antes de conectar, no estágio «{StageLabel(stage)}»"

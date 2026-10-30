@@ -36,7 +36,7 @@ public sealed class KnightMemoryCombinedCheckWorker : BackgroundService
                 _services.GetRequiredService<TeamsPowerShellOptions>(),
                 _services.GetRequiredService<ExchangePowerShellOptions>(),
                 _services.GetRequiredService<ProtectionPowerShellOptions>(),
-                fixtures, _logs, Console.Out, stoppingToken);
+                fixtures, _configuration.GetValue("Knight:MemoryCheck:WarmRounds", 3), _logs, Console.Out, stoppingToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

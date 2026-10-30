@@ -238,7 +238,7 @@ public static class KnightReportModelBuilder
                     advisory = new ReportAdvisory(
                         s.AdvisoryFromAi == true, a.ExecutiveSummary,
                         a.PriorityRisks.Select(r => $"{r.Title} — {r.Rationale} [{string.Join(", ", r.IndicatorIds)}]").ToList(),
-                        a.RecommendedActions.OrderBy(r => r.Order).Select(r => $"{r.Action} [{string.Join(", ", r.IndicatorIds)}]").ToList(),
+                        a.RecommendedActions.OrderBy(r => r.Order).Select(r => r.IndicatorIds.Count == 0 ? r.Action : $"{r.Action} [{string.Join(", ", r.IndicatorIds)}]").ToList(),
                         a.CollectionGaps.ToList());
             }
             catch (JsonException) { advisory = null; }
@@ -561,7 +561,7 @@ public static class KnightReportModelBuilder
     public static IReadOnlyList<KnightConsolidatedSourceEntry>? ReadableComposition(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>
         composition?.Select(e => e with { CollectionLimitations = e.CollectionLimitations.Select(ReadableLimitation).ToList() }).ToList();
 
-    private static string CauseLabel(KnightCapabilityOutcome o) => o switch
+    internal static string CauseLabel(KnightCapabilityOutcome o) => o switch
     {
         // [AEGIS-KNIGHT-COVERAGE-03] O rótulo é o que foi OBSERVADO. A recusa não distingue entre consentimento
         // ausente, papel de diretório sem alcance, domínio errado e método de autenticação não aceito — e no
@@ -591,7 +591,8 @@ public static class KnightReportModelBuilder
         KnightCapabilityOutcome.InsufficientPermission when c.ToString().StartsWith("Azure", StringComparison.Ordinal) =>
             "Atribuir à aplicação o papel indicado no escopo recusado (Azure RBAC na assinatura, ou no cofre) e sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.InsufficientPermission =>
-            "Conceder a permissão indicada ao aplicativo do conector (consentimento de administrador) e sincronizar novamente em Configurações → Integrações.",
+            "A Microsoft recusou esta leitura. Conferir o requisito indicado (consentimento de administrador, papel e licença) e o diagnóstico de acesso "
+            + "antes de alterar permissões: a recusa não comprova, sozinha, qual deles falta. Depois, sincronizar novamente em Configurações → Integrações.",
         KnightCapabilityOutcome.LimitedByLicense =>
             "A capacidade depende de licença do provedor. Sem ela, os controles afetados continuam não avaliados — nunca aprovados.",
         KnightCapabilityOutcome.Throttled => "O provedor limitou a taxa de chamadas. Sincronizar novamente mais tarde.",

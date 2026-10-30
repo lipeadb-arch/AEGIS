@@ -17,8 +17,10 @@ namespace AegisScore.Connectors.Microsoft.Knight.PowerShell;
 /// [AEGIS-KNIGHT-MEMORY-BUDGET] Reprodução COMBINADA dentro da API real, executada pelo CI num contêiner limitado:
 /// <c>dotnet AegisScore.Api.dll --knight-memory-combined-check</c> sobe o host inteiro e, quando o arquivo de disparo aparece (a API já
 /// aquecida por requisições HTTP com dados sintéticos), roda em sequência, NESTE processo e com o monitor real de memória:
-///   1. os quatro carregamentos do módulo OFICIAL da imagem, na ordem da sincronização (Teams, Exchange, Defender e Purview);
-///   2. o percurso funcional dos coletores reais com os módulos de FIXTURE, que importam o oficial antes dos substitutos.
+///   1. rodadas da coleta sintética de 5000 caixas, para o heap da API chegar ao estado que uma sincronização real deixa — as fases seguintes
+///      começam com a API já carregada, como a importação do Teams depois da coleta do Entra ID em produção;
+///   2. os quatro carregamentos do módulo OFICIAL da imagem, na ordem da sincronização (Teams, Exchange, Defender e Purview);
+///   3. o percurso funcional dos coletores reais com os módulos de FIXTURE, que importam o oficial antes dos substitutos.
 /// Não abre rota nova, não autentica e não fala com locatário. O que ela não prova está em <see cref="NotProven"/>.
 /// </summary>
 public static class KnightMemoryCombinedCheck
@@ -37,7 +39,7 @@ public static class KnightMemoryCombinedCheck
 
     public static async Task<bool> RunAsync(
         TeamsPowerShellOptions teams, ExchangePowerShellOptions exchange, ProtectionPowerShellOptions protection, string fixtureModules,
-        ILoggerFactory logs, TextWriter output, CancellationToken ct)
+        int warmRounds, ILoggerFactory logs, TextWriter output, CancellationToken ct)
     {
         var ok = true;
         void Line(string name, PowerShellRunReport? report, bool success, string detail = "")
@@ -53,6 +55,19 @@ public static class KnightMemoryCombinedCheck
         var exchangeReader = new PowerShellExchangeAdminReader(exchange, logs.CreateLogger<PowerShellExchangeAdminReader>());
         var protectionReader = new PowerShellProtectionAdminReader(protection, logs.CreateLogger<PowerShellProtectionAdminReader>());
 
+        var fixtureTeams = new TeamsPowerShellOptions { Executable = teams.Executable, ModulePath = fixtureModules, Timeout = teams.Timeout };
+        var fixtureExchange = new ExchangePowerShellOptions { Executable = exchange.Executable, ModulePath = fixtureModules, Timeout = exchange.Timeout };
+        var fixtureProtection = new ProtectionPowerShellOptions { Executable = exchange.Executable, ModulePath = fixtureModules, Timeout = exchange.Timeout };
+
+        Task<KnightCollectionResult> Mailboxes() =>
+            new ExchangeKnightCollector(new FixtureExchangeTokens("cenario-volume"),
+                    new PowerShellExchangeAdminReader(fixtureExchange, logs.CreateLogger<PowerShellExchangeAdminReader>()))
+                .CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir-sintetico", "client", "secret")), ct);
+
+        for (var round = 1; round <= warmRounds; round++)
+            Report(Line, $"aquecimento-5000-{round}", await Mailboxes());
+        output.WriteLine($"combinado api-carregada: heapApi={GC.GetTotalMemory(false)} comprometido={GC.GetGCMemoryInfo().TotalCommittedBytes}");
+
         // A mesma ordem sequencial da sincronização: cada etapa aguarda a anterior.
         var teamsImport = (await teamsReader.CheckRuntimeAsync(ct)).Process;
         Line("oficial-teams", teamsImport, Imported(teamsImport));
@@ -63,17 +78,11 @@ public static class KnightMemoryCombinedCheck
         var purviewImport = (await protectionReader.CheckRuntimeAsync(ct)).Exchange.Process;
         Line("oficial-purview", purviewImport, Imported(purviewImport));
 
-        var fixtureTeams = new TeamsPowerShellOptions { Executable = teams.Executable, ModulePath = fixtureModules, Timeout = teams.Timeout };
-        var fixtureExchange = new ExchangePowerShellOptions { Executable = exchange.Executable, ModulePath = fixtureModules, Timeout = exchange.Timeout };
-        var fixtureProtection = new ProtectionPowerShellOptions { Executable = exchange.Executable, ModulePath = fixtureModules, Timeout = exchange.Timeout };
-
         Report(Line, "fixture-teams", await new TeamsKnightCollector(new FixtureTeamsTokens(),
                 new PowerShellTeamsAdminReader(fixtureTeams, logs.CreateLogger<PowerShellTeamsAdminReader>()))
             .CollectAsync(new KnightCollectionContext(Tenant, new KnightTeamsConfiguration("dir-sintetico", "client", "secret")), ct));
 
-        Report(Line, "fixture-exchange-5000", await new ExchangeKnightCollector(new FixtureExchangeTokens("cenario-volume"),
-                new PowerShellExchangeAdminReader(fixtureExchange, logs.CreateLogger<PowerShellExchangeAdminReader>()))
-            .CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir-sintetico", "client", "secret")), ct));
+        Report(Line, "fixture-exchange-5000", await Mailboxes());
 
         Report(Line, "fixture-defender", await new DefenderForOffice365KnightCollector(new FixtureExchangeTokens("cenario-sucesso"),
                 new PowerShellProtectionAdminReader(fixtureProtection, logs.CreateLogger<PowerShellProtectionAdminReader>()), new NoDns())

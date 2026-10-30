@@ -377,7 +377,7 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
                   @if (ai.recommendedActions.length) {
                     <div class="ai-block"><h4>Ações recomendadas</h4><ol>
                       @for (act of ai.recommendedActions; track act.order) {
-                        <li>{{ act.action }} <span class="ids">[{{ act.indicatorIds.join(', ') }}]</span></li>
+                        <li>{{ act.action }} @if (act.indicatorIds.length) { <span class="ids">[{{ act.indicatorIds.join(', ') }}]</span> }</li>
                       }
                     </ol></div>
                   }

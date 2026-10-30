@@ -1,0 +1,264 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using AegisScore.Application.Knight;
+using AegisScore.Connectors.Microsoft.Knight;
+using AegisScore.Connectors.Microsoft.Knight.Exchange;
+using AegisScore.Connectors.Microsoft.Knight.PowerShell;
+using AegisScore.Connectors.Microsoft.Knight.Protection;
+using AegisScore.Connectors.Microsoft.Knight.Teams;
+using AegisScore.Domain;
+using FluentAssertions;
+using Xunit;
+
+namespace AegisScore.Infrastructure.Tests.Knight;
+
+/// <summary>
+/// [AEGIS-KNIGHT-MEMORY-BUDGET] Regressões da evidência real de 30/10/2026: processo encerrado por memória DURANTE a importação, sem conexão
+/// e sem leitura. A causa conhecida não pode virar "runtime indisponível", uma decisão por capacidade não pode ser sobrescrita, e o resumo
+/// determinístico não pode priorizar achados que não existem nem repetir a mesma causa por controle.
+/// </summary>
+public sealed class KnightMemoryBudgetTests
+{
+    private static readonly Guid Tenant = Guid.Parse("aa000000-0000-0000-0000-0000000000e1");
+
+    /// <summary>O documento e o relatório como o adaptador real os monta quando o monitor encerra o filho no estágio de importação.</summary>
+    private static PowerShellAdapterRun KilledDuringImport(PowerShellTermination termination = PowerShellTermination.MemoryLimit) =>
+        new("""{"runtime":{},"connected":false,"reads":[]}""",
+            new PowerShellRunReport(termination, 137, new[] { "start", "input", "import" }, Array.Empty<string>(), Array.Empty<string>(),
+                ResultEmitted: false, OutputComplete: true, DurationMs: 1800, NoiseLines: 0, MalformedFrames: 0, SafeDiagnostics: ""));
+
+    private sealed class ExchangeTokens : IExchangeTokenClient
+    {
+        public Task<ExchangeAdminCredentials> AcquireAsync(IMicrosoftGraphCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(new ExchangeAdminCredentials("demo.example.com", "token-sintetico"));
+    }
+
+    private sealed class TeamsTokens : ITeamsTokenClient
+    {
+        public Task<TeamsAdminCredentials> AcquireAsync(IMicrosoftGraphCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(new TeamsAdminCredentials("dir", "graph-sintetico", "teams-sintetico"));
+    }
+
+    private sealed class AppTokens : IMicrosoftAppTokenClient
+    {
+        public Task<string> AcquireAsync(IMicrosoftGraphCredentials credentials, string scope, CancellationToken ct = default) =>
+            Task.FromResult("token-sintetico");
+    }
+
+    private sealed class NoDns : IDnsTxtResolver
+    {
+        public Task<DnsTxtResult> ResolveTxtAsync(string name, CancellationToken ct) => throw new InvalidOperationException("não deveria consultar DNS");
+    }
+
+    private sealed class StubTeams(PowerShellAdapterRun run) : ITeamsAdminReader
+    {
+        public Task<TeamsAdminOutput> ReadAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(PowerShellTeamsAdminReader.Interpret(run));
+        public Task<TeamsAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<TeamsAdminOutput> TestConnectionAsync(TeamsAdminCredentials credentials, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class StubExchange(PowerShellAdapterRun run) : IExchangeAdminReader
+    {
+        public Task<ExchangeAdminOutput> ReadAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default) =>
+            Task.FromResult(PowerShellExchangeAdminReader.Interpret(run));
+        public Task<ExchangeAdminOutput> CheckRuntimeAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<ExchangeAdminOutput> TestConnectionAsync(ExchangeAdminCredentials credentials, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class StubProtection(PowerShellAdapterRun run, bool complianceSupported) : IProtectionAdminReader
+    {
+        public Task<ProtectionAdminOutput> ReadAsync(ProtectionAdminRequest request, CancellationToken ct = default) =>
+            Task.FromResult(PowerShellProtectionAdminReader.Interpret(run));
+        public Task<ProtectionAdminOutput> TestConnectionAsync(ProtectionAdminRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public bool ComplianceSessionSupported => complianceSupported;
+    }
+
+    private static void ShouldKeepMemoryCause(IEnumerable<KnightCapabilityStatus> capabilities)
+    {
+        var all = capabilities.ToList();
+        all.Should().NotBeEmpty();
+        all.Should().OnlyContain(c => c.Outcome == KnightCapabilityOutcome.Error);
+        all.Should().OnlyContain(c => c.Diagnostic!.Kind == KnightFailureKind.MemoryLimit, "a terminação conhecida não vira runtime indisponível");
+        all.Should().OnlyContain(c => c.Diagnostic!.Stage == "import" && c.Diagnostic.Code == "MemoryLimit");
+        all.Should().OnlyContain(c => c.Detail!.Contains("memória") && c.Detail.Contains("não indica falta de permissão"));
+        all.Should().NotContain(c => c.Detail!.Contains("não carregou"), "o módulo foi interrompido, não recusado pelo ambiente");
+    }
+
+    [Fact]
+    public async Task Teams_MemoryLimitNaImportacao_PreservaACausa()
+    {
+        var result = await new TeamsKnightCollector(new TeamsTokens(), new StubTeams(KilledDuringImport()))
+            .CollectAsync(new KnightCollectionContext(Tenant, new KnightTeamsConfiguration("dir", "client", "secret")));
+
+        ShouldKeepMemoryCause(result.Capabilities);
+        result.State.Should().Be(KnightSourceState.Error);
+    }
+
+    [Fact]
+    public async Task Exchange_MemoryLimitNaImportacao_PreservaACausa()
+    {
+        var result = await new ExchangeKnightCollector(new ExchangeTokens(), new StubExchange(KilledDuringImport()))
+            .CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir", "client", "secret")));
+
+        ShouldKeepMemoryCause(result.Capabilities);
+        result.State.Should().Be(KnightSourceState.Error);
+    }
+
+    [Fact]
+    public async Task Defender_MemoryLimitNaImportacao_PreservaACausa_ENaoViraRuntimeIndisponivel()
+    {
+        var result = await new DefenderForOffice365KnightCollector(new ExchangeTokens(), new StubProtection(KilledDuringImport(), true), new NoDns())
+            .CollectAsync(new KnightCollectionContext(Tenant,
+                new KnightMicrosoftServiceConfiguration(KnightSourceType.MicrosoftDefenderForOffice365, "dir", "client", "secret")));
+
+        ShouldKeepMemoryCause(result.Capabilities.Where(c => c.Capability != KnightCapability.DefenderDnsRecords));
+        var dns = result.Capabilities.Single(c => c.Capability == KnightCapability.DefenderDnsRecords);
+        dns.Outcome.Should().Be(KnightCapabilityOutcome.NotAttempted, "sem a lista de domínios aceitos, o DNS não é consultado");
+    }
+
+    [Fact]
+    public async Task Purview_MemoryLimitNaImportacao_NaoSobrescreveALimitacaoDePlataforma()
+    {
+        var collector = new PurviewKnightCollector(new ExchangeTokens(), new StubProtection(KilledDuringImport(), complianceSupported: false), new AppTokens());
+        var result = await collector.CollectAsync(new KnightCollectionContext(Tenant,
+            new KnightMicrosoftServiceConfiguration(KnightSourceType.MicrosoftPurview, "dir", "client", "secret")));
+
+        var platform = result.Capabilities.Where(c => c.Outcome == KnightCapabilityOutcome.PlatformUnsupported).ToList();
+        platform.Should().NotBeEmpty("a sessão do Security & Compliance já estava decidida antes do processo");
+        platform.Should().OnlyContain(c => c.Diagnostic!.Kind == KnightFailureKind.PlatformUnsupported);
+        ShouldKeepMemoryCause(result.Capabilities.Where(c => c.Outcome != KnightCapabilityOutcome.PlatformUnsupported));
+        result.Capabilities.Should().NotContain(c => c.Outcome == KnightCapabilityOutcome.InsufficientPermission);
+    }
+
+    [Theory]
+    [InlineData(PowerShellTermination.TimedOut, KnightFailureKind.Timeout)]
+    [InlineData(PowerShellTermination.OutputLimit, KnightFailureKind.OutputLimit)]
+    [InlineData(PowerShellTermination.NonZeroExit, KnightFailureKind.ProcessExit)]
+    public void AntesDaConexao_TerminacaoConhecida_NuncaViraModuloIndisponivel(PowerShellTermination termination, KnightFailureKind kind)
+    {
+        var before = PowerShellRunInterpretation.BeforeConnect("Serviço", KilledDuringImport(termination).Report, null, "corr");
+
+        before.Diagnostic.Kind.Should().Be(kind);
+        before.Detail.Should().NotContain("não carregou");
+    }
+
+    // ---- Interpretação consultiva determinística ----------------------------------------------------------------------------------------
+
+    private static KnightAdvisoryIndicator Indicator(KnightIndicatorDefinition d, KnightIndicatorStatus status, string evidence) =>
+        new(d.Id, d.Title, d.Category, d.Severity, status, evidence, 0, d.NistCodes, d.MitreTechniques);
+
+    private static IReadOnlyList<KnightIndicatorDefinition> ControlsOf(KnightCapability capability) =>
+        KnightCatalog.Indicators.Where(d => KnightControlProfiles.RequiredCapabilitiesOf(d.Id).Contains(capability)).Take(3).ToList();
+
+    private static KnightCapabilityStatus MemoryKilled(KnightCapability capability) =>
+        new(capability, KnightCapabilityOutcome.Error, "O adaptador foi encerrado por memória: parágrafo longo que antes se repetia em cada linha.",
+            new KnightCapabilityDiagnostic("import", KnightFailureKind.MemoryLimit, 1800, Code: "MemoryLimit"));
+
+    private const string RepeatedDetail = "parágrafo longo que antes se repetia";
+
+    [Fact]
+    public void SemNenhumControleAvaliado_PrioridadeEhRestabelecerAColeta_SemInventarRiscoNemConformidade()
+    {
+        var capabilities = new[] { MemoryKilled(KnightCapability.TeamsClientConfiguration), MemoryKilled(KnightCapability.TeamsMeetingPolicies) };
+        var controls = capabilities.SelectMany(c => ControlsOf(c.Capability)).DistinctBy(d => d.Id).ToList();
+        controls.Should().NotBeEmpty();
+        var input = new KnightAdvisoryInput(KnightSourceType.MicrosoftTeams, KnightAssessmentMode.Live, null, 0,
+            controls.Select(d => Indicator(d, KnightIndicatorStatus.NotEvaluated, RepeatedDetail)).ToList(),
+            capabilities.Select(c => "Capacidade: " + c.Detail).ToList(), capabilities);
+
+        var advisory = KnightAdvisoryFallback.Build(input);
+
+        advisory.ExecutiveSummary.Should().StartWith("Interpretação determinística (sem IA)")
+            .And.Contain("não conseguiu concluir a postura").And.Contain("restabelecer a coleta").And.Contain("não comprova risco nem conformidade");
+        advisory.ExecutiveSummary.Should().NotContain("Priorize").And.NotContain("não conformes");
+        advisory.PriorityRisks.Should().BeEmpty();
+
+        var gap = advisory.CollectionGaps.Should().ContainSingle("a mesma causa e fonte formam UMA lacuna").Subject;
+        gap.Should().Contain("Microsoft Teams").And.Contain("memória").And.Contain("2 capacidade(s)");
+        controls.Should().OnlyContain(d => gap.Contains(d.Id), "os controles relacionados continuam acessíveis");
+        string.Join(" ", advisory.CollectionGaps).Should().NotContain(RepeatedDetail);
+
+        var action = advisory.RecommendedActions.Should().ContainSingle().Subject;
+        action.Action.Should().Contain("Restabelecer a coleta");
+    }
+
+    [Fact]
+    public void CausasDiferentes_FicamEmGruposDiferentes_PorDadoEstruturadoENaoPorTexto()
+    {
+        const string SameText = "Texto idêntico de propósito.";
+        var capabilities = new[]
+        {
+            new KnightCapabilityStatus(KnightCapability.TeamsClientConfiguration, KnightCapabilityOutcome.Error, SameText,
+                new KnightCapabilityDiagnostic("import", KnightFailureKind.MemoryLimit)),
+            new KnightCapabilityStatus(KnightCapability.TeamsMeetingPolicies, KnightCapabilityOutcome.InsufficientPermission, SameText,
+                new KnightCapabilityDiagnostic("read", KnightFailureKind.Command, HttpStatus: 403)),
+            new KnightCapabilityStatus(KnightCapability.TeamsFederationConfiguration, KnightCapabilityOutcome.PlatformUnsupported, SameText,
+                new KnightCapabilityDiagnostic("platform", KnightFailureKind.PlatformUnsupported)),
+        };
+        var input = new KnightAdvisoryInput(KnightSourceType.MicrosoftTeams, KnightAssessmentMode.Live, null, 0,
+            capabilities.SelectMany(c => ControlsOf(c.Capability)).DistinctBy(d => d.Id)
+                .Select(d => Indicator(d, KnightIndicatorStatus.NotEvaluated, "x")).ToList(),
+            Array.Empty<string>(), capabilities);
+
+        var advisory = KnightAdvisoryFallback.Build(input);
+
+        advisory.CollectionGaps.Should().HaveCount(3);
+        advisory.CollectionGaps.Should().ContainSingle(g => g.Contains("memória"));
+        advisory.CollectionGaps.Should().ContainSingle(g => g.Contains("Autorização recusada"));
+        advisory.CollectionGaps.Should().ContainSingle(g => g.Contains("plataforma"));
+        advisory.RecommendedActions.Should().HaveCount(2, "limitação de plataforma não se resolve repetindo a coleta");
+        advisory.RecommendedActions.Should().NotContain(a => a.Action.Contains("plataforma"));
+        advisory.RecommendedActions.Single(a => a.Action.Contains("Autorização recusada")).Action.Should().Contain("não comprova, sozinha");
+    }
+
+    [Fact]
+    public void AvaliacaoParcial_SeparaOComprovadoDoDesconhecido()
+    {
+        var teams = KnightCatalog.Indicators.Where(d => KnightControlProfiles.RequiredCapabilitiesOf(d.Id).Count > 0).Take(4).ToList();
+        var input = new KnightAdvisoryInput(KnightSourceType.MicrosoftTeams, KnightAssessmentMode.Live, 40, 50, new[]
+        {
+            Indicator(teams[0], KnightIndicatorStatus.Exposed, "achado comprovado"),
+            Indicator(teams[1], KnightIndicatorStatus.Passed, "ok"),
+            Indicator(teams[2], KnightIndicatorStatus.NotEvaluated, "sem dado"),
+            Indicator(teams[3], KnightIndicatorStatus.Error, "sem dado"),
+        }, Array.Empty<string>(), new[] { MemoryKilled(KnightControlProfiles.RequiredCapabilitiesOf(teams[2].Id)[0]) });
+
+        var advisory = KnightAdvisoryFallback.Build(input);
+
+        advisory.ExecutiveSummary.Should().Contain("Comprovado pela coleta: 1 exposto(s), 0 mitigado(s) e 1 conforme(s)")
+            .And.Contain("Sem conclusão: 2 controle(s)").And.Contain("não contam como risco nem como conformidade")
+            .And.Contain("Priorize os expostos");
+        advisory.PriorityRisks.Should().ContainSingle(r => r.IndicatorIds.Single() == teams[0].Id, "só o comprovado entra nos riscos");
+        advisory.RecommendedActions.First().IndicatorIds.Should().Equal(teams[0].Id);
+        advisory.RecommendedActions.Last().IndicatorIds.Should().BeEmpty("a ação de coleta aponta para a lacuna, sem repetir a lista");
+        advisory.CollectionGaps.Should().Contain(g => g.Contains(teams[2].Id));
+    }
+
+    [Fact]
+    public void CapacidadesEstruturadas_NaoEntramNoQueVaiParaAIa()
+    {
+        var input = new KnightAdvisoryInput(KnightSourceType.MicrosoftTeams, KnightAssessmentMode.Live, null, 0,
+            Array.Empty<KnightAdvisoryIndicator>(), new[] { "limitação" }, new[] { MemoryKilled(KnightCapability.TeamsClientConfiguration) });
+
+        var json = JsonSerializer.Serialize(input, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        json.Should().NotContain("capabilities").And.NotContain("MemoryLimit").And.Contain("limita");
+    }
+
+    [Fact]
+    public void NarrativaJaGravada_ContinuaLegivelEIgual_PeloMesmoContrato()
+    {
+        const string stored = """{"ExecutiveSummary":"Resumo antigo.","PriorityRisks":[],"RecommendedActions":[{"Order":1,"Action":"Agir.","IndicatorIds":["AK-ENTRA-001"]}],"Correlations":[],"CollectionGaps":["AK-ENTRA-002: motivo antigo"]}""";
+
+        var advisory = JsonSerializer.Deserialize<KnightAdvisory>(stored)!;
+
+        advisory.ExecutiveSummary.Should().Be("Resumo antigo.");
+        advisory.CollectionGaps.Should().Equal("AK-ENTRA-002: motivo antigo");
+        JsonSerializer.Serialize(advisory).Should().Be(stored, "fotografias publicadas não mudam: o formato gravado é o mesmo");
+    }
+}

@@ -74,7 +74,8 @@ measure "api-recem-iniciada"
 TOKEN="$(curl -s -H "$HDR" -H 'Content-Type: application/json' \
   -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMINPASS\"}" "$BASE/api/v1/auth/login" | jq -r '.accessToken // empty')"
 if [ -z "$TOKEN" ]; then echo "login falhou"; docker logs "$APP" 2>&1 | tail -40; exit 1; fi
-call() { curl -s -o /dev/null -w "%{http_code} $1 $2\n" -X "$1" -H "$HDR" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' ${3:+-d "$3"} "$BASE$2"; }
+TENANT="$(printf '%s' "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | python3 -c "import base64,json,sys; p=sys.stdin.read().strip(); print(json.loads(base64.b64decode(p + '=' * (-len(p) % 4)))['tenant_id'])")"
+call() { curl -s -o /dev/null -w "%{http_code} $1 $2\n" -X "$1" -H "$HDR" -H "Authorization: Bearer $TOKEN" -H "X-Tenant: $TENANT" -H 'Content-Type: application/json' ${3:+-d "$3"} "$BASE$2"; }
 ROUNDS="${WARM_ROUNDS:-6}"
 for r in $(seq 1 "$ROUNDS"); do
   call POST /api/v1/knight/assessments/demo | { [ "$r" = "1" ] && cat || cat >/dev/null; }
@@ -83,11 +84,11 @@ for r in $(seq 1 "$ROUNDS"); do
               /api/v1/posture/snapshots /api/v1/nist/assessments/history /api/v1/nist/assessments/assist/availability; do
     call GET "$path" | { [ "$r" = "1" ] && cat || cat >/dev/null; }
   done
-  SNAP="$(curl -s -X POST -H "$HDR" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-    -d '{"type":"Knight","source":"Demo"}' "$BASE/api/v1/posture/snapshots" | jq -r '.id // empty')"
+  SNAP="$(curl -s -X POST -H "$HDR" -H "Authorization: Bearer $TOKEN" -H "X-Tenant: $TENANT" -H 'Content-Type: application/json' \
+    -d '{"type":"Knight","source":"demo"}' "$BASE/api/v1/posture/snapshots" | tee "$WORK/snap.json" | jq -r '.id // empty' 2>/dev/null)"
   if [ -n "$SNAP" ]; then
     for fmt in pdf html csv; do call GET "/api/v1/posture/snapshots/$SNAP/export?format=$fmt" | { [ "$r" = "1" ] && cat || cat >/dev/null; }; done
-  elif [ "$r" = "1" ]; then echo "fotografia sintética não publicada (o aquecimento segue sem exportação)"; fi
+  elif [ "$r" = "1" ]; then echo "fotografia sintética não publicada (o aquecimento segue sem exportação): $(head -c 300 "$WORK/snap.json")"; fi
 done
 measure "api-aquecida"
 
