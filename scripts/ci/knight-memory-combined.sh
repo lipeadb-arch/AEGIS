@@ -34,17 +34,18 @@ trap cleanup EXIT
 
 # Compara o resultado efetivo com o esperado, a partir do log da API. Preenche PROBLEMAS; vazio significa conforme.
 verificar_etapas() {
+  # Here-string, não pipe: com pipefail, grep -q fecha o pipe ao achar a linha e o printf falho inverte o resultado.
   PROBLEMAS=""
   problema() { PROBLEMAS="$PROBLEMAS  - $1"$'\n'; }
-  exige() { printf '%s\n' "$LOGS" | grep -qxF -- "$1" || problema "faltou: $1"; }
+  exige() { grep -qxF -- "$1" <<<"$LOGS" || problema "faltou: $1"; }
   local etapas falhas encerrados recusas inicios validos nulos
-  etapas="$(printf '%s\n' "$LOGS" | grep -E '^combinado ' || true)"
-  falhas="$(printf '%s\n' "$etapas" | grep -E '^combinado [^:]+: FALHA' || true)"
-  encerrados="$(printf '%s\n' "$LOGS" | grep -c 'encerrado para preservar a API' || true)"
-  recusas="$(printf '%s\n' "$LOGS" | grep -c 'não iniciado por falta de memória' || true)"
-  inicios="$(printf '%s\n' "$LOGS" | grep -oE 'knight-memoria-inicio .*travamento=[^ ]*' | sed 's/.*travamento=//' || true)"
-  validos="$(printf '%s\n' "$inicios" | grep -cE '^[0-9]+([.,][0-9]+)?$' || true)"
-  nulos="$(printf '%s\n' "$inicios" | grep -cxF '(null)' || true)"
+  etapas="$(grep -E '^combinado ' <<<"$LOGS" || true)"
+  falhas="$(grep -E '^combinado [^:]+: FALHA' <<<"$etapas" || true)"
+  encerrados="$(grep -c 'encerrado para preservar a API' <<<"$LOGS" || true)"
+  recusas="$(grep -c 'não iniciado por falta de memória' <<<"$LOGS" || true)"
+  inicios="$(grep -oE 'knight-memoria-inicio .*travamento=[^ ]*' <<<"$LOGS" | sed 's/.*travamento=//' || true)"
+  validos="$(grep -cE '^[0-9]+([.,][0-9]+)?$' <<<"$inicios" || true)"
+  nulos="$(grep -cxF '(null)' <<<"$inicios" || true)"
 
   # A condição do cenário precisa ter valido: sem isso, um resultado verde não diz nada sobre a política.
   [ -n "$inicios" ] || problema "nenhum knight-memoria-inicio no log"
@@ -52,14 +53,14 @@ verificar_etapas() {
     "") [ "$nulos" = "0" ] || problema "PSI real deveria estar válido em todo início ($nulos sem leitura)" ;;
     vazio|ilegivel|invalido) [ "$validos" = "0" ] || problema "PSI injetado não valeu ($validos inícios com leitura válida)" ;;
     perdido)
-      printf '%s\n' "$inicios" | head -1 | grep -qE '^[0-9]' || problema "o primeiro início deveria ter PSI válido"
-      [ "$(printf '%s\n' "$inicios" | tail -1)" = "(null)" ] || problema "o último início deveria estar sem PSI"
-      printf '%s\n' "$LOGS" | grep -q 'encerrado para preservar a API.*TravamentoAvg10=(null)' \
+      grep -qE '^[0-9]' <<<"${inicios%%$'\n'*}" || problema "o primeiro início deveria ter PSI válido"
+      [ "${inicios##*$'\n'}" = "(null)" ] || problema "o último início deveria estar sem PSI"
+      grep -q 'encerrado para preservar a API.*TravamentoAvg10=(null)' <<<"$LOGS" \
         || problema "nenhum adaptador encerrado depois da perda do PSI" ;;
   esac
 
   if [ "$ESPERADO" = "completo" ]; then
-    printf '%s\n' "$LOGS" | grep -qx 'memoria-combinada=OK' || problema "o percurso não terminou com memoria-combinada=OK"
+    grep -qx 'memoria-combinada=OK' <<<"$LOGS" || problema "o percurso não terminou com memoria-combinada=OK"
     [ -z "$falhas" ] || problema "etapas com falha: $falhas"
     [ "$encerrados" = "0" ] || problema "$encerrados adaptadores encerrados por memória"
     [ "$recusas" = "0" ] || problema "$recusas adaptadores recusados no início"
@@ -72,14 +73,14 @@ verificar_etapas() {
     exige "combinado fixture-defender: ok estado=PartialCollection coletadas=14/15"
     exige "combinado fixture-purview: ok estado=PartialCollection coletadas=1/3"
   else
-    printf '%s\n' "$LOGS" | grep -qx 'memoria-combinada=FALHA' || problema "interrupção esperada não pode terminar como coleta completa"
+    grep -qx 'memoria-combinada=FALHA' <<<"$LOGS" || problema "interrupção esperada não pode terminar como coleta completa"
     [ -n "$falhas" ] || problema "nenhuma etapa interrompida"
     [ $((encerrados + recusas)) -gt 0 ] || problema "nenhuma proteção de memória agiu"
     local outras
-    outras="$(printf '%s\n' "$falhas" | grep -vE '(causas=MemoryLimit|terminação=MemoryLimit estágios=.*)$' || true)"
+    outras="$(grep -vE '(causas=MemoryLimit|terminação=MemoryLimit estágios=.*)$' <<<"$falhas" || true)"
     [ -z "$outras" ] || problema "causa diferente de MemoryLimit: $outras"
-    printf '%s\n' "$falhas" | grep -q 'estado=Completed' && problema "etapa interrompida com estado Completed"
-    printf '%s\n' "$falhas" | grep -qE 'estado=PartialCollection coletadas=[1-9][0-9]*/[0-9]+ causas=MemoryLimit$' \
+    grep -q 'estado=Completed' <<<"$falhas" && problema "etapa interrompida com estado Completed"
+    grep -qE 'estado=PartialCollection coletadas=[1-9][0-9]*/[0-9]+ causas=MemoryLimit$' <<<"$falhas" \
       || problema "nenhuma coleta interrompida preservou as leituras já feitas"
   fi
 }
