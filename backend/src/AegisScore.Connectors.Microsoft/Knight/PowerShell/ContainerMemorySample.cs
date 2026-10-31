@@ -15,6 +15,8 @@ internal sealed record ContainerMemoryStat(
     /// <summary><c>file_mapped</c> também conta a memória compartilhada mapeada (o código JIT do .NET fica nela): só o que excede <c>shmem</c> é arquivo.</summary>
     public long MappedFile => Math.Max(0, FileMapped - Shmem);
 
+    private static readonly string[] RequiredFields = { "anon", "file", "shmem", "active_file", "inactive_file", "file_mapped", "file_dirty", "file_writeback" };
+
     internal static ContainerMemoryStat? Parse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
@@ -25,7 +27,9 @@ internal sealed record ContainerMemoryStat(
             if (space > 0 && long.TryParse(line.AsSpan(space + 1).Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var value))
                 values[line[..space]] = value;
         }
-        if (!values.ContainsKey("anon") || !values.ContainsKey("file")) return null;
+        // Sem um destes campos não dá para dizer o que é recuperável: vale a conta pelo total, nunca um desconto com o campo presumido em zero.
+        foreach (var required in RequiredFields)
+            if (!values.ContainsKey(required)) return null;
         long Of(string key) => values.GetValueOrDefault(key);
         return new(Of("anon"), Of("file"), Of("shmem"), Of("active_file"), Of("inactive_file"), Of("file_mapped"), Of("file_dirty"),
             Of("file_writeback"), Of("kernel"));
@@ -39,12 +43,12 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
     public const double StallTriggerPercent = 40;
 
     /// <summary>
-    /// [AEGIS-KNIGHT-MEMORY-BUDGET] O que o kernel devolve sem encerrar ninguém: cache de arquivo limpo, mapeado ou não, menos um piso para o código
-    /// em uso (1/8 do limite), porque descartar código quente sai caro antes de faltar memória. Medido em 512 MiB: dos 450 MiB que disparavam
-    /// o monitor na importação, só 270 MiB eram anon, shmem e kernel.
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] O que o kernel devolve sem encerrar ninguém. Cache limpo não mapeado sempre conta. Arquivo limpo mapeado é
+    /// código em uso: descartá-lo pode travar a API antes de faltar memória, e só o travamento medido revela isso. Por isso o mapeado acima do
+    /// piso (1/8 do limite) só conta com PSI válido; sem ele, a guarda de travamento não existe e nada mapeado é descontado.
     /// </summary>
     public long ReclaimableBytes => Stat is { } stat
-        ? Math.Max(0, stat.CleanFileCache - Math.Min(stat.MappedFile, LimitBytes / 8))
+        ? Math.Max(0, stat.CleanFileCache - (FullStallAvg10 is null ? stat.MappedFile : Math.Min(stat.MappedFile, LimitBytes / 8)))
         : 0;
 
     /// <summary>Memória que não pode ser devolvida sem encerrar alguém. Sem o detalhe de <c>memory.stat</c>, vale o total.</summary>
@@ -88,7 +92,7 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
         && long.TryParse(limit.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var max)
         && used >= 0 && max > 0 ? new(used, max, ContainerMemoryStat.Parse(stat), ParseFullStall(pressure)) : null;
 
-    /// <summary>Linha <c>full avg10=…</c> de <c>memory.pressure</c>. Nulo quando o kernel não expõe PSI: a guarda fica só no limite de memória.</summary>
+    /// <summary>Linha <c>full avg10=…</c> de <c>memory.pressure</c>. Nulo quando o PSI falta, não abre ou traz valor fora de 0 a 100: não encerra ninguém, mas retira o desconto de arquivo mapeado.</summary>
     internal static double? ParseFullStall(string? pressure)
     {
         if (string.IsNullOrWhiteSpace(pressure)) return null;
@@ -97,7 +101,8 @@ internal sealed record ContainerMemorySample(long CurrentBytes, long LimitBytes,
             if (!line.StartsWith("full ", StringComparison.Ordinal)) continue;
             foreach (var part in line.Split(' '))
                 if (part.StartsWith("avg10=", StringComparison.Ordinal)
-                    && double.TryParse(part.AsSpan(6), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)) return value;
+                    && double.TryParse(part.AsSpan(6), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+                    && value is >= 0 and <= 100) return value;
         }
         return null;
     }

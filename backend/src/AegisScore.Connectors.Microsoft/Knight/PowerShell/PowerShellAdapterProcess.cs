@@ -443,9 +443,9 @@ public sealed class PowerShellAdapterProcess
         var api = ProcessMemorySample.Read(Environment.ProcessId);
         _log?.LogInformation(
             "knight-memoria-inicio adaptador={Adaptador} antes={Antes} depois={Depois} recuperavel={Recuperavel} folga={Folga} reserva={Reserva} "
-            + "apiRss={ApiRss} apiAnon={ApiAnon} apiHeap={ApiHeap} limite={Limite}",
+            + "apiRss={ApiRss} apiAnon={ApiAnon} apiHeap={ApiHeap} limite={Limite} travamento={Travamento}",
             _adapterLabel, before.PressureBytes, after.PressureBytes, after.ReclaimableBytes, after.HeadroomBytes, after.StartReserveBytes,
-            api?.RssBytes ?? 0, api?.AnonBytes ?? 0, GC.GetTotalMemory(false), after.LimitBytes);
+            api?.RssBytes ?? 0, api?.AnonBytes ?? 0, GC.GetTotalMemory(false), after.LimitBytes, after.FullStallAvg10);
         if (after.CanStartChild) return null;
 
         _log?.LogWarning("Adaptador do {Adaptador}: não iniciado por falta de memória. Folga={Folga}, Reserva={Reserva}, Limite={Limite}.",

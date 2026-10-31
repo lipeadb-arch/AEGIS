@@ -330,6 +330,57 @@ jobs:
           FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
         run: bash scripts/ci/knight-memory-combined.sh none
 
+      # Daqui em diante a coleta deve ser INTERROMPIDA por MemoryLimit: o script falha se ela parecer completa, se perder as leituras feitas
+      # ou se a API adoecer. A alocação extra é sintética (pwsh tocando 8 MiB a cada 2 s, até 96 MiB), não sessão nem volume da Microsoft.
+      - name: No valid PSI - empty file
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: vazio
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: No valid PSI - unreadable file
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: ilegivel
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: No valid PSI - invalid value
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: invalido
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: PSI lost during collection
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: perdido
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Synthetic extra allocation - valid PSI
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          CARGA_EXTERNA: '1'
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Synthetic extra allocation - no PSI
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: vazio
+          CARGA_EXTERNA: '1'
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
   migrations-pg:
     runs-on: ubuntu-latest
     timeout-minutes: 20

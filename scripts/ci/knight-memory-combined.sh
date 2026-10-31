@@ -2,13 +2,21 @@
 # [AEGIS-KNIGHT-MEMORY-BUDGET] Reprodução combinada: API REAL (migrator + host inteiro) e módulos OFICIAIS da imagem no MESMO contêiner de
 # 512 MiB sem swap. Aquece a API por HTTP com dados sintéticos, dispara as importações no processo da API e mede contêiner, API, filho e heap.
 # Uso: IMAGE=aegis-homolog:ci FIXTURES=<psmodules> scripts/ci/knight-memory-combined.sh <cpus|none> [memoria]
-# Não usa locatário nem credencial real. Sai com 0 só quando a API ficou saudável e todas as etapas concluíram.
+# PSI_INJECT=vazio|ilegivel|invalido cobre memory.pressure dentro do contêiner, para medir a política sem PSI válido.
+# PSI_INJECT=perdido começa com PSI válido e o retira depois do início do primeiro adaptador, com a coleta em andamento.
+# CARGA_EXTERNA=1 faz outro processo do contêiner (pwsh) alocar e tocar 8 MiB a cada 2 s, até 96 MiB, para ver qual proteção age primeiro.
+#   É alocação sintética: não representa sessão, comando nem volume da Microsoft.
+# ESPERADO=completo (padrão) exige as quatro importações e o percurso inteiro. ESPERADO=interrompido exige MemoryLimit como única causa,
+#   leituras preservadas e nada apresentado como coleta completa. Nos dois, a API precisa ter ficado saudável e sem OOM.
+# Não usa locatário nem credencial real. Sai com 0 só quando o resultado efetivo é o esperado.
 set -uo pipefail
 
 CPUS="${1:-0.5}"
 MEMORY="${2:-512m}"
 IMAGE="${IMAGE:-aegis-homolog:ci}"
 FIXTURES="${FIXTURES:?diretorio dos modulos de fixture}"
+ESPERADO="${ESPERADO:-completo}"
+case "$ESPERADO" in completo|interrompido) ;; *) echo "ESPERADO desconhecido"; exit 1 ;; esac
 SUFFIX="$$"
 NET="aegis-mem-net-$SUFFIX"; PG="aegis-mem-pg-$SUFFIX"; APP="aegis-mem-app-$SUFFIX"
 PORT="${PORT:-18080}"
@@ -23,6 +31,58 @@ cleanup() {
   sudo rm -rf "$WORK" 2>/dev/null || rm -rf "$WORK" || true
 }
 trap cleanup EXIT
+
+# Compara o resultado efetivo com o esperado, a partir do log da API. Preenche PROBLEMAS; vazio significa conforme.
+verificar_etapas() {
+  PROBLEMAS=""
+  problema() { PROBLEMAS="$PROBLEMAS  - $1"$'\n'; }
+  exige() { printf '%s\n' "$LOGS" | grep -qxF -- "$1" || problema "faltou: $1"; }
+  local etapas falhas encerrados recusas inicios validos nulos
+  etapas="$(printf '%s\n' "$LOGS" | grep -E '^combinado ' || true)"
+  falhas="$(printf '%s\n' "$etapas" | grep -E '^combinado [^:]+: FALHA' || true)"
+  encerrados="$(printf '%s\n' "$LOGS" | grep -c 'encerrado para preservar a API' || true)"
+  recusas="$(printf '%s\n' "$LOGS" | grep -c 'não iniciado por falta de memória' || true)"
+  inicios="$(printf '%s\n' "$LOGS" | grep -oE 'knight-memoria-inicio .*travamento=[^ ]*' | sed 's/.*travamento=//' || true)"
+  validos="$(printf '%s\n' "$inicios" | grep -cE '^[0-9]+([.,][0-9]+)?$' || true)"
+  nulos="$(printf '%s\n' "$inicios" | grep -cxF '(null)' || true)"
+
+  # A condição do cenário precisa ter valido: sem isso, um resultado verde não diz nada sobre a política.
+  [ -n "$inicios" ] || problema "nenhum knight-memoria-inicio no log"
+  case "${PSI_INJECT:-}" in
+    "") [ "$nulos" = "0" ] || problema "PSI real deveria estar válido em todo início ($nulos sem leitura)" ;;
+    vazio|ilegivel|invalido) [ "$validos" = "0" ] || problema "PSI injetado não valeu ($validos inícios com leitura válida)" ;;
+    perdido)
+      printf '%s\n' "$inicios" | head -1 | grep -qE '^[0-9]' || problema "o primeiro início deveria ter PSI válido"
+      [ "$(printf '%s\n' "$inicios" | tail -1)" = "(null)" ] || problema "o último início deveria estar sem PSI"
+      printf '%s\n' "$LOGS" | grep -q 'encerrado para preservar a API.*TravamentoAvg10=(null)' \
+        || problema "nenhum adaptador encerrado depois da perda do PSI" ;;
+  esac
+
+  if [ "$ESPERADO" = "completo" ]; then
+    printf '%s\n' "$LOGS" | grep -qx 'memoria-combinada=OK' || problema "o percurso não terminou com memoria-combinada=OK"
+    [ -z "$falhas" ] || problema "etapas com falha: $falhas"
+    [ "$encerrados" = "0" ] || problema "$encerrados adaptadores encerrados por memória"
+    [ "$recusas" = "0" ] || problema "$recusas adaptadores recusados no início"
+    local n a
+    for n in 1 2 3; do exige "combinado aquecimento-5000-$n: ok estado=Completed coletadas=12/12"; done
+    for a in teams exchange defender purview; do exige "combinado oficial-$a: ok terminação=Completed estágios=start>input>import>imported>result"; done
+    exige "combinado fixture-teams: ok estado=Completed coletadas=6/6"
+    exige "combinado fixture-exchange-5000: ok estado=Completed coletadas=12/12"
+    # Defender e Purview são parciais pela própria fixture: a mesma resposta em toda execução, sem causa de processo ou memória.
+    exige "combinado fixture-defender: ok estado=PartialCollection coletadas=14/15"
+    exige "combinado fixture-purview: ok estado=PartialCollection coletadas=1/3"
+  else
+    printf '%s\n' "$LOGS" | grep -qx 'memoria-combinada=FALHA' || problema "interrupção esperada não pode terminar como coleta completa"
+    [ -n "$falhas" ] || problema "nenhuma etapa interrompida"
+    [ $((encerrados + recusas)) -gt 0 ] || problema "nenhuma proteção de memória agiu"
+    local outras
+    outras="$(printf '%s\n' "$falhas" | grep -vE '(causas=MemoryLimit|terminação=MemoryLimit estágios=.*)$' || true)"
+    [ -z "$outras" ] || problema "causa diferente de MemoryLimit: $outras"
+    printf '%s\n' "$falhas" | grep -q 'estado=Completed' && problema "etapa interrompida com estado Completed"
+    printf '%s\n' "$falhas" | grep -qE 'estado=PartialCollection coletadas=[1-9][0-9]*/[0-9]+ causas=MemoryLimit$' \
+      || problema "nenhuma coleta interrompida preservou as leituras já feitas"
+  fi
+}
 
 measure() { # rotulo: contadores do cgroup e do processo da API, medidos de dentro do contêiner
   docker exec "$APP" sh -c '
@@ -52,9 +112,19 @@ SECRET_PATH=/etc/secrets/aegis-dataprotection.pfx.b64
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null || { echo "não foi possível esvaziar o cache de página"; exit 1; }
 
 CPU_ARG=(); [ "$CPUS" != "none" ] && CPU_ARG=(--cpus="$CPUS")
-echo "== contêiner: memória=$MEMORY sem swap, cpus=$CPUS (produção usa o mesmo ENTRYPOINT: migrator e depois API)"
+PSI_ARG=()
+case "${PSI_INJECT:-}" in
+  "") ;;
+  vazio) : > "$WORK/psi" ;;
+  ilegivel) : > "$WORK/psi"; sudo chown root:root "$WORK/psi"; sudo chmod 000 "$WORK/psi" ;;
+  invalido) echo 'full avg10=NaN avg60=0.00 avg300=0.00 total=0' > "$WORK/psi" ;;
+  perdido) echo 'full avg10=0.00 avg60=0.00 avg300=0.00 total=0' > "$WORK/psi" ;;
+  *) echo "PSI_INJECT desconhecido"; exit 1 ;;
+esac
+[ -n "${PSI_INJECT:-}" ] && PSI_ARG=(-v "$WORK/psi:/sys/fs/cgroup/memory.pressure:ro")
+echo "== contêiner: memória=$MEMORY sem swap, cpus=$CPUS psi=${PSI_INJECT:-real} cargaExterna=${CARGA_EXTERNA:-0} esperado=$ESPERADO (produção usa o mesmo ENTRYPOINT: migrator e depois API)"
 docker run -d --name "$APP" --network "$NET" -p "127.0.0.1:$PORT:8080" \
-  --memory="$MEMORY" --memory-swap="$MEMORY" "${CPU_ARG[@]}" \
+  --memory="$MEMORY" --memory-swap="$MEMORY" "${CPU_ARG[@]}" "${PSI_ARG[@]}" \
   -e "ConnectionStrings__AegisScore=Host=$PG;Port=5432;Database=aegis_mem;Username=postgres;Password=$PGPASS;SSL Mode=Disable" \
   -e "Jwt__SigningKey=$JWTKEY" \
   -e "DataProtection__Certificate__Path=$SECRET_PATH" -e "DataProtection__Certificate__Password=$PFXPASS" \
@@ -108,9 +178,17 @@ HEALTH_PID=$!
 
 echo "== disparo: importações oficiais e percurso com fixture no processo da API"
 docker exec "$APP" sh -c 'touch /tmp/aegis-memory-check-go'
+if [ "${CARGA_EXTERNA:-0}" = "1" ]; then
+  # 8 MiB tocados a cada 2 s, até 96 MiB, somados ao que o próprio pwsh ocupa. Fica vivo até o fim da verificação.
+  docker exec -d "$APP" pwsh -NoProfile -Command '$k=@(); 1..12 | % { $b=[byte[]]::new(8MB); [Array]::Fill($b,[byte]1); $k+=,$b; Start-Sleep 2 }; Start-Sleep 900'
+fi
 done=0
 for _ in $(seq 1 450); do
   LOGS="$(docker logs "$APP" 2>&1)"
+  if [ "${PSI_INJECT:-}" = "perdido" ] && [ -s "$WORK/psi" ] && [[ "$LOGS" == *knight-memoria-inicio* ]]; then
+    # Trunca o mesmo arquivo: o contêiner enxerga a mudança no bind mount enquanto o filho está coletando.
+    : > "$WORK/psi"; echo "== PSI retirado durante a coleta"
+  fi
   case "$LOGS" in *"memoria-combinada=OK"*|*"memoria-combinada=FALHA"*) done=1; break;; esac
   [ "$(docker inspect -f '{{.State.Running}}' "$APP" 2>/dev/null)" = "true" ] || { echo "contêiner encerrou durante a verificação"; break; }
   sleep 2
@@ -120,6 +198,7 @@ kill "$HEALTH_PID" 2>/dev/null; wait "$HEALTH_PID" 2>/dev/null
 measure "fim"
 LOGS="$(docker logs "$APP" 2>&1)"
 echo "== etapas"; echo "$LOGS" | grep -E '^combinado |^alcance:|^NÃO PROVADO|^memoria-combinada=' | sed 's/^/  /'
+echo "== início por adaptador"; echo "$LOGS" | grep -E 'knight-memoria-inicio|não iniciado por falta' | sed 's/^ *//' | sed 's/^/  /'
 echo "== memória por execução do adaptador"; echo "$LOGS" | grep -E 'knight-memoria |encerrado para preservar a API' | sed 's/^ *//' | sed 's/^/  /'
 
 TOTAL="$(wc -l < "$WORK/health.txt" 2>/dev/null || echo 0)"; BAD="$(grep -vc '^200$' "$WORK/health.txt" 2>/dev/null || true)"
@@ -132,11 +211,18 @@ echo "== saúde: sondagens=$TOTAL fora-de-200=$BAD latenciaMaxima=${SLOWEST:-?}s
 CODE="$(curl -s -m 5 -o /dev/null -w '%{http_code}' -H "$HDR" "$BASE/health/ready" 2>/dev/null || true)"
 echo "== /health/ready ao fim: $CODE"
 
-if [ "$done" = "1" ] && [ "$CODE" = "200" ] && [ "$RUNNING" = "true" ] && [ "$KILLS" = "0" ] && [ "$BAD" = "0" ] \
-   && echo "$LOGS" | grep -q '^memoria-combinada=OK'; then
-  echo "CENARIO COMBINADO OK (memoria=$MEMORY cpus=$CPUS)"; RESULT=0
-else
-  echo "CENARIO COMBINADO FALHOU (memoria=$MEMORY cpus=$CPUS)"
+verificar_etapas
+[ "$done" = "1" ] || PROBLEMAS="$PROBLEMAS  - a verificação não terminou"$'\n'
+[ "$CODE" = "200" ] && [ "$RUNNING" = "true" ] && [ "$RESTARTS" = "0" ] && [ "$OOM" = "false" ] && [ "$KILLS" = "0" ] && [ "$TOTAL" -gt 0 ] && [ "$BAD" = "0" ] \
+  || PROBLEMAS="$PROBLEMAS  - API sem saúde ou com OOM"$'\n'
+
+ROTULO="memoria=$MEMORY cpus=$CPUS psi=${PSI_INJECT:-real} cargaExterna=${CARGA_EXTERNA:-0}"
+if [ -n "$PROBLEMAS" ]; then
+  echo "CENARIO FORA DO ESPERADO ($ESPERADO; $ROTULO)"; printf '%s' "$PROBLEMAS"
   echo "$LOGS" | grep -E ' fail: |crit: |Unhandled|OutOfMemory' | tail -20
+elif [ "$ESPERADO" = "completo" ]; then
+  echo "CENARIO COMPLETO OK ($ROTULO)"; RESULT=0
+else
+  echo "CENARIO INTERROMPIDO CONFORME ESPERADO, coleta NÃO completa: MemoryLimit como causa, leituras preservadas, API saudável, sem OOM ($ROTULO)"; RESULT=0
 fi
 exit "$RESULT"
