@@ -2,6 +2,8 @@
 # [AEGIS-KNIGHT-MEMORY-BUDGET] Reprodução combinada: API REAL (migrator + host inteiro) e módulos OFICIAIS da imagem no MESMO contêiner de
 # 512 MiB sem swap. Aquece a API por HTTP com dados sintéticos, dispara as importações no processo da API e mede contêiner, API, filho e heap.
 # Uso: IMAGE=aegis-homolog:ci FIXTURES=<psmodules> scripts/ci/knight-memory-combined.sh <cpus|none> [memoria]
+# PSI_INJECT=vazio|ilegivel|invalido cobre memory.pressure dentro do contêiner, para medir a política sem PSI válido.
+# CARGA_EXTERNA=1 aloca memória de verdade em outro processo do contêiner durante as coletas, para ver qual proteção age primeiro.
 # Não usa locatário nem credencial real. Sai com 0 só quando a API ficou saudável e todas as etapas concluíram.
 set -uo pipefail
 
@@ -52,9 +54,18 @@ SECRET_PATH=/etc/secrets/aegis-dataprotection.pfx.b64
 sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null || { echo "não foi possível esvaziar o cache de página"; exit 1; }
 
 CPU_ARG=(); [ "$CPUS" != "none" ] && CPU_ARG=(--cpus="$CPUS")
-echo "== contêiner: memória=$MEMORY sem swap, cpus=$CPUS (produção usa o mesmo ENTRYPOINT: migrator e depois API)"
+PSI_ARG=()
+case "${PSI_INJECT:-}" in
+  "") ;;
+  vazio) : > "$WORK/psi" ;;
+  ilegivel) : > "$WORK/psi"; sudo chown root:root "$WORK/psi"; sudo chmod 000 "$WORK/psi" ;;
+  invalido) echo 'full avg10=NaN avg60=0.00 avg300=0.00 total=0' > "$WORK/psi" ;;
+  *) echo "PSI_INJECT desconhecido"; exit 1 ;;
+esac
+[ -n "${PSI_INJECT:-}" ] && PSI_ARG=(-v "$WORK/psi:/sys/fs/cgroup/memory.pressure:ro")
+echo "== contêiner: memória=$MEMORY sem swap, cpus=$CPUS psi=${PSI_INJECT:-real} cargaExterna=${CARGA_EXTERNA:-0} (produção usa o mesmo ENTRYPOINT: migrator e depois API)"
 docker run -d --name "$APP" --network "$NET" -p "127.0.0.1:$PORT:8080" \
-  --memory="$MEMORY" --memory-swap="$MEMORY" "${CPU_ARG[@]}" \
+  --memory="$MEMORY" --memory-swap="$MEMORY" "${CPU_ARG[@]}" "${PSI_ARG[@]}" \
   -e "ConnectionStrings__AegisScore=Host=$PG;Port=5432;Database=aegis_mem;Username=postgres;Password=$PGPASS;SSL Mode=Disable" \
   -e "Jwt__SigningKey=$JWTKEY" \
   -e "DataProtection__Certificate__Path=$SECRET_PATH" -e "DataProtection__Certificate__Password=$PFXPASS" \
@@ -108,6 +119,10 @@ HEALTH_PID=$!
 
 echo "== disparo: importações oficiais e percurso com fixture no processo da API"
 docker exec "$APP" sh -c 'touch /tmp/aegis-memory-check-go'
+if [ "${CARGA_EXTERNA:-0}" = "1" ]; then
+  # 8 MiB tocados a cada 2 s, até 96 MiB, somados ao que o próprio pwsh ocupa. Fica vivo até o fim da verificação.
+  docker exec -d "$APP" pwsh -NoProfile -Command '$k=@(); 1..12 | % { $b=[byte[]]::new(8MB); [Array]::Fill($b,[byte]1); $k+=,$b; Start-Sleep 2 }; Start-Sleep 900'
+fi
 done=0
 for _ in $(seq 1 450); do
   LOGS="$(docker logs "$APP" 2>&1)"
@@ -120,6 +135,7 @@ kill "$HEALTH_PID" 2>/dev/null; wait "$HEALTH_PID" 2>/dev/null
 measure "fim"
 LOGS="$(docker logs "$APP" 2>&1)"
 echo "== etapas"; echo "$LOGS" | grep -E '^combinado |^alcance:|^NÃO PROVADO|^memoria-combinada=' | sed 's/^/  /'
+echo "== início por adaptador"; echo "$LOGS" | grep -E 'knight-memoria-inicio|não iniciado por falta' | sed 's/^ *//' | sed 's/^/  /'
 echo "== memória por execução do adaptador"; echo "$LOGS" | grep -E 'knight-memoria |encerrado para preservar a API' | sed 's/^ *//' | sed 's/^/  /'
 
 TOTAL="$(wc -l < "$WORK/health.txt" 2>/dev/null || echo 0)"; BAD="$(grep -vc '^200$' "$WORK/health.txt" 2>/dev/null || true)"

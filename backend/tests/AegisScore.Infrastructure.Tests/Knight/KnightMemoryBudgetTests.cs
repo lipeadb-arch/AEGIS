@@ -166,7 +166,7 @@ public sealed class KnightMemoryBudgetTests
         tmpfs.UnderPressure.Should().BeTrue("tmpfs cheio não pode parecer memória recuperável");
 
         // Página suja não conta, e o piso de 1/8 do limite (64) segura o código mapeado em uso.
-        var mapped = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0, dirty: 50))!;
+        var mapped = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0, dirty: 50), Calm)!;
         mapped.ReclaimableBytes.Should().Be(86);
         mapped.PressureBytes.Should().Be(374);
 
@@ -180,14 +180,56 @@ public sealed class KnightMemoryBudgetTests
         new ContainerMemorySample(448, 512).UnderPressure.Should().BeTrue("o gatilho continua em 87,5%");
     }
 
+    private const string Calm = "some avg10=3.00 avg60=1.00 avg300=0.10 total=1\nfull avg10=0.50 avg60=0.10 avg300=0.00 total=1\n";
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("linha sem o campo")]
+    [InlineData("some avg10=1.00 avg60=0.00 avg300=0.00 total=1\n")]
+    [InlineData("full avg10=NaN avg60=0.00 avg300=0.00 total=1\n")]
+    [InlineData("full avg10=Infinity avg60=0.00 avg300=0.00 total=1\n")]
+    [InlineData("full avg10=-1.00 avg60=0.00 avg300=0.00 total=1\n")]
+    [InlineData("full avg10=100.01 avg60=0.00 avg300=0.00 total=1\n")]
+    [InlineData("full avg10=abc avg60=0.00 avg300=0.00 total=1\n")]
+    public void SemPsiValido_NaoDescontaArquivoMapeado_NemInventaTravamento(string? pressure)
+    {
+        // 200 de cache limpo, 150 mapeados: só os 50 não mapeados voltam com certeza.
+        var sample = ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0), pressure)!;
+
+        sample.FullStallAvg10.Should().BeNull();
+        sample.ReclaimableBytes.Should().Be(50);
+        sample.PressureBytes.Should().Be(410);
+        ContainerMemorySample.Parse("100", "512", pressure: pressure)!.UnderPressure.Should().BeFalse("PSI ruim não prova travamento");
+
+        // A mesma amostra com PSI válido desconta o que excede o piso de 64.
+        ContainerMemorySample.Parse("460", "512", Stat(file: 200, shmem: 0, mapped: 150, active: 200, inactive: 0), Calm)!.ReclaimableBytes.Should().Be(136);
+    }
+
+    [Theory]
+    [InlineData("shmem")]
+    [InlineData("file_mapped")]
+    [InlineData("file_dirty")]
+    [InlineData("file_writeback")]
+    [InlineData("active_file")]
+    [InlineData("inactive_file")]
+    public void MemoryStatIncompleto_ValeOTotal_NuncaDescontoComCampoPresumidoEmZero(string missing)
+    {
+        var lines = Stat(file: 200, shmem: 20, mapped: 150, active: 180, inactive: 0).Split('\n').Where(l => !l.StartsWith(missing + " ", StringComparison.Ordinal));
+        var sample = ContainerMemorySample.Parse("460", "512", string.Join('\n', lines), Calm)!;
+
+        sample.Stat.Should().BeNull();
+        sample.PressureBytes.Should().Be(460);
+        sample.UnderPressure.Should().BeTrue();
+    }
+
     [Fact]
     public void TravamentoPorMemoria_EncerraMesmoAbaixoDoGatilho_ESemPsiNaoInventaPressao()
     {
         const string stalled = "some avg10=70.00 avg60=20.00 avg300=5.00 total=1\nfull avg10=41.50 avg60=10.00 avg300=2.00 total=1\n";
-        const string calm = "some avg10=3.00 avg60=1.00 avg300=0.10 total=1\nfull avg10=0.50 avg60=0.10 avg300=0.00 total=1\n";
 
         ContainerMemorySample.Parse("100", "512", pressure: stalled)!.UnderPressure.Should().BeTrue("o kernel já está travando as tarefas para recuperar memória");
-        ContainerMemorySample.Parse("100", "512", pressure: calm)!.UnderPressure.Should().BeFalse();
+        ContainerMemorySample.Parse("100", "512", pressure: Calm)!.UnderPressure.Should().BeFalse();
         ContainerMemorySample.Parse("100", "512", pressure: null)!.UnderPressure.Should().BeFalse();
         ContainerMemorySample.ParseFullStall("linha sem o campo").Should().BeNull();
     }
