@@ -7,7 +7,7 @@
 # CARGA_EXTERNA=1 faz outro processo do contêiner (pwsh) alocar e tocar 8 MiB a cada 2 s, até 96 MiB, para ver qual proteção age primeiro.
 #   É alocação sintética: não representa sessão, comando nem volume da Microsoft.
 # ESPERADO=completo (padrão) exige as quatro importações e o percurso inteiro. ESPERADO=interrompido exige MemoryLimit como única causa,
-#   leituras preservadas e nada apresentado como coleta completa. Nos dois, a API precisa ter ficado saudável e sem OOM.
+#   leituras anteriores preservadas quando a interrupção ocorre durante a leitura e nada apresentado como coleta completa. Nos dois, a API precisa ter ficado saudável e sem OOM.
 # Não usa locatário nem credencial real. Sai com 0 só quando o resultado efetivo é o esperado.
 set -uo pipefail
 
@@ -80,8 +80,12 @@ verificar_etapas() {
     outras="$(grep -vE '(causas=MemoryLimit|terminação=MemoryLimit estágios=.*)$' <<<"$falhas" || true)"
     [ -z "$outras" ] || problema "causa diferente de MemoryLimit: $outras"
     grep -q 'estado=Completed' <<<"$falhas" && problema "etapa interrompida com estado Completed"
-    grep -qE 'estado=PartialCollection coletadas=[1-9][0-9]*/[0-9]+ causas=MemoryLimit$' <<<"$falhas" \
-      || problema "nenhuma coleta interrompida preservou as leituras já feitas"
+    # Encerrado na importação não há leitura a preservar. Encerrado lendo as caixas do Exchange, as leituras anteriores precisam ficar.
+    local durante_leitura
+    durante_leitura="$(grep -c 'knight-memoria adaptador=Exchange Online terminacao=MemoryLimit estagio=read ExchangeMailbox' <<<"$LOGS" || true)"
+    PRESERVADAS="$(grep -cE 'estado=PartialCollection coletadas=[1-9][0-9]*/[0-9]+ causas=MemoryLimit$' <<<"$falhas" || true)"
+    [ "$PRESERVADAS" -ge "$durante_leitura" ] \
+      || problema "$durante_leitura coletas interrompidas durante a leitura, só $PRESERVADAS preservaram as leituras já feitas"
   fi
 }
 
@@ -224,6 +228,6 @@ if [ -n "$PROBLEMAS" ]; then
 elif [ "$ESPERADO" = "completo" ]; then
   echo "CENARIO COMPLETO OK ($ROTULO)"; RESULT=0
 else
-  echo "CENARIO INTERROMPIDO CONFORME ESPERADO, coleta NÃO completa: MemoryLimit como causa, leituras preservadas, API saudável, sem OOM ($ROTULO)"; RESULT=0
+  echo "CENARIO INTERROMPIDO CONFORME ESPERADO, coleta NÃO completa: MemoryLimit como causa, $PRESERVADAS coletas parciais com leituras preservadas, API saudável, sem OOM ($ROTULO)"; RESULT=0
 fi
 exit "$RESULT"
