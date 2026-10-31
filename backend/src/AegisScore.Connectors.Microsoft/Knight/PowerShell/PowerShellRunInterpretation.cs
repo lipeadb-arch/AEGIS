@@ -45,6 +45,10 @@ public static class PowerShellRunInterpretation
     /// <summary>Desfecho de todas as capacidades quando o script falhou antes de tentar a conexão.</summary>
     public static MissingRead BeforeConnect(string label, PowerShellRunReport report, string? errorId, string? correlationId)
     {
+        // [AEGIS-KNIGHT-MEMORY-BUDGET] Terminação conhecida vem antes do palpite pelo estágio: processo encerrado por memória, tempo ou
+        // limite de saída durante a importação NÃO é "o módulo não carregou". Só o script que terminou e declarou a falha chega abaixo.
+        if (report.Termination != PowerShellTermination.Completed) return BeforeReads(label, report, correlationId);
+
         var stage = report.LastStage;
         var kind = stage is "import" or "imported" ? KnightFailureKind.RuntimeUnavailable : KnightFailureKind.Internal;
         var detail = $"O adaptador de coleta de {label} falhou antes de conectar, no estágio «{StageLabel(stage)}»"
@@ -119,6 +123,9 @@ public static class PowerShellRunInterpretation
             PowerShellTermination.TimedOut =>
                 $"não terminou no tempo limite e foi encerrado pelo AEGIS após {report.DurationMs / 1000} s",
             PowerShellTermination.OutputLimit => "a saída ultrapassou o limite aceito e o processo foi encerrado pelo AEGIS",
+            PowerShellTermination.MemoryLimit when report.Reached(PowerShellAdapterProcess.MemoryPreflightStage) =>
+                "não foi iniciado pelo AEGIS: faltou memória no contêiner para o adaptador, mesmo depois de a aplicação devolver o que não usava; "
+                + "isso não indica falta de permissão",
             PowerShellTermination.MemoryLimit => "foi encerrado pelo AEGIS por pressão de memória no contêiner, para preservar a aplicação; "
                 + "isso não indica falta de permissão e somente as leituras concluídas foram preservadas",
             PowerShellTermination.NoResult => "terminou com código 0 sem emitir o documento de resultado",
@@ -151,6 +158,7 @@ public static class PowerShellRunInterpretation
     public static string StageLabel(string? stage) => stage switch
     {
         null => "antes de o script declarar qualquer estágio (o runtime não chegou a executá-lo)",
+        PowerShellAdapterProcess.MemoryPreflightStage => "verificação de memória antes de iniciar o adaptador",
         "start" => "início do script",
         "input" => "leitura do pedido",
         "import" => "importação do módulo oficial",

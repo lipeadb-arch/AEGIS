@@ -299,6 +299,35 @@ public sealed class PowerShellFixtureModuleTests
         result.State.Should().Be(KnightSourceState.PartialCollection);
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-MEMORY-BUDGET] O desconto de arquivo mapeado vale amostra por amostra: com o mesmo consumo, a coleta com PSI válido termina;
+    /// se o PSI some durante a enumeração das caixas, o filho é encerrado por memória, com as leituras anteriores preservadas.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_PsiPerdidoDuranteAColeta_RetiraODescontoMapeado_MemoryLimitComLeiturasPreservadas()
+    {
+        if (Pwsh() is not { } pwsh) return;
+        const string stat = "anon 1000\nfile 300\nshmem 0\nfile_mapped 250\nactive_file 300\ninactive_file 0\nfile_dirty 0\nfile_writeback 0\nkernel 5\n";
+        const string psi = "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n";
+
+        async Task<KnightCollectionResult> Collect(Func<StageLogger, string?> pressure)
+        {
+            var log = new StageLogger();
+            var options = Options<ExchangePowerShellOptions>(pwsh);
+            options.MemoryProbe = () => ContainerMemorySample.Parse("500", "512", stat, pressure(log));
+            return await new ExchangeKnightCollector(new ExchangeTokens("cenario-volume"), new PowerShellExchangeAdminReader(options, log))
+                .CollectAsync(new KnightCollectionContext(Tenant, new KnightExchangeOnlineConfiguration("dir-demo-0001", "client", "secret")));
+        }
+
+        var valid = await Collect(_ => psi);
+        Cap(valid, KnightCapability.ExchangeMailboxes).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+
+        var lost = await Collect(log => log.ReadingMailboxes ? null : psi);
+        Cap(lost, KnightCapability.ExchangeOrganizationConfig).Outcome.Should().Be(KnightCapabilityOutcome.Collected);
+        Cap(lost, KnightCapability.ExchangeMailboxes).Diagnostic!.Kind.Should().Be(KnightFailureKind.MemoryLimit);
+        lost.State.Should().Be(KnightSourceState.PartialCollection);
+    }
+
     private sealed class Dns : IDnsTxtResolver
     {
         public Task<DnsTxtResult> ResolveTxtAsync(string name, CancellationToken ct) =>

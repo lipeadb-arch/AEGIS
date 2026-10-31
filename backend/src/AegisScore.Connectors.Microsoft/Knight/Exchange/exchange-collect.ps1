@@ -61,6 +61,11 @@ function Write-AegisStage {
     Write-AegisFrame 'stage' $Name
 }
 
+function Write-AegisMemory {
+    <# Heap gerenciado deste processo, só números: em uso e comprometido. Medição não pode derrubar a coleta. #>
+    try { Write-AegisFrame 'memory' ('{0} {1}' -f [GC]::GetTotalMemory($false), [GC]::GetGCMemoryInfo().TotalCommittedBytes) } catch { }
+}
+
 function Add-AegisRead {
     <#
         EMITE a leitura imediatamente como quadro próprio — e não a guarda. O quadro é a única cópia que importa: ele já saiu
@@ -75,6 +80,7 @@ function Add-AegisRead {
 function Write-AegisResult {
     <# Resumo final. As leituras já saíram em quadros próprios: o resumo não as repete. #>
     param($Result)
+    Write-AegisMemory
     Write-AegisStage 'result'
     $Result.reads = @()
     Write-AegisFrame 'result' ($Result | ConvertTo-Json -Depth 12 -Compress)
@@ -518,6 +524,7 @@ try {
     Write-AegisStage 'import'
     Import-Module ExchangeOnlineManagement -ErrorAction Stop
     Write-AegisStage 'imported'
+    Write-AegisMemory
     $module = Get-Module ExchangeOnlineManagement
     if ($null -ne $module) { $result.runtime.module = [string]$module.Version }
 

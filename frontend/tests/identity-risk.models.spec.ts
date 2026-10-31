@@ -327,11 +327,16 @@ test('o AEGIS não afirma ter confirmado comprometimento', () => {
 });
 
 test('cada desfecho tem rótulo e ação objetiva próprios', () => {
-  eq(outcomeLabel('InsufficientPermission'), 'Permissão ainda não concedida', 'permissão ausente');
+  eq(outcomeLabel('InsufficientPermission'), 'Leitura recusada pela Microsoft', 'o rótulo diz o observado, não a causa');
   eq(outcomeLabel('LimitedByLicense'), 'Licença insuficiente', 'licença insuficiente');
   assert(
     outcomeGuidance('InsufficientPermission', 'IdentityRiskyUser.Read.All').includes('IdentityRiskyUser.Read.All'),
-    'a orientação nomeia a permissão a conceder',
+    'a orientação nomeia o requisito a conferir',
+  );
+  assert(
+    /não comprova/.test(outcomeGuidance('InsufficientPermission', 'IdentityRiskyUser.Read.All'))
+      && !/^Conceda/.test(outcomeGuidance('InsufficientPermission', 'IdentityRiskyUser.Read.All')),
+    'um 403 não manda conceder como se a falta de consentimento estivesse provada',
   );
   assert(
     /licença/i.test(outcomeGuidance('LimitedByLicense', 'IdentityRiskEvent.Read.All')),

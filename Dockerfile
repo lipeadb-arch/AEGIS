@@ -129,7 +129,8 @@ RUN set -eux; \
 ENV ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_ENVIRONMENT=Production \
     ASPNETCORE_URLS=http://+:8080 \
-    DocumentStorage__RootPath=/app/document-store
+    DocumentStorage__RootPath=/app/document-store \
+    MALLOC_ARENA_MAX=2
 
 # [AEGIS-KNIGHT-COVERAGE-02] Adaptador de coleta do Microsoft Teams: executável e módulo PRÉ-INSTALADOS nesta
 # imagem. São configuração do AMBIENTE — o locatário nunca escolhe executável, comando ou destino. Telemetria e

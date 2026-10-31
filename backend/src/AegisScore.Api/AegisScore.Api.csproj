@@ -6,7 +6,16 @@
     <!-- Habilita o Secret Manager (dotnet user-secrets) para segredos de dev — ex.: Ai:ApiKey.
          O WebApplication.CreateBuilder carrega esses segredos automaticamente em Development. -->
     <UserSecretsId>d8f3a1c6-4e2b-47a9-9b7d-2c5e8f0a1b34</UserSecretsId>
+    <!-- [AEGIS-KNIGHT-MEMORY-BUDGET] A API divide o contêiner com o processo do adaptador. O GC de servidor reserva por núcleo, e o padrão só
+         devolve memória perto do próprio limite (75% do contêiner), sem enxergar o filho. O teto de heap segue no padrão de propósito: limitá-lo
+         faria uma coleta grande falhar na API em vez de cair para o monitor. Medição na reprodução combinada do CI. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="6" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
