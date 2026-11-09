@@ -857,7 +857,8 @@ public sealed class AegisKnightAssessmentService : IAegisKnightAssessmentService
                 e.Definition.Id, e.Definition.Title, e.Definition.Category, e.Definition.Severity,
                 e.Status, e.Evidence, e.AffectedObjectCount,
                 e.Definition.NistCodes, e.Definition.MitreTechniques)).ToList(),
-            limitations);
+            limitations,
+            result.Capabilities);
     }
 
     private KnightAssessment ToAssessment(

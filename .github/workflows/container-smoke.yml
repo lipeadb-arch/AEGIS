@@ -10,6 +10,7 @@ on:
       - 'render.yaml'
       - 'global.json'
       - 'backend/**'
+      - 'scripts/ci/**'
       - 'frontend/**'
       - '.github/workflows/container-smoke.yml'
   workflow_dispatch:
@@ -57,7 +58,7 @@ jobs:
           AEGIS_PWSH_GATE_REQUIRED: 'true'
         run: >
           dotnet test backend/tests/AegisScore.Infrastructure.Tests/AegisScore.Infrastructure.Tests.csproj
-          -c Release --filter "FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightReadOnlyAccessTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~KnightResultsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests|FullyQualifiedName~ProductConnectorScopeTests|FullyQualifiedName~RetiredFeaturesTests|FullyQualifiedName~DocumentEvidenceReconcilerTests|FullyQualifiedName~KnightCollectionReliabilityTests|FullyQualifiedName~KnightRestContractTests|FullyQualifiedName~KnightAzureDiscoveryTests|FullyQualifiedName~KnightIntuneSettingsTests|FullyQualifiedName~KnightEntraGroupMembershipTests|FullyQualifiedName~KnightCaGroupScopeTests|FullyQualifiedName~KnightTeamsFabricAccessTests|FullyQualifiedName~PowerShellAdapterProtocolTests|FullyQualifiedName~PowerShellFixtureModuleTests"
+          -c Release --filter "FullyQualifiedName~EntraIdentityRiskCollectorTests|FullyQualifiedName~IdentityRiskEvidenceFabricTests|FullyQualifiedName~DocumentIntegrationFactoryTests|FullyQualifiedName~SimulatedDocumentProviderGuardTests|FullyQualifiedName~KnightAffectedObjectTests|FullyQualifiedName~RemediationJourneyTests|FullyQualifiedName~IdentityAcquisitionTests|FullyQualifiedName~IdentityHistoryRetentionTests|FullyQualifiedName~AegisAssessmentServiceTests|FullyQualifiedName~KnightDurableAssessmentTests|FullyQualifiedName~KnightConditionalAccessTests|FullyQualifiedName~KnightMulticloudReportTests|FullyQualifiedName~KnightSyncTests|FullyQualifiedName~KnightEntraCollectorTests|FullyQualifiedName~PostureSnapshotTests|FullyQualifiedName~KnightEntraConfigurationFlowTests|FullyQualifiedName~KnightConfigurationRulesTests|FullyQualifiedName~KnightReferenceCoverageTests|FullyQualifiedName~KnightAccessReviewScopeTests|FullyQualifiedName~EntraGraphDiagnosticsTests|FullyQualifiedName~KnightTeamsCollectorTests|FullyQualifiedName~KnightTeamsPolicyReachTests|FullyQualifiedName~KnightTeamsConfigurationFlowTests|FullyQualifiedName~TeamsAdapterTransportTests|FullyQualifiedName~KnightExchangeConfigurationFlowTests|FullyQualifiedName~ExchangeAdapterTransportTests|FullyQualifiedName~PostureSnapshotConsolidatedTests|FullyQualifiedName~KnightConsolidatedBuilderTests|FullyQualifiedName~KnightIdentityPostureConnectorTests|FullyQualifiedName~KnightM365ServicesFlowTests|FullyQualifiedName~MicrosoftAppCredentialTests|FullyQualifiedName~DnsTxtResolverTests|FullyQualifiedName~KnightAccessProbesM365Tests|FullyQualifiedName~ProtectionRuntimeDiagnosticsTests|FullyQualifiedName~TenantManagementServiceTests|FullyQualifiedName~KnightAzureFlowTests|FullyQualifiedName~KnightPresentationTests|FullyQualifiedName~KnightClosureFlowTests|FullyQualifiedName~KnightReadOnlyAccessTests|FullyQualifiedName~KnightManualResultTests|FullyQualifiedName~NistAssessmentServiceTests|FullyQualifiedName~NistJourneyCompleteTests|FullyQualifiedName~MaturityProfileTests|FullyQualifiedName~PostureMonthlyHistoryTests|FullyQualifiedName~FrozenPostureHistoryTests|FullyQualifiedName~AssessmentVisualsReportTests|FullyQualifiedName~KnightResultsReportTests|FullyQualifiedName~NistAssistServiceTests|FullyQualifiedName~NistAssistReportCompatibilityTests|FullyQualifiedName~AiStatusControllerTests|FullyQualifiedName~StubAssessmentServiceTests|FullyQualifiedName~AuditorPersonaTests|FullyQualifiedName~AuditorReplyCheckTests|FullyQualifiedName~AuditorContextTests|FullyQualifiedName~ProductConnectorScopeTests|FullyQualifiedName~RetiredFeaturesTests|FullyQualifiedName~DocumentEvidenceReconcilerTests|FullyQualifiedName~KnightCollectionReliabilityTests|FullyQualifiedName~KnightRestContractTests|FullyQualifiedName~KnightAzureDiscoveryTests|FullyQualifiedName~KnightIntuneSettingsTests|FullyQualifiedName~KnightEntraGroupMembershipTests|FullyQualifiedName~KnightCaGroupScopeTests|FullyQualifiedName~KnightTeamsFabricAccessTests|FullyQualifiedName~PowerShellAdapterProtocolTests|FullyQualifiedName~PowerShellFixtureModuleTests|FullyQualifiedName~KnightMemoryBudgetTests"
 
       - name: Build homologation image
         run: docker build -t "$IMAGE" .
@@ -303,6 +304,82 @@ jobs:
           docker rm -f "$APP" "$PG" >/dev/null 2>&1 || true
           docker network rm "$NET" >/dev/null 2>&1 || true
           rm -rf secrets || true
+
+  # [AEGIS-KNIGHT-MEMORY-BUDGET] API real aquecida + módulos OFICIAIS da imagem no mesmo contêiner de 512 MiB. Fixture ou processo de teste
+  # sozinhos não equivalem a este cenário: foi o que deixou o monitor encerrar toda coleta na importação sem nenhum gate acusar.
+  knight-memory-combined:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILDKIT: '1'
+      IMAGE: aegis-homolog:ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build homologation image
+        run: docker build -t "$IMAGE" .
+
+      - name: Combined scenario - 512 MiB, same CPU as the Render starter plan (0.5)
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Combined scenario - 512 MiB, without CPU limit (GC sees every core)
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+        run: bash scripts/ci/knight-memory-combined.sh none
+
+      # Daqui em diante a coleta deve ser INTERROMPIDA por MemoryLimit: o script falha se ela parecer completa, se perder as leituras feitas
+      # ou se a API adoecer. A alocação extra é sintética (pwsh tocando 8 MiB a cada 2 s, até 96 MiB), não sessão nem volume da Microsoft.
+      - name: No valid PSI - empty file
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: vazio
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: No valid PSI - unreadable file
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: ilegivel
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: No valid PSI - invalid value
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: invalido
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: PSI lost during collection
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: perdido
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Synthetic extra allocation - valid PSI
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          CARGA_EXTERNA: '1'
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
+
+      - name: Synthetic extra allocation - no PSI
+        if: always()
+        env:
+          FIXTURES: ${{ github.workspace }}/backend/tests/AegisScore.Infrastructure.Tests/Knight/Fixtures/psmodules
+          ESPERADO: interrompido
+          PSI_INJECT: vazio
+          CARGA_EXTERNA: '1'
+        run: bash scripts/ci/knight-memory-combined.sh 0.5
 
   migrations-pg:
     runs-on: ubuntu-latest

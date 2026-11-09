@@ -270,8 +270,15 @@ public abstract class ProtectionCollectorBase : IKnightCollector
         {
             // O script nem tentou conectar (pedido ilegível, módulo que não carregou): a categoria devolvida não é de conexão.
             var before = PowerShellRunInterpretation.BeforeConnect(Label, process!, output.Exchange.ConnectionErrorId, correlation);
-            return KnightCapabilityRecorder.Failure(Source, Label, Capabilities, KnightCapabilityRecorder.StateFor(before.Outcome),
-                before.Outcome, before.Detail, Time.GetUtcNow(), before.Diagnostic);
+            // [AEGIS-KNIGHT-MEMORY-BUDGET] Decisão já tomada para a sessão do Security & Compliance (ex.: limitação de plataforma) não é
+            // sobrescrita por uma falha da outra sessão.
+            foreach (var capability in Capabilities)
+            {
+                if (complianceDecision is { } known && ComplianceCapabilities.Contains(capability)) recorder.Record(capability, known);
+                else recorder.Record(capability, before.Outcome, before.Detail, before.Diagnostic);
+            }
+            await AfterReadsAsync(recorder, ct);
+            return recorder.Result(Source, Label, Time.GetUtcNow(), before.Detail);
         }
         var reads = output.Exchange.Reads
             .GroupBy(r => r.Capability, StringComparer.OrdinalIgnoreCase)

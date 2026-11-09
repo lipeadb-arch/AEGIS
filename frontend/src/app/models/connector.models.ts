@@ -283,7 +283,7 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     permission: 'IdentityRiskyUser.Read.All',
     usage: 'NewForIdentityRisk',
     licenseNote: 'Requer Microsoft Entra ID P2.',
-    action: 'Conceda a permissão à aplicação e refaça a coleta em AEGIS KNIGHT.',
+    action: 'Confira se a permissão tem consentimento de administrador e a licença exigida, e refaça a coleta em AEGIS KNIGHT.',
   },
   {
     name: 'Detecções de risco',
@@ -293,7 +293,7 @@ export const ENTRA_IDENTITY_CAPABILITIES: MicrosoftCapabilitySpec[] = [
     usage: 'NewForIdentityRisk',
     licenseNote:
       'Requer Microsoft Entra ID P1 ou P2. Com P1, as detecções premium chegam sem categoria — a cobertura é parcial, e a tela diz isso.',
-    action: 'Conceda a permissão à aplicação e refaça a coleta em AEGIS KNIGHT.',
+    action: 'Confira se a permissão tem consentimento de administrador e a licença exigida, e refaça a coleta em AEGIS KNIGHT.',
   },
   // ---- [AEGIS-KNIGHT-COVERAGE-01] Configuração do locatário — todas de LEITURA ----------------------------
   {

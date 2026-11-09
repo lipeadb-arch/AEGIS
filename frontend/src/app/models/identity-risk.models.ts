@@ -162,7 +162,8 @@ export interface IdentityEvidenceProjection {
 
 const OUTCOME_LABEL: Record<IdentityRiskOutcome, string> = {
   Collected: 'Coletado',
-  InsufficientPermission: 'Permissão ainda não concedida',
+  // O rótulo diz o que foi OBSERVADO: um 403 mostra a recusa, não qual requisito falta.
+  InsufficientPermission: 'Leitura recusada pela Microsoft',
   LimitedByLicense: 'Licença insuficiente',
   Unavailable: 'Indisponível no momento',
   NotAttempted: 'Ainda não coletado',
@@ -182,7 +183,7 @@ export function outcomeGuidance(outcome: IdentityRiskOutcome, permission: string
     case 'Collected':
       return 'Dados lidos diretamente do Microsoft Entra ID Protection.';
     case 'InsufficientPermission':
-      return `Conceda ${permission} à aplicação e refaça a coleta. Enquanto isso, esta dimensão fica sem dados — o que não significa ausência de risco.`;
+      return `A Microsoft recusou esta leitura. A recusa não comprova, sozinha, qual requisito falta: confira ${permission} com consentimento de administrador, a licença exigida e as políticas de acesso da aplicação, e refaça a coleta. Enquanto isso, esta dimensão fica sem dados — o que não significa ausência de risco.`;
     case 'LimitedByLicense':
       return 'O tenant não tem a licença Microsoft Entra ID necessária para esta dimensão. Os dados existem no produto, mas não são expostos a este plano.';
     case 'Throttled':

@@ -683,6 +683,7 @@ public sealed class EntraIdentityRiskCollectorTests
         var detail = (await CollectAsync(handler)).IdentityRisk!.RiskyUsersDetail!;
 
         detail.Should().Contain("HTTP 403").And.Contain("Authorization_RequestDenied");
+        detail.Should().Contain("não comprova").And.NotContain("conceda", "403 mostra a recusa, não qual requisito falta");
         detail.Should().Contain("/v1.0/identityProtection/riskyUsers", "o caminho é seguro e ajuda o diagnóstico");
         detail.Should().NotContain("PII-RAW-MESSAGE").And.NotContain("olack@adatum.com");
         detail.Should().NotContain("$select", "a query string não entra no diagnóstico");

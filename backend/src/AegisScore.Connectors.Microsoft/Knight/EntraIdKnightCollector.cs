@@ -1087,7 +1087,7 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
 
     /// <summary>
     /// Traduz a falha do transporte no desfecho TIPADO da capacidade de risco. Licença e permissão são
-    /// desfechos DIFERENTES: 403 sem menção a licença é consentimento ausente; um código que mencione licença/
+    /// desfechos DIFERENTES: 403 sem menção a licença é autorização RECUSADA (não prova qual requisito falta); um código que mencione licença/
     /// premium/assinatura — ou um 402/404 no recurso do Identity Protection, que o Graph devolve quando o tenant
     /// não tem o produto — é limitação de licença. Nenhum caminho devolve <c>Collected</c>: falha nunca vira dado.
     /// </summary>
@@ -1121,7 +1121,8 @@ public sealed partial class EntraIdKnightCollector : IKnightCollector
         var head = outcome switch
         {
             KnightCapabilityOutcome.InsufficientPermission =>
-                $"Sem permissão para ler {what}: conceda {permission} (consentimento de administrador).",
+                $"A Microsoft recusou a leitura de {what}. Requisito desta leitura: {permission} com consentimento de administrador; a recusa não "
+                + "comprova, sozinha, qual requisito falta (consentimento, licença ou política de acesso).",
             KnightCapabilityOutcome.LimitedByLicense =>
                 $"O tenant não tem licença Microsoft Entra ID P1/P2 suficiente para ler {what}.",
             KnightCapabilityOutcome.Throttled =>

@@ -222,6 +222,10 @@ builder.Services.AddHostedService<IdentityAdmMaintenanceWorker>();
 // cada uma num escopo próprio sob o tenant dono do pedido, reusando a autoridade única de coleta → ADM → avaliação.
 builder.Services.AddHostedService<KnightSyncWorker>();
 
+// [AEGIS-KNIGHT-MEMORY-BUDGET] Reprodução combinada do CI: API real + módulo oficial no mesmo contêiner. Só por linha de comando.
+if (AegisScore.Connectors.Microsoft.Knight.PowerShell.KnightMemoryCombinedCheck.Requested(args))
+    builder.Services.AddHostedService<KnightMemoryCombinedCheckWorker>();
+
 // [Homologação em container] Atrás do proxy HTTPS da hospedagem: honra X-Forwarded-Proto/For para que
 // Request.Scheme reflita https (cookie Secure do refresh e HttpsRedirection corretos) e o IP do cliente
 // seja o real (rate limiting por IP). O proxy da hospedagem tem IP dinâmico e desconhecido de antemão;
