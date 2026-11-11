@@ -139,6 +139,86 @@ public sealed class KnightAzureKvStorageGapsTests : IDisposable
             "a conexão aprovada informada pelo próprio cofre é evidência positiva, mesmo com a subcoleção recusada");
     }
 
+    /// <summary>Mais itens que o teto da leitura filha (2000): a lista gravada é parcial (pe:truncated).</summary>
+    private static object[] Many(int count, string status, int approvedAt = -1) =>
+        Enumerable.Range(0, count).Select(i => Conn($"pe-{i:0000}", i == approvedAt ? "Approved" : status)).ToArray();
+
+    [Fact]
+    public async Task Kv008_ListaTruncadaSemAprovada_FicaSemConclusao()
+    {
+        var scenario = VaultScenario(Vault("kv-demo-rbac"))
+            .Override($"{VaultId("kv-demo-rbac")}/privateEndpointConnections", new { value = Many(2001, "Pending") });
+        var (run, svc) = await RunAsync(scenario);
+
+        Indicator(run, "AK-AZ-KV-008").Status.Should().Be(KnightIndicatorStatus.NotEvaluated,
+            "sem aprovada entre as lidas, a parte não lida ainda pode ter uma — lista parcial não reprova");
+        (await Objects(svc, run, "AK-AZ-KV-008", KnightObjectRelation.Affected)).Should().BeEmpty();
+        (await Objects(svc, run, "AK-AZ-KV-008", KnightObjectRelation.Evidence)).Should().ContainSingle()
+            .Which.Detail.Should().Contain("lista de conexões de endpoint privado parcial").And.Contain("2000 lida(s)");
+    }
+
+    [Fact]
+    public async Task Kv008_ListaTruncadaComAprovada_Aprova()
+    {
+        var scenario = VaultScenario(Vault("kv-demo-rbac"))
+            .Override($"{VaultId("kv-demo-rbac")}/privateEndpointConnections", new { value = Many(2001, "Pending", approvedAt: 5) });
+        var (run, _) = await RunAsync(scenario);
+
+        Indicator(run, "AK-AZ-KV-008").Status.Should().Be(KnightIndicatorStatus.Passed, "conexão aprovada lida é evidência positiva");
+    }
+
+    [Fact]
+    public async Task Kv008_ConexaoSemEstado_FicaSemConclusao_ESemEstadoComAprovada_Aprova()
+    {
+        var stateless = new { name = "pe-sem-estado", properties = new { privateEndpoint = new { id = "/x/privateEndpoints/pe-sem-estado" } } };
+        var (semEstado, svc) = await RunAsync(VaultScenario(Vault("kv-demo-rbac"))
+            .Override($"{VaultId("kv-demo-rbac")}/privateEndpointConnections", new { value = new object[] { stateless, Conn("pe-b", "Rejected") } }));
+        Indicator(semEstado, "AK-AZ-KV-008").Status.Should().Be(KnightIndicatorStatus.NotEvaluated);
+        (await Objects(svc, semEstado, "AK-AZ-KV-008", KnightObjectRelation.Evidence)).Should().ContainSingle()
+            .Which.Detail.Should().Contain("1 conexão(ões) de endpoint privado sem estado informado");
+
+        var (comAprovada, _) = await RunAsync(VaultScenario(Vault("kv-demo-rbac"))
+            .Override($"{VaultId("kv-demo-rbac")}/privateEndpointConnections", new { value = new object[] { stateless, Conn("pe-app", "Approved") } }));
+        Indicator(comAprovada, "AK-AZ-KV-008").Status.Should().Be(KnightIndicatorStatus.Passed);
+    }
+
+    // ==== blobServices/default fora do contrato ===========================================================
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("""{"id":"x","name":"default"}""")]
+    [InlineData("""{"id":"x","name":"default","properties":"texto"}""")]
+    [InlineData("""{"id":"x","name":"default","properties":null}""")]
+    [InlineData("<html>não é JSON</html>")]
+    public async Task Sto005e006_RespostaSemPropertiesValido_DiagnosticoDeContrato_SemConclusao(string body)
+    {
+        var scenario = StorageScenario(Account("st-contrato", "StorageV2", Standard)).Override($"{AccountId("st-contrato")}/blobServices/default", body);
+        var (run, svc) = await RunAsync(scenario);
+
+        foreach (var id in new[] { "AK-AZ-STO-005", "AK-AZ-STO-006" })
+        {
+            Indicator(run, id).Status.Should().Be(KnightIndicatorStatus.NotEvaluated, id + ": corpo sem properties não comprova proteção inativa");
+            (await Objects(svc, run, id, KnightObjectRelation.Evidence)).Should().ContainSingle()
+                .Which.Detail.Should().Contain("serviço de blobs não lida (resposta fora do contrato documentado)", id);
+        }
+        run.Capabilities.Single(c => c.Capability == KnightCapability.AzureStorage).Detail.Should()
+            .Contain("fora do contrato documentado");
+    }
+
+    [Fact]
+    public async Task Sto005e006_PropertiesVazioValido_OmissaoContinuaProtecaoInativa()
+    {
+        var scenario = Blob(StorageScenario(Account("st-vazio", "StorageV2", Standard)), "st-vazio", new { });
+        var (run, svc) = await RunAsync(scenario);
+
+        foreach (var id in new[] { "AK-AZ-STO-005", "AK-AZ-STO-006" })
+        {
+            Indicator(run, id).Status.Should().Be(KnightIndicatorStatus.Exposed, id);
+            (await Objects(svc, run, id, KnightObjectRelation.Affected)).Should().ContainSingle()
+                .Which.Detail.Should().Contain("ausente na configuração lida do serviço de blobs", id);
+        }
+    }
+
     // ==== AK-AZ-STO-005 / 006 ===========================================================================
 
     private static string AccountId(string name) => AzureScenario.ResourceId(AzureScenario.SubA, "Microsoft.Storage", "storageAccounts", name);

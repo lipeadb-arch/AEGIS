@@ -41,7 +41,11 @@ internal sealed record ArmChild(
     Func<string, bool>? ItemNameFilter = null,
     // [AEGIS-KNIGHT-COVERAGE-04] Lista cujo item NÃO pode ser copiado nem por caminho (pode conter segredo): o item vira um
     // resumo calculado no coletor, e só o resumo é gravado.
-    Func<JsonElement, JsonObject>? Summarize = null);
+    Func<JsonElement, JsonObject>? Summarize = null,
+    // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Objeto cuja OMISSÃO de campo tem significado para a regra: a leitura só é marcada
+    // (<c>chave:read</c>) quando a resposta traz o objeto <c>properties</c>; corpo vazio ou de outra forma vira <c>chave:status</c>
+    // = Contract (diagnóstico de contrato), e a regra fica sem conclusão.
+    bool MarkRead = false);
 
 /// <summary>
 /// Uma leitura de família. <see cref="ListPath"/> é relativo à assinatura (<c>providers/Microsoft.Storage/storageAccounts</c>)
@@ -203,7 +207,7 @@ internal static class AzureArmPlan
             new[]
             {
                 new ArmChild("blob", "/blobServices/default", "2023-05-01", K("properties.deleteRetentionPolicy",
-                    "properties.containerDeleteRetentionPolicy", "properties.isVersioningEnabled")),
+                    "properties.containerDeleteRetentionPolicy", "properties.isVersioningEnabled"), MarkRead: true),
                 new ArmChild("file", "/fileServices/default", "2023-05-01", K("properties.shareDeleteRetentionPolicy",
                     "properties.protocolSettings.smb")),
             }),

@@ -289,9 +289,10 @@ internal static class AzureData
 
     /// <summary>
     /// Endpoint privado do cofre. A subcoleção <c>pe:items</c> (lida com o papel Leitor) é a fonte primária; a lista embutida
-    /// no cofre complementa. Qualquer conexão Approved aprova. Lista lida sem aprovada → reprova (vazia, ou só Pending,
-    /// Rejected ou Disconnected, com os estados ditos). Subcoleção recusada e lista embutida ausente → desconhecido com a
-    /// causa — nunca "sem endpoint". Fotografia anterior sem a subcoleção → regra anterior (só a lista embutida).
+    /// no cofre complementa. Qualquer conexão Approved aprova (evidência positiva, mesmo em lista parcial). Sem aprovada:
+    /// lista parcial (<c>pe:truncated</c>) ou conexão sem estado → desconhecido; lista completa lida com todos os estados →
+    /// reprova (vazia, ou só Pending, Rejected ou Disconnected, com os estados ditos). Subcoleção recusada e lista embutida
+    /// ausente → desconhecido com a causa — nunca "sem endpoint". Fotografia anterior sem a subcoleção → regra anterior.
     /// </summary>
     public static KnightItemCheck VaultPrivateEndpoint(AzureResource k)
     {
@@ -307,6 +308,11 @@ internal static class AzureData
         static string State(JsonElement e) => AzureJson.Str(e, "properties.privateLinkServiceConnectionState.status") ?? "sem estado";
         var approved = all.Count(e => string.Equals(State(e), "Approved", StringComparison.OrdinalIgnoreCase));
         if (approved > 0) return KnightItemCheck.Of(true, $"{approved} conexão(ões) de endpoint privado aprovada(s)", expected);
+        if (listed && k.Bool("pe:truncated") == true)
+            return KnightItemCheck.Of(null, $"lista de conexões de endpoint privado parcial (teto de leitura atingido) sem aprovada entre as {all.Count} lida(s)", expected);
+        var stateless = all.Count(e => AzureJson.Str(e, "properties.privateLinkServiceConnectionState.status") is null);
+        if (stateless > 0)
+            return KnightItemCheck.Of(null, $"{stateless} conexão(ões) de endpoint privado sem estado informado e nenhuma aprovada", expected);
         if (listed || k.Has(embedded))
             return KnightItemCheck.Of(false, all.Count == 0
                 ? "nenhuma conexão de endpoint privado (lista lida vazia)"
