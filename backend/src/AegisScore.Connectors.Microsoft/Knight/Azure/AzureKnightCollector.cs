@@ -459,6 +459,10 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 {
                     case ArmChildMode.Object:
                         Extract(await _rest.GetAsync(token, url, ct), child.Keep, child.Key + ":", parent.Facts);
+                        // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Leitura CONCLUÍDA (200): só copiar os caminhos presentes não
+                        // diferencia "campo omitido pelo serviço" de "objeto não lido". A marca permite à regra aplicar o
+                        // significado documentado da omissão sem confundi-la com recusa (que vira :status).
+                        parent.Facts[child.Key + ":read"] = JsonSerializer.SerializeToElement(true);
                         break;
                     case ArmChildMode.ListToFact:
                         var list = new JsonArray();

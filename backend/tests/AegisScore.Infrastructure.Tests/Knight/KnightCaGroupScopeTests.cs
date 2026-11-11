@@ -324,7 +324,7 @@ public sealed class KnightCaGroupScopeTests
     [Fact]
     public void RegrasRevisadas_IdentificadasPelaVersao_SemCriterioNovoEmFotografiaAntiga()
     {
-        KnightCatalog.Version.Should().Be("ak-knight-v12");
+        KnightCatalog.Version.Should().Be("ak-knight-v13");
         foreach (var (id, rule) in new[] { ("AK-ENTRA-007", "3"), ("AK-ENTRA-040", "2"), ("AK-ENTRA-058", "2"), ("AK-ENTRA-066", "2"), ("AK-ENTRA-070", "2") })
         {
             var d = KnightCatalog.Indicators.Single(i => i.Id == id);

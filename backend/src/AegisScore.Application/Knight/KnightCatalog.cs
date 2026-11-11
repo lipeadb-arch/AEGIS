@@ -130,7 +130,13 @@ public static class KnightCatalog
     // (regra "2") resolvem política dirigida a grupo, e exclusão por grupo, pelo pertencimento lido — conta a conta sobre a
     // enumeração completa das contas habilitadas, sem relaxar estado, aplicação, condição, sessão ou controle exigido; leitura
     // incompleta continua sem conclusão. Fotografias v11 continuam com o catálogo v11 congelado e o comparador recusa v11 × v12.
-    public const string Version = "ak-knight-v12";
+    // v13 [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01]: AK-AZ-KV-008, AK-AZ-STO-005, 006 e 017 (regra "2") deixam de tratar campo
+    // omitido como desconhecido quando a leitura concluiu: a subcoleção de endpoints privados do cofre separa lista vazia,
+    // recusa e conexão aprovada; a política omitida em blobServices/default é proteção inativa; o controle de versão só vale
+    // para os tipos de conta que o suportam; allowCrossTenantReplication omitida segue o padrão documentado pela data de
+    // criação. Leitura recusada ou dado insuficiente continua sem conclusão. Fotografias v12 continuam com o catálogo v12
+    // congelado e o comparador recusa v12 × v13.
+    public const string Version = "ak-knight-v13";
 
     // ---- Limiares centralizados (única fonte da verdade dos números da regra) ----
 

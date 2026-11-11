@@ -180,6 +180,141 @@ internal static class AzureData
     public static IEnumerable<AzureResource> WithBlobs(AzureView v) => Accounts(v).Where(a =>
         a.Kind is not "FileStorage" && a.Str("blob:status") != "NotFound");
 
+    // ---- [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Serviço de blobs, suporte por tipo de conta e padrões documentados ----
+
+    /// <summary>
+    /// Proteção do serviço de blobs (<c>blobServices/default</c>) lida com a FORMA do campo conferida. Leitura recusada ou
+    /// indisponível (<c>blob:status</c>) → desconhecido com a causa. Leitura concluída (<c>blob:read</c>) sem o campo → a
+    /// proteção não está ativa: a política de retenção só existe quando configurada e <c>isVersioningEnabled</c> só habilita
+    /// quando verdadeiro (contrato da API Microsoft.Storage). Sem a marca de leitura (fotografia anterior), a omissão
+    /// continua desconhecida. Valor de forma inesperada (texto não booleano, política sem <c>enabled</c>) → desconhecido.
+    /// </summary>
+    public static KnightItemCheck BlobProtection(AzureResource a, string field, bool isPolicy, string label, string yes, string no)
+    {
+        var expected = $"{label}: {yes}";
+        if (a.Str("blob:status") is { } st)
+            return KnightItemCheck.Of(null, $"configuração do serviço de blobs não lida ({ChildStatus(st)})", expected);
+        var raw = a.Get("blob:" + field);
+        if (raw is null)
+            return a.Bool("blob:read") == true
+                ? KnightItemCheck.Of(false, $"{label}: {no} — {(isPolicy ? "política" : "propriedade")} ausente na configuração lida do serviço de blobs",
+                    expected)
+                : KnightItemCheck.Of(null, $"{label}: não informado", expected);
+        var flag = raw.Value;
+        if (isPolicy)
+        {
+            if (raw.Value.ValueKind != JsonValueKind.Object)
+                return KnightItemCheck.Of(null, $"{label}: política em formato inesperado ({raw.Value.ValueKind})", expected);
+            if (AzureJson.Prop(raw.Value, "enabled") is not { } enabled)
+                return KnightItemCheck.Of(null, $"{label}: política lida sem o campo enabled", expected);
+            flag = enabled;
+        }
+        bool? on = flag.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(flag.GetString()?.Trim(), out var b) => b,
+            _ => null,
+        };
+        if (on is null)
+            return KnightItemCheck.Of(null, $"{label}: valor em formato inesperado ({KnightRuleKit.Trim(flag.GetRawText(), 40)})", expected);
+        var days = isPolicy && on == true ? AzureJson.Int(raw.Value, "days") : null;
+        return KnightItemCheck.Of(on, $"{label}: {(on.Value ? yes : no)}{(days is null ? "" : $" ({days} dia(s))")}", expected);
+    }
+
+    /// <summary>Causa legível de uma leitura filha que não concluiu.</summary>
+    public static string ChildStatus(string status) => status switch
+    {
+        "InsufficientPermission" or "Forbidden" => "leitura recusada pelo Resource Manager",
+        "AuthFailure" => "autenticação recusada",
+        "Throttled" => "limite de requisições atingido",
+        "Unavailable" => "serviço indisponível ou tempo esgotado",
+        "Contract" => "resposta fora do contrato documentado",
+        "Incomplete" => "leitura interrompida no teto de paginação",
+        "NotFound" => "não encontrada",
+        _ => status,
+    };
+
+    /// <summary>
+    /// Suporte ao controle de versão de blobs pelo TIPO da conta (Learn, "Blob versioning — Feature support"): disponível em
+    /// v2 padrão (StorageV2 com camada Standard), blob de blocos premium (BlockBlobStorage) e Blob Storage legado; não em v1
+    /// (Storage), em v2 premium (blobs de páginas) nem com namespace hierárquico (Data Lake Storage). Tipo ou camada não
+    /// informados → suporte desconhecido (null).
+    /// </summary>
+    public static (bool? Supported, string Why) VersioningSupport(AzureResource a)
+    {
+        if (a.Bool("properties.isHnsEnabled") == true) return (false, "namespace hierárquico (Data Lake Storage) não suporta controle de versão");
+        var tier = a.Str("sku.tier") ?? (a.Str("sku.name") is { } n ? n.Split('_')[0] : null);
+        return a.Kind switch
+        {
+            "BlockBlobStorage" or "BlobStorage" => (true, ""),
+            "Storage" => (false, "conta v1 (Storage) não suporta controle de versão"),
+            "StorageV2" when string.Equals(tier, "Standard", StringComparison.OrdinalIgnoreCase) => (true, ""),
+            "StorageV2" when string.Equals(tier, "Premium", StringComparison.OrdinalIgnoreCase) => (false, "conta v2 premium (blobs de páginas) não suporta controle de versão"),
+            "StorageV2" => (null, "camada de desempenho da conta não informada — suporte ao controle de versão não determinado"),
+            _ => (null, $"tipo de conta {a.Kind ?? "não informado"} — suporte ao controle de versão não determinado"),
+        };
+    }
+
+    /// <summary>Contas com blobs que suportam (ou podem suportar) o controle de versão: as sem suporte não entram na população.</summary>
+    public static IEnumerable<AzureResource> WithVersioning(AzureView v) => WithBlobs(v).Where(a => VersioningSupport(a).Supported != false);
+
+    /// <summary>
+    /// Mudança do padrão de <c>allowCrossTenantReplication</c> omitida (Learn, "Prevent object replication across Microsoft
+    /// Entra tenants"): contas criadas DEPOIS de 15/12/2023 não permitem a replicação entre locatários sem o valor explícito;
+    /// nas criadas antes, a omissão (null) permite.
+    /// </summary>
+    public static readonly DateTimeOffset CrossTenantDefaultCutoff = new(2023, 12, 15, 0, 0, 0, TimeSpan.Zero);
+
+    public static KnightItemCheck CrossTenantReplication(AzureResource a)
+    {
+        const string label = "replicação entre locatários";
+        const string expected = label + ": bloqueada";
+        if (a.Get("properties.allowCrossTenantReplication") is { } raw)
+        {
+            if (a.Bool("properties.allowCrossTenantReplication") is not { } set)
+                return KnightItemCheck.Of(null, $"{label}: valor em formato inesperado ({KnightRuleKit.Trim(raw.GetRawText(), 40)})", expected);
+            return KnightItemCheck.Of(!set, $"{label}: {(set ? "permitida" : "bloqueada")} (definida na conta)", expected);
+        }
+        var created = Date(a.Get("properties.creationTime"));
+        if (created is null)
+            return KnightItemCheck.Of(null, $"{label}: não definida e data de criação da conta não informada — o padrão documentado depende dela", expected);
+        // O próprio dia 15/12/2023 é ambíguo ("depois de 15/12/2023"): sem conclusão.
+        if (created.Value.UtcDateTime.Date == CrossTenantDefaultCutoff.UtcDateTime.Date)
+            return KnightItemCheck.Of(null, $"{label}: não definida e conta criada em {Day(created.Value)}, dia da mudança do padrão documentado", expected);
+        var after = created.Value.UtcDateTime.Date > CrossTenantDefaultCutoff.UtcDateTime.Date;
+        return KnightItemCheck.Of(after,
+            $"{label}: não definida — padrão documentado para conta criada em {Day(created.Value)}: {(after ? "bloqueada" : "permitida")}", expected);
+    }
+
+    /// <summary>
+    /// Endpoint privado do cofre. A subcoleção <c>pe:items</c> (lida com o papel Leitor) é a fonte primária; a lista embutida
+    /// no cofre complementa. Qualquer conexão Approved aprova. Lista lida sem aprovada → reprova (vazia, ou só Pending,
+    /// Rejected ou Disconnected, com os estados ditos). Subcoleção recusada e lista embutida ausente → desconhecido com a
+    /// causa — nunca "sem endpoint". Fotografia anterior sem a subcoleção → regra anterior (só a lista embutida).
+    /// </summary>
+    public static KnightItemCheck VaultPrivateEndpoint(AzureResource k)
+    {
+        const string expected = "ao menos uma conexão de endpoint privado aprovada";
+        const string embedded = "properties.privateEndpointConnections";
+        var listed = k.Has("pe:items");
+        var status = k.Str("pe:status");
+        if (!listed && status is null) return PrivateEndpoint(k);
+
+        var all = k.Items("pe:items").Concat(k.Items(embedded))
+            .GroupBy(e => AzureJson.Str(e, "properties.privateEndpoint.id") ?? AzureJson.Str(e, "name") ?? e.GetRawText(), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First()).ToList();
+        static string State(JsonElement e) => AzureJson.Str(e, "properties.privateLinkServiceConnectionState.status") ?? "sem estado";
+        var approved = all.Count(e => string.Equals(State(e), "Approved", StringComparison.OrdinalIgnoreCase));
+        if (approved > 0) return KnightItemCheck.Of(true, $"{approved} conexão(ões) de endpoint privado aprovada(s)", expected);
+        if (listed || k.Has(embedded))
+            return KnightItemCheck.Of(false, all.Count == 0
+                ? "nenhuma conexão de endpoint privado (lista lida vazia)"
+                : $"nenhuma conexão de endpoint privado aprovada ({string.Join(", ", all.GroupBy(State, StringComparer.OrdinalIgnoreCase).Select(g => $"{g.Key}: {g.Count()}"))})",
+                expected);
+        return KnightItemCheck.Of(null, $"conexões de endpoint privado não lidas ({ChildStatus(status!)})", expected);
+    }
+
     /// <summary>Lista ";"-separada de um fato (versões e cifras do SMB).</summary>
     public static List<string> Semi(AzureResource r, string path) =>
         (r.Str(path) ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
@@ -478,19 +613,21 @@ public static class AzureInfrastructureControls
             "Habilitar a exclusão reversível de contêineres nas contas com o serviço de blobs.",
             "Serviço de blobs com containerDeleteRetentionPolicy habilitada.",
             Storage("conta com serviço de blobs", AzureData.WithBlobs,
-                (a, _) => Flag(a, "blob:properties.containerDeleteRetentionPolicy.enabled", true, "exclusão reversível de contêineres", "habilitada", "desabilitada"),
+                (a, _) => AzureData.BlobProtection(a, "properties.containerDeleteRetentionPolicy", true, "exclusão reversível de contêineres", "habilitada", "desabilitada"),
                 "{0} de {1} conta(s) com blobs não protegem os contêineres contra exclusão.",
                 "As {0} conta(s) com blobs têm exclusão reversível de contêineres."),
-            Ref(AzureRefs.Az + "9.2.2")),
+            Ref(AzureRefs.Az + "9.2.2")) with { Version = "2" },
 
         Control(KnightService.AzureStorage, "AK-AZ-STO-006", "Blobs sem controle de versão", Cloud, SeverityLevel.Medium,
             "Habilitar o controle de versão de blobs nas contas com o serviço de blobs.",
-            "Serviço de blobs com isVersioningEnabled verdadeiro.",
-            Storage("conta com serviço de blobs", AzureData.WithBlobs,
-                (a, _) => Flag(a, "blob:properties.isVersioningEnabled", true, "controle de versão", "habilitado", "desabilitado"),
+            "Serviço de blobs com isVersioningEnabled verdadeiro nas contas cujo tipo suporta controle de versão.",
+            Storage("conta com serviço de blobs que suporta controle de versão", AzureData.WithVersioning,
+                (a, _) => AzureData.VersioningSupport(a) is { Supported: null } u
+                    ? KnightItemCheck.Of(null, u.Why, "controle de versão: habilitado")
+                    : AzureData.BlobProtection(a, "properties.isVersioningEnabled", false, "controle de versão", "habilitado", "desabilitado"),
                 "{0} de {1} conta(s) com blobs estão sem controle de versão.",
                 "As {0} conta(s) com blobs têm controle de versão."),
-            Ref(AzureRefs.Az + "9.2.3")),
+            Ref(AzureRefs.Az + "9.2.3")) with { Version = "2" },
 
         Control(KnightService.AzureStorage, "AK-AZ-STO-007", "Contas de armazenamento sem lembrete de rotação de chaves", Cloud, SeverityLevel.Medium,
             "Definir a política de expiração de chaves (keyExpirationPeriodInDays) das contas de armazenamento, para que o Azure lembre de rotacionar as chaves.",
@@ -607,12 +744,12 @@ public static class AzureInfrastructureControls
 
         Control(KnightService.AzureStorage, "AK-AZ-STO-017", "Replicação de objetos entre locatários permitida no armazenamento", Cloud, SeverityLevel.Medium,
             "Desabilitar a replicação de objetos entre locatários (allowCrossTenantReplication = false).",
-            "Propriedade allowCrossTenantReplication = false em cada conta.",
+            "Propriedade allowCrossTenantReplication = false em cada conta (ausente: padrão documentado pela data de criação).",
             Storage("conta de armazenamento", AzureData.Accounts,
-                (a, _) => Flag(a, "properties.allowCrossTenantReplication", false, "replicação entre locatários", "permitida", "bloqueada"),
+                (a, _) => AzureData.CrossTenantReplication(a),
                 "{0} de {1} conta(s) de armazenamento permitem replicar objetos para outro locatário.",
                 "As {0} conta(s) de armazenamento bloqueiam a replicação entre locatários."),
-            Ref(AzureRefs.Az + "9.3.7")),
+            Ref(AzureRefs.Az + "9.3.7")) with { Version = "2" },
 
         Control(KnightService.AzureStorage, "AK-AZ-STO-018", "Acesso anônimo a blobs permitido", Cloud, SeverityLevel.High,
             "Desabilitar o acesso anônimo a blobs (allowBlobPublicAccess = false) em todas as contas.",
@@ -698,10 +835,10 @@ public static class AzureInfrastructureControls
         Control(KnightService.AzureKeyVault, "AK-AZ-KV-008", "Cofres de chaves sem endpoint privado", Cloud, SeverityLevel.Medium,
             "Acessar os cofres de chaves por endpoint privado (Private Link).",
             "Ao menos uma conexão de endpoint privado aprovada em cada cofre.",
-            Vaults((k, _) => PrivateEndpoint(k),
+            Vaults((k, _) => AzureData.VaultPrivateEndpoint(k),
                 "{0} de {1} cofre(s) de chaves não têm endpoint privado aprovado.",
                 "Os {0} cofre(s) de chaves têm endpoint privado aprovado."),
-            Ref(AzureRefs.Az + "8.3.8")),
+            Ref(AzureRefs.Az + "8.3.8")) with { Version = "2" },
 
         Control(KnightService.AzureKeyVault, "AK-AZ-KV-009", "Chaves sem rotação automática", Cloud, SeverityLevel.Medium,
             "Configurar política de rotação automática (ação Rotate) nas chaves habilitadas dos cofres.",

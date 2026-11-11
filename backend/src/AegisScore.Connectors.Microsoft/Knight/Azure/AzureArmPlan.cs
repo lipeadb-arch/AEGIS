@@ -196,7 +196,10 @@ internal static class AzureArmPlan
               "properties.allowSharedKeyAccess", "properties.publicNetworkAccess", "properties.networkAcls.defaultAction",
               "properties.networkAcls.bypass", "properties.allowCrossTenantReplication", "properties.defaultToOAuthAuthentication",
               "properties.keyPolicy.keyExpirationPeriodInDays", "properties.keyCreationTime", "properties.privateEndpointConnections",
-              "properties.encryption.keySource"),
+              "properties.encryption.keySource",
+              // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Tipo de desempenho e namespace hierárquico decidem se a conta SUPORTA o
+              // controle de versão; a data de criação decide o padrão documentado de allowCrossTenantReplication omitido.
+              "sku.name", "sku.tier", "properties.isHnsEnabled", "properties.creationTime"),
             new[]
             {
                 new ArmChild("blob", "/blobServices/default", "2023-05-01", K("properties.deleteRetentionPolicy",
@@ -217,6 +220,11 @@ internal static class AzureArmPlan
                     "properties.rotationPolicy.lifetimeActions"), ArmChildMode.ListToFact),
                 new ArmChild("secrets", "/secrets", "2023-07-01", K("name", "properties.attributes.enabled", "properties.attributes.exp"),
                     ArmChildMode.ListToFact),
+                // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] A lista embutida no cofre pode ser omitida quando não há conexão: a
+                // subcoleção (PrivateEndpointConnections_ListByResource, papel Leitor) separa lista vazia (200 sem itens) de
+                // leitura recusada (403 → pe:status) e de conexão aprovada.
+                new ArmChild("pe", "/privateEndpointConnections", "2023-07-01", K("name",
+                    "properties.privateLinkServiceConnectionState.status", "properties.privateEndpoint.id"), ArmChildMode.ListToFact),
             }),
 
         // ---- Computação ----------------------------------------------------------------------------------
