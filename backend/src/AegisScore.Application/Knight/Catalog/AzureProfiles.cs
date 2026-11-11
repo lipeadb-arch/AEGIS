@@ -545,14 +545,14 @@ public static class AzureProfiles
             "Contêineres de blobs excluídos não podem ser recuperados.",
             "Excluir um contêiner apaga de uma vez todos os blobs que ele guarda; sem exclusão reversível de contêineres, não há volta.",
             "Exclusão reversível de contêineres habilitada.",
-            "Não verifica o período de retenção configurado.",
+            "Não verifica o período de retenção configurado. Política ausente na configuração lida do serviço de blobs = desabilitada; leitura recusada = desconhecido.",
             "Um contêiner inteiro de dados pode ser perdido de forma definitiva por um único comando.",
             Docs(DocContainerSoftDelete), KnightCapability.AzureStorage);
         P("AK-AZ-STO-006", KnightSecurityDomain.Storage,
             "Blobs estão sem controle de versão.",
             "Sem versões anteriores, uma sobrescrita — inclusive a criptografia de arquivos por ransomware — substitui o conteúdo sem deixar cópia.",
             "Controle de versão de blobs habilitado.",
-            "Não verifica políticas de ciclo de vida que apaguem versões antigas.",
+            "Não verifica políticas de ciclo de vida que apaguem versões antigas. Contas cujo tipo não suporta controle de versão (v1, v2 premium, namespace hierárquico) ficam fora da população; tipo não informado = desconhecido.",
             "Arquivos cifrados por ransomware ou alterados indevidamente não podem voltar ao estado anterior.",
             Docs(DocVersioning), KnightCapability.AzureStorage);
         P("AK-AZ-STO-007", KnightSecurityDomain.Secrets,
@@ -629,7 +629,7 @@ public static class AzureProfiles
             "Contas de armazenamento permitem replicar objetos para outro locatário.",
             "A replicação entre locatários copia dados continuamente para contas fora do diretório da organização, onde os controles e a auditoria são de outra pessoa.",
             "allowCrossTenantReplication = false.",
-            "Um valor ausente é desconhecido (o padrão mudou ao longo das versões da plataforma).",
+            "Valor ausente segue o padrão documentado pela data de criação da conta (bloqueada após 15/12/2023, permitida antes); sem a data, ou criada no próprio dia, é desconhecido.",
             "Dados podem ser copiados de forma contínua para uma conta de outra organização sem passar por aprovação.",
             Docs(DocCrossTenant), KnightCapability.AzureStorage);
         P("AK-AZ-STO-018", KnightSecurityDomain.DataProtection,
@@ -701,7 +701,7 @@ public static class AzureProfiles
             "Cofres de chaves não têm endpoint privado aprovado.",
             "Sem endpoint privado, as aplicações internas falam com o cofre pelo endereço público, e não é possível fechar o acesso público.",
             "Ao menos uma conexão de endpoint privado aprovada por cofre.",
-            "Não verifica a resolução DNS do endpoint privado.",
+            "Não verifica a resolução DNS do endpoint privado. Lista de conexões vazia reprova; leitura recusada é desconhecida.",
             "O cofre continua exposto na internet porque os sistemas internos dependem do endereço público.",
             Docs(DocKvPe), KnightCapability.AzureKeyVault);
         P("AK-AZ-KV-009", KnightSecurityDomain.Secrets,

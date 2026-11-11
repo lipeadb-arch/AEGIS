@@ -101,6 +101,29 @@ public sealed class AzureScenario
 
     public HttpMessageHandler Handler => new StubHandler(this);
 
+    // ---- [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Substituição dirigida ----------------------------------
+
+    /// <summary>Id ARM sintético no grupo de recursos do cenário.</summary>
+    public static string ResourceId(string sub, string provider, string type, string name) => Id(sub, provider, type, name);
+
+    /// <summary>Substitui (ou acrescenta) a resposta de um caminho depois da montagem.</summary>
+    public AzureScenario Override(string path, object body, HttpStatusCode status = HttpStatusCode.OK)
+    {
+        Route(path, body, status);
+        return this;
+    }
+
+    /// <summary>Faz o caminho responder 403 (AuthorizationFailed) depois da montagem.</summary>
+    public AzureScenario Refuse(string path)
+    {
+        Deny(path);
+        return this;
+    }
+
+    /// <summary>Recurso no formato da ARM (para listas substituídas).</summary>
+    public static object Resource(string id, string type, object properties, string? kind = null, object? sku = null) =>
+        Res(id, type, properties, kind, sku: sku);
+
     // ---- Montagem ---------------------------------------------------------------------------------------
 
     private static string Id(string sub, string provider, string type, string name) =>
@@ -420,7 +443,7 @@ public sealed class AzureScenario
                 allowCrossTenantReplication = true, defaultToOAuthAuthentication = false,
                 keyCreationTime = new { key1 = now.AddDays(-200).ToString("O"), key2 = now.AddDays(-12).ToString("O") },
                 privateEndpointConnections = Pe(false), encryption = new { keySource = "Microsoft.Storage" },
-            }, kind: "StorageV2"));
+            }, kind: "StorageV2", sku: new { name = "Standard_LRS", tier = "Standard" }));
         Route($"{st}/blobServices/default", new { id = $"{st}/blobServices/default", name = "default", properties = new
         {
             deleteRetentionPolicy = new { enabled = Ok, days = 7 }, containerDeleteRetentionPolicy = new { enabled = Ok, days = 7 }, isVersioningEnabled = Ok,
@@ -441,6 +464,8 @@ public sealed class AzureScenario
                 publicNetworkAccess = Ok ? "Disabled" : "Enabled", networkAcls = new { defaultAction = Ok ? "Deny" : "Allow" },
                 privateEndpointConnections = Pe(Ok), vaultUri = $"https://{name}.vault.azure.net/",
             }));
+            // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] PrivateEndpointConnections_ListByResource (papel Leitor).
+            Route($"{id}/privateEndpointConnections", new { value = Pe(Ok) });
             var exp = now.AddDays(180).ToUnixTimeSeconds();
             List($"{id}/keys", new
             {

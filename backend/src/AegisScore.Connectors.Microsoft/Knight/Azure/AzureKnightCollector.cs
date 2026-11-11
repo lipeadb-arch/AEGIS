@@ -93,6 +93,8 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         public bool Truncated;
         public string? Detail;
         public int ChildFailures;
+        /// <summary>[AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Das leituras filhas que falharam, as que responderam fora do contrato.</summary>
+        public int ChildContractFailures;
         public KnightCapabilityDiagnostic? Diagnostic;
 
         public void Fail(KnightCapabilityOutcome outcome, string detail, KnightCapabilityDiagnostic? diagnostic = null)
@@ -232,7 +234,7 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 ? fam!.Where(kv => kv.Key != KnightCapability.AzureSubscriptions && kv.Key != KnightCapability.AzureTenantDiagnostics)
                     .Select(kv => new AzureFamilyRead(kv.Key, kv.Value.Outcome, kv.Value.Truncated,
                         kv.Value.ChildFailures > 0 && kv.Value.Outcome == KnightCapabilityOutcome.Collected
-                            ? $"{kv.Value.ChildFailures} leitura(s) filha(s) recusada(s) ou indisponível(is)."
+                            ? ChildFailureText(kv.Value.ChildFailures, kv.Value.ChildContractFailures)
                             : kv.Value.Detail))
                     .ToList()
                 : new List<AzureFamilyRead>();
@@ -286,10 +288,11 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
             {
                 var truncated = perSub.Count(p => p.O.Truncated);
                 var children = perSub.Sum(p => p.O.ChildFailures);
+                var contract = perSub.Sum(p => p.O.ChildContractFailures);
                 var detail = string.Join(" ", new[]
                 {
                     truncated > 0 ? $"A enumeração atingiu o teto em {truncated} assinatura(s)." : null,
-                    children > 0 ? $"{children} leitura(s) filha(s) recusada(s) ou indisponível(is)." : null,
+                    children > 0 ? ChildFailureText(children, contract) : null,
                     family == KnightCapability.AzureAuthorization ? users : null,
                     family == KnightCapability.AzureAppService ? stacks : null,
                 }.Where(x => x is not null));
@@ -458,7 +461,19 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 switch (child.Mode)
                 {
                     case ArmChildMode.Object:
-                        Extract(await _rest.GetAsync(token, url, ct), child.Keep, child.Key + ":", parent.Facts);
+                        var obj = await _rest.GetAsync(token, url, ct);
+                        // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Só copiar os caminhos presentes não diferencia "campo omitido
+                        // pelo serviço" de "objeto não lido". Quando a omissão importa (MarkRead), a leitura só é marcada com o
+                        // objeto properties presente; corpo vazio ou de outra forma é contrato violado (desconhecido na regra).
+                        if (child.MarkRead && !HasPropertiesObject(obj))
+                        {
+                            parent.Facts[child.Key + ":status"] = JsonSerializer.SerializeToElement(nameof(EntraGraphErrorKind.Contract));
+                            outcome.ChildFailures++;
+                            outcome.ChildContractFailures++;
+                            break;
+                        }
+                        Extract(obj, child.Keep, child.Key + ":", parent.Facts);
+                        if (child.MarkRead) parent.Facts[child.Key + ":read"] = JsonSerializer.SerializeToElement(true);
                         break;
                     case ArmChildMode.ListToFact:
                         var list = new JsonArray();
@@ -491,6 +506,7 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
                 // A filha que não existe (404) é um fato sobre o recurso; a recusada é uma lacuna — as duas viram status.
                 parent.Facts[child.Key + ":status"] = JsonSerializer.SerializeToElement(ex.HttpStatusCode == 404 ? "NotFound" : ex.Kind.ToString());
                 if (ex.HttpStatusCode != 404) outcome.ChildFailures++;
+                if (ex.Kind == EntraGraphErrorKind.Contract) outcome.ChildContractFailures++;
             }
             catch (Exception ex) when (!KnightFailureClassifier.IsCallerCancellation(ex, ct))
             {
@@ -719,6 +735,15 @@ public sealed partial class AzureKnightCollector : KnightRestCollectorBase
         b.Facts["count"] = JsonSerializer.SerializeToElement(count);
         return b;
     }
+
+    /// <summary>Texto das leituras filhas que falharam, com as fora do contrato ditas à parte.</summary>
+    internal static string ChildFailureText(int failures, int contract) =>
+        $"{failures} leitura(s) filha(s) recusada(s) ou indisponível(is)."
+        + (contract > 0 ? $" Dessas, {contract} responderam fora do contrato documentado (corpo vazio ou sem o objeto properties)." : "");
+
+    /// <summary>Resposta de objeto ARM com <c>properties</c> objeto (forma mínima documentada de blobServices/default).</summary>
+    internal static bool HasPropertiesObject(JsonElement e) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty("properties", out var p) && p.ValueKind == JsonValueKind.Object;
 
     internal static string Url(string baseUrl, string apiVersion) =>
         baseUrl + (baseUrl.Contains('?') ? "&" : "?") + "api-version=" + apiVersion;

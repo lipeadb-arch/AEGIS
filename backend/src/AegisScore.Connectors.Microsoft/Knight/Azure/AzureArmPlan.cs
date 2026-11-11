@@ -41,7 +41,11 @@ internal sealed record ArmChild(
     Func<string, bool>? ItemNameFilter = null,
     // [AEGIS-KNIGHT-COVERAGE-04] Lista cujo item NÃO pode ser copiado nem por caminho (pode conter segredo): o item vira um
     // resumo calculado no coletor, e só o resumo é gravado.
-    Func<JsonElement, JsonObject>? Summarize = null);
+    Func<JsonElement, JsonObject>? Summarize = null,
+    // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Objeto cuja OMISSÃO de campo tem significado para a regra: a leitura só é marcada
+    // (<c>chave:read</c>) quando a resposta traz o objeto <c>properties</c>; corpo vazio ou de outra forma vira <c>chave:status</c>
+    // = Contract (diagnóstico de contrato), e a regra fica sem conclusão.
+    bool MarkRead = false);
 
 /// <summary>
 /// Uma leitura de família. <see cref="ListPath"/> é relativo à assinatura (<c>providers/Microsoft.Storage/storageAccounts</c>)
@@ -196,11 +200,14 @@ internal static class AzureArmPlan
               "properties.allowSharedKeyAccess", "properties.publicNetworkAccess", "properties.networkAcls.defaultAction",
               "properties.networkAcls.bypass", "properties.allowCrossTenantReplication", "properties.defaultToOAuthAuthentication",
               "properties.keyPolicy.keyExpirationPeriodInDays", "properties.keyCreationTime", "properties.privateEndpointConnections",
-              "properties.encryption.keySource"),
+              "properties.encryption.keySource",
+              // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] Tipo de desempenho e namespace hierárquico decidem se a conta SUPORTA o
+              // controle de versão; a data de criação decide o padrão documentado de allowCrossTenantReplication omitido.
+              "sku.name", "sku.tier", "properties.isHnsEnabled", "properties.creationTime"),
             new[]
             {
                 new ArmChild("blob", "/blobServices/default", "2023-05-01", K("properties.deleteRetentionPolicy",
-                    "properties.containerDeleteRetentionPolicy", "properties.isVersioningEnabled")),
+                    "properties.containerDeleteRetentionPolicy", "properties.isVersioningEnabled"), MarkRead: true),
                 new ArmChild("file", "/fileServices/default", "2023-05-01", K("properties.shareDeleteRetentionPolicy",
                     "properties.protocolSettings.smb")),
             }),
@@ -217,6 +224,11 @@ internal static class AzureArmPlan
                     "properties.rotationPolicy.lifetimeActions"), ArmChildMode.ListToFact),
                 new ArmChild("secrets", "/secrets", "2023-07-01", K("name", "properties.attributes.enabled", "properties.attributes.exp"),
                     ArmChildMode.ListToFact),
+                // [AEGIS-KNIGHT-AZURE-KV-STORAGE-GAPS-01] A lista embutida no cofre pode ser omitida quando não há conexão: a
+                // subcoleção (PrivateEndpointConnections_ListByResource, papel Leitor) separa lista vazia (200 sem itens) de
+                // leitura recusada (403 → pe:status) e de conexão aprovada.
+                new ArmChild("pe", "/privateEndpointConnections", "2023-07-01", K("name",
+                    "properties.privateLinkServiceConnectionState.status", "properties.privateEndpoint.id"), ArmChildMode.ListToFact),
             }),
 
         // ---- Computação ----------------------------------------------------------------------------------
