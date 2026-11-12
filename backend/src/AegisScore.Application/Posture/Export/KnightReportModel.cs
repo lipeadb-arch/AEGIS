@@ -404,6 +404,17 @@ public static class KnightReportModelBuilder
     };
 
     /// <summary>Detalhe técnico SEGURO em linhas (vocabulário fechado e números), como na tela.</summary>
+    /// <summary>[AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Detalhe técnico da limitação: o diagnóstico e, quando a frase foi reescrita, o registro da coleta.</summary>
+    private static IReadOnlyList<string> Technical(KnightCapabilityStatus c)
+    {
+        var lines = TechnicalLines(c.Diagnostic);
+        if (!KnightCapabilityPresentation.Rewritten(c)) return lines;
+        var all = new List<string>(lines);
+        if (c.Diagnostic?.HttpStatus is null) all.Add("HTTP: não registrado nesta coleta (autorização recusada)");
+        all.Add("Registro da coleta: " + c.Detail);
+        return all;
+    }
+
     public static IReadOnlyList<string> TechnicalLines(KnightCapabilityDiagnostic? d)
     {
         if (d is null) return Array.Empty<string>();
@@ -536,10 +547,10 @@ public static class KnightReportModelBuilder
                         && x.Status is "NotEvaluated" or "Error")
                     .Select(x => x.Id).ToList();
                 return new ReportLimitation(
-                    name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), c.Detail,
+                    name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), KnightCapabilityPresentation.Detail(c),
                     c.Outcome == KnightCapabilityOutcome.InsufficientPermission ? KnightCapabilityLabels.RequiredPermission(c.Capability, s.SourceType) : null,
                     affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null,
-                    c.Diagnostic?.Kind.ToString(), TechnicalLines(c.Diagnostic));
+                    c.Diagnostic?.Kind.ToString(), Technical(c));
             })
             .ToList();
     }
@@ -593,7 +604,10 @@ public static class KnightReportModelBuilder
         var outcomeText = dash < 0 ? rest : rest[..dash];
         if (!Enum.TryParse<KnightCapability>(raw[..sep], out var cap) || !Enum.TryParse<KnightCapabilityOutcome>(outcomeText, out var outcome))
             return raw;
-        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (dash < 0 ? "" : rest[dash..]);
+        // [AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Só a frase lida muda; o registro congelado na composição continua o mesmo.
+        var detail = dash < 0 ? null : rest[(dash + 3)..];
+        var shown = KnightCapabilityPresentation.Detail(cap, outcome, detail, null);
+        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (shown is null ? "" : " — " + shown);
     }
 
     public static IReadOnlyList<KnightConsolidatedSourceEntry>? ReadableComposition(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>

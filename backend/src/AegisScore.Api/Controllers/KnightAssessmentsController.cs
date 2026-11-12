@@ -218,7 +218,8 @@ public class KnightAssessmentsController : ControllerBase
 
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Capacidade com o requisito e a versão preview, da mesma autoridade das exportações.</summary>
     private static KnightCapabilityDto CapabilityDto(KnightCapabilityStatus c) => new(
-        c.Capability.ToString(), c.Outcome.ToString(), c.Detail,
+        // [AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Frase de apresentação; HTTP e endpoint seguem no diagnóstico.
+        c.Capability.ToString(), c.Outcome.ToString(), KnightCapabilityPresentation.Detail(c),
         // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Limitação de plataforma não se resolve com permissão: nenhum requisito é exibido.
         // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Nem interrupção por memória nem resposta fora do contrato: exibir a permissão ao lado delas
         // a apresentaria como causa.

@@ -256,6 +256,59 @@ public sealed class KnightAssessmentScopeTests : IDisposable
         KnightReportModelBuilder.SourceTabs(null).Should().BeEmpty();
     }
 
+    // ---- Texto do 403 nos certificados do cofre (só apresentação) ---------------------------------------------------
+
+    private const string Frase = "mas o Azure recusou a leitura dos dados dos certificados. Por isso, a validade dos certificados não foi avaliada.";
+
+    [Fact]
+    public void Certificados403_FraseComONomeDaColeta_OuUmCofre_SemMudarOutrosCasos()
+    {
+        var d403 = new KnightCapabilityDiagnostic("read", KnightFailureKind.HttpStatus, HttpStatus: 403, Endpoint: "https://kv-prod.vault.azure.net/certificates");
+        var c = new KnightCapabilityStatus(KnightCapability.AzureKeyVaultCertificates, KnightCapabilityOutcome.InsufficientPermission,
+            "certificados do cofre kv-prod: autorização recusada (403).", d403);
+        KnightCapabilityPresentation.Detail(c).Should().Be("O AEGIS encontrou o cofre kv-prod, " + Frase);
+        KnightCapabilityPresentation.Detail(c with { Detail = "certificados do cofre : autorização recusada (403)." })
+            .Should().Be("O AEGIS encontrou um cofre, " + Frase, "sem nome na coleta, a frase não inventa um");
+        KnightCapabilityPresentation.Detail(c with { Diagnostic = null }).Should().StartWith("O AEGIS encontrou o cofre kv-prod", "coleta antiga sem HTTP: vale a recusa");
+        KnightCapabilityPresentation.Detail(c with { Diagnostic = d403 with { HttpStatus = 404 }, Outcome = KnightCapabilityOutcome.Unavailable })
+            .Should().Be(c.Detail, "outro status mantém o detalhe da coleta");
+        KnightCapabilityPresentation.Detail(c with { Capability = KnightCapability.AzureKeyVault }).Should().Be(c.Detail, "outra capacidade não muda");
+        KnightCapabilityPresentation.Detail(c with { Detail = "token: autorização recusada." }).Should().Be("token: autorização recusada.",
+            "a falha do token não é a leitura de um cofre inventariado");
+    }
+
+    [Fact]
+    public void Certificados403_RelatorioHtml_FraseNaLimitacao_403EEndpointNosDetalhesTecnicos_ResultadoInalterado()
+    {
+        var d403 = new KnightCapabilityDiagnostic("read", KnightFailureKind.HttpStatus, HttpStatus: 403, Endpoint: "https://kv-prod.vault.azure.net/certificates");
+        var raw = "certificados do cofre kv-prod: autorização recusada (403).";
+        var snapshot = new PostureSnapshot
+        {
+            Type = PostureSnapshotType.Knight, SchemaVersion = PostureSnapshotSchema.KnightReportVersion, FormulaVersion = KnightScoreFormula.Version,
+            CatalogVersion = "ak-knight-v13", SourceType = KnightSourceType.MicrosoftAzure, CapturedAt = DateTimeOffset.UtcNow,
+            SemanticFamily = "knight:MicrosoftAzure", NotEvaluatedCount = 1, ContentHash = "x",
+            CapabilitiesJson = System.Text.Json.JsonSerializer.Serialize(new[] { new KnightCapabilityStatus(
+                KnightCapability.AzureKeyVaultCertificates, KnightCapabilityOutcome.InsufficientPermission, raw, d403) }, KnightCapabilitiesJson.Options),
+        };
+        snapshot.Indicators.Add(new PostureSnapshotIndicator
+        {
+            IndicatorId = "AK-AZ-KV-010", Title = "Certificados do Key Vault com validade acima de 12 meses", Category = KnightIndicatorCategory.PrivilegedAccess,
+            Severity = SeverityLevel.Medium, Status = KnightIndicatorStatus.NotEvaluated, Evidence = "certificados do cofre não lidos (plano de dados)",
+            SourceType = KnightSourceType.MicrosoftAzure, CollectedAt = DateTimeOffset.UtcNow, RequiredCapabilities = new() { "AzureKeyVaultCertificates" },
+        });
+
+        var model = KnightReportModelBuilder.Build(snapshot, integrityVerified: false);
+        var lim = model.Limitations.Single();
+        lim.Detail.Should().Be("O AEGIS encontrou o cofre kv-prod, " + Frase);
+        lim.Technical.Should().Contain("HTTP 403").And.Contain("Endpoint: https://kv-prod.vault.azure.net/certificates").And.Contain("Registro da coleta: " + raw);
+        lim.AffectedControls.Should().Equal("AK-AZ-KV-010");
+        model.Controls.Single().Status.Should().Be("NotEvaluated", "o resultado continua Não avaliado");
+        KnightCapabilitiesJson.Deserialize(snapshot.CapabilitiesJson).Single().Detail.Should().Be(raw, "o registro congelado não é reescrito");
+
+        KnightReportModelBuilder.ReadableLimitation("AzureKeyVaultCertificates: InsufficientPermission — " + raw)
+            .Should().EndWith("O AEGIS encontrou o cofre kv-prod, " + Frase, "a composição congelada é lida com a mesma frase");
+    }
+
     // ---- Apoio ----------------------------------------------------------------------------------------------------
 
     private static int Evaluated(KnightConsolidatedAssessment r) => r.PassedCount + r.ExposedCount + r.MitigatedCount;

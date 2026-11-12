@@ -294,6 +294,6 @@ public static class KnightConsolidatedBuilder
             .OrderBy(c => c.Capability)
             .Select(c => string.IsNullOrWhiteSpace(c.Detail)
                 ? $"{c.Capability}: {c.Outcome}"
-                : $"{c.Capability}: {c.Outcome} — {c.Detail}")
+                : $"{c.Capability}: {c.Outcome} — {KnightCapabilityPresentation.Detail(c)}")
             .ToList();
 }
