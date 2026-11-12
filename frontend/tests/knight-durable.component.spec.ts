@@ -34,6 +34,7 @@ import { KnightRunTimeoutError, KnightService } from '../src/app/services/knight
 import { RemediationService } from '../src/app/services/remediation.service';
 import { PostureHistoryService } from '../src/app/services/posture-history.service';
 import { IdentityRiskService } from '../src/app/services/identity-risk.service';
+import { AuthService } from '../src/app/services/auth.service';
 import { KnightAssessment, KnightLatest, KnightUnfinishedRun } from '../src/app/models/knight.models';
 
 // ---- micro-harness ---------------------------------------------------------------------------
@@ -142,6 +143,7 @@ function mountRaw(query: Record<string, string> = {}): Mounted {
       { provide: RemediationService, useValue: { list: () => silent(), get: () => silent() } },
       { provide: PostureHistoryService, useValue: { publish: () => silent(), exportSnapshot: () => silent() } },
       { provide: IdentityRiskService, useValue: { get: () => silent() } },
+      { provide: AuthService, useValue: { activeRole: () => 'TenantAdmin' } },
       { provide: ActivatedRoute, useValue: { snapshot: { queryParamMap: map } } },
       { provide: Router, useValue: router },
     ],
@@ -155,6 +157,9 @@ function mountRaw(query: Record<string, string> = {}): Mounted {
 function mount(latest: KnightLatest): Mounted {
   const m = mountRaw();
   replyLatest(m.api.last('getLatestBySource'), latest);
+  // [AEGIS-KNIGHT-SCOPE-01] A aba da fonte lê a avaliação dela por Id: o dublê entrega a mesma avaliação do bloco.
+  const aba = m.api.of('getById');
+  if (aba.length && latest.assessment) reply(aba[aba.length - 1], latest.assessment);
   return m;
 }
 
@@ -474,13 +479,14 @@ test('acesso por ID a uma avaliação concluída continua normal', () => {
 test('o aviso da tentativa ABRE a execução não finalizada de fato (relê a tela por ID)', async () => {
   const { c, api, query, router } = mount({ assessment: assessment(RUN_A), unfinishedAttempt: TENTATIVA });
 
+  const antes = api.of('getById').length;
   c.openRun(RUN_ORFA);
   await Promise.resolve();
   await Promise.resolve();
 
   eq(router.navigations.at(-1)?.['run'], RUN_ORFA, 'o endereço passa a nomear a execução');
   eq(query.get('run'), RUN_ORFA, 'snapshot atualizado');
-  ok(api.of('getById').length === 1, 'a tela relê a execução pedida (mudar só o link não bastaria)');
+  ok(api.of('getById').length === antes + 1, 'a tela relê a execução pedida (mudar só o link não bastaria)');
   reply(api.last('getById'), orfa());
   eq(c.assessment()?.id, RUN_ORFA, 'a execução aberta é a pedida');
   eq(c.unfinishedView(), true, 'e aparece como não finalizada');

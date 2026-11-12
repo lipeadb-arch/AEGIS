@@ -5,6 +5,7 @@ import { environment } from '../../environments/environment';
 import {
   KnightAffectedObjects,
   KnightAffectedSummary,
+  KnightAssessmentScope,
   KnightAssessment,
   KnightGlossary,
   KnightLatest,
@@ -164,7 +165,7 @@ export class KnightService {
   getLatestBySource(): Observable<KnightLatestBySource> {
     return this.http.get<KnightLatestBySource>(`${this.base}/latest-by-source`).pipe(
       timeout(this.READ_TIMEOUT_MS),
-      map((body) => ({ sources: body?.sources ?? [] })),
+      map((body) => ({ sources: body?.sources ?? [], scope: body?.scope ?? null })),
       catchError(this.normalize('Não foi possível carregar as avaliações por fonte.')),
     );
   }
@@ -183,6 +184,24 @@ export class KnightService {
     return this.http.get<KnightAssessment>(`${this.base}/consolidated`, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar o relatório consolidado.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-SCOPE-01] Salva o escopo da avaliação do tenant a partir das fontes DENTRO dele (o mesmo vocabulário do
+   * parâmetro `sources` do consolidado). Toda fonte elegível ausente fica fora do escopo. Não coleta nada nem apaga avaliação.
+   */
+  saveScope(inScope: KnightSourceType[]): Observable<KnightAssessmentScope> {
+    return this.http.put<KnightAssessmentScope>(`${this.base}/scope`, { sources: inScope.map(sourceSlug) }).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError((err: unknown) => {
+        if (err instanceof HttpErrorResponse) {
+          if (err.status === 403)
+            return throwError(() => new Error('Seu papel não permite alterar o escopo da avaliação (requer Manager ou TenantAdmin).'));
+          if (err.status === 400 && typeof err.error === 'string' && err.error) return throwError(() => new Error(err.error as string));
+        }
+        return this.normalize('Não foi possível salvar o escopo da avaliação.')(err);
+      }),
     );
   }
 

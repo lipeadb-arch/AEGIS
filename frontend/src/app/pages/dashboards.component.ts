@@ -27,7 +27,7 @@ import {
   planTreatment,
   scoreText,
 } from '../models/dashboards.models';
-import { KnightAssessment, KnightSourceLatest, KnightSourceType, overviewKpis, sourceTypeLabel } from '../models/knight.models';
+import { KnightAssessment, KnightSourceLatest, KnightSourceType, availabilityLabel, outOfScopeSources, overviewKpis, sourceTypeLabel } from '../models/knight.models';
 import { IncludedSource, findingQuery, priorityViews, scoreCoverage, sourceInclusion } from '../models/knight-summary.models';
 import {
   NistAssessment,
@@ -610,7 +610,7 @@ export class DashboardsComponent {
       for (const s of a.sources)
         rows.push({
           label: s.label,
-          state: s.included ? 'Incluída' : s.availabilityState === 'Available' ? 'Disponível, não incluída' : 'Sem avaliação concluída',
+          state: availabilityLabel(s.availabilityState, s.included),
           score: s.score,
           coverage: s.coverage,
           at: s.capturedAt,
@@ -701,7 +701,12 @@ export class DashboardsComponent {
 
   loadKnight(): void {
     this.knight.set(idle());
-    this.track(this.knightApi.getLatestBySource().pipe(map((r) => r.sources)), (b) => {
+    // [AEGIS-KNIGHT-SCOPE-01] O painel usa o MESMO escopo salvo da tela do KNIGHT: uma fonte fora dele não compõe o
+    // consolidado nem aparece como opção — as avaliações dela continuam no KNIGHT.
+    this.track(this.knightApi.getLatestBySource().pipe(map((r) => {
+      const out = outOfScopeSources(r.scope);
+      return r.sources.filter((s) => !out.includes(s.source));
+    })), (b) => {
       this.knight.set(b);
       const d = defaultKnightView(b.value ?? []);
       const keep = this.knightView();

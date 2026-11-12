@@ -526,8 +526,7 @@ public static class PostureSnapshotPdfWriter
         foreach (var e in composition)
         {
             var row = table.AddRow();
-            var situacao = e.Included ? "Incluída"
-                : e.AvailabilityState == "NotAssessed" ? "Sem avaliação concluída" : "Disponível, não incluída";
+            var situacao = KnightConsolidatedAvailability.Label(e.AvailabilityState, e.Included);
             Cell(row, 0, e.Label);
             Cell(row, 1, situacao);
             Cell(row, 2, e.Score is { } sc ? Math.Round(sc).ToString(Pt) : "—", align: ParagraphAlignment.Center);

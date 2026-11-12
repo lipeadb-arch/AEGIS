@@ -164,6 +164,8 @@ public class AegisScoreDbContext : DbContext
     public DbSet<ActionPlanValidation> ActionPlanValidations => Set<ActionPlanValidation>();
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Resultados manuais estruturados dos controles de referência.</summary>
     public DbSet<KnightManualAssessment> KnightManualAssessments => Set<KnightManualAssessment>();
+    /// <summary>[AEGIS-KNIGHT-SCOPE-01] Escopo salvo da avaliação KNIGHT (no máximo um registro por tenant).</summary>
+    public DbSet<KnightAssessmentScope> KnightAssessmentScopes => Set<KnightAssessmentScope>();
 
     // [AEGIS-NIST-JOURNEY-02] Rodadas, procedimentos de avaliação, achados e trilha da jornada NIST (tenant-owned).
     public DbSet<NistAssessmentCycle> NistCycles => Set<NistAssessmentCycle>();
@@ -1168,6 +1170,15 @@ public class AegisScoreDbContext : DbContext
             e.HasIndex(x => new { x.TenantId, x.ReferenceKey, x.RecordedAt });
         });
 
+        // [AEGIS-KNIGHT-SCOPE-01] Escopo salvo da avaliação KNIGHT: UM registro por tenant (o índice único garante que
+        // duas gravações concorrentes não deixem dois escopos — a segunda falha e a tela relê o vigente).
+        b.Entity<KnightAssessmentScope>(e =>
+        {
+            e.Property(x => x.ExcludedSources).HasMaxLength(AegisScore.Application.Knight.KnightAssessmentScopeFormat.MaxLength).IsRequired();
+            e.Property(x => x.UpdatedByName).HasMaxLength(200);
+            e.HasIndex(x => x.TenantId).IsUnique();
+        });
+
         // Aegis Score — um ÚNICO estado por tenant × subcategoria (o índice único garante que o
         // "Group By de soma" nunca conte linhas duplicadas). FK para o catálogo global SEM coleção
         // inversa (o catálogo imutável não referencia dados de tenant); Restrict impede que um
@@ -1772,6 +1783,7 @@ public class AegisScoreDbContext : DbContext
         b.Entity<ActionPlanEvent>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<ActionPlanValidation>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<KnightManualAssessment>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
+        b.Entity<KnightAssessmentScope>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         // [AEGIS-NIST-JOURNEY-02] Rodadas, procedimentos, achados e trilha do NIST — fail-closed como os demais.
         b.Entity<NistAssessmentCycle>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);
         b.Entity<NistTestProcedure>().HasQueryFilter(e => e.TenantId == _tenant.TenantId);

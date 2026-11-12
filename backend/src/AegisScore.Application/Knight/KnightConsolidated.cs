@@ -54,7 +54,8 @@ public sealed record KnightConsolidatedSourceEntry(
     KnightSourceType Source,
     string Label,
     bool Included,
-    /// <summary>"Included" | "Available" (tem avaliação concluída, mas não foi escolhida) | "NotAssessed" (nunca concluiu uma avaliação).</summary>
+    /// <summary>"Included" | "Available" (tem avaliação concluída, mas não foi escolhida) | "NotAssessed" (nunca concluiu uma avaliação)
+    /// | "OutOfScope" ([AEGIS-KNIGHT-SCOPE-01] retirada do escopo salvo do tenant: sem números, sem limitações, fora dos totais).</summary>
     string AvailabilityState,
     Guid? SourceRunId,
     string? SourceState,
@@ -100,6 +101,33 @@ public sealed record KnightConsolidatedAssessment(
 /// antes de aceitar.
 /// </summary>
 public sealed record KnightConsolidatedSourceSelection(KnightSourceType Source, Guid RunId);
+
+/// <summary>
+/// [AEGIS-KNIGHT-SCOPE-01] Situação de uma fonte na composição — o vocabulário único da API, da tela, do HTML, do CSV e do PDF.
+/// </summary>
+public static class KnightConsolidatedAvailability
+{
+    public const string Included = "Included";
+    public const string Available = "Available";
+    public const string NotAssessed = "NotAssessed";
+    public const string OutOfScope = "OutOfScope";
+
+    public static string Label(string? state, bool included) => included ? "Incluída" : state switch
+    {
+        NotAssessed => "Sem avaliação concluída",
+        OutOfScope => "Fora do escopo",
+        _ => "Disponível, não incluída",
+    };
+
+    /// <summary>
+    /// Entrada de uma fonte FORA do escopo: nenhum número, execução ou limitação dela entra na composição — a fonte aparece só para
+    /// dizer que foi retirada da avaliação. As avaliações dela continuam existindo e acessíveis por conta própria.
+    /// </summary>
+    public static KnightConsolidatedSourceEntry OutOfScopeEntry(KnightSourceType source, string label) => new(
+        source, label, false, OutOfScope,
+        null, null, null, null, null, null, null, null, null, null, null, null,
+        Array.Empty<string>());
+}
 
 /// <summary>
 /// [AEGIS-KNIGHT-COVERAGE-04] Estado da COLETA de um relatório consolidado, separado do término da execução. A
@@ -191,12 +219,17 @@ public static class KnightConsolidatedBuilder
     /// é candidata (ex.: "google", "demo") é ignorada — pedir outra coisa não deve produzir composição vazia
     /// por engano quando há candidata elegível.
     /// </summary>
-    public static KnightConsolidatedAssessment Build(KnightLatestBySource latest, IReadOnlyCollection<KnightSourceType>? requestedSources)
+    /// <param name="outOfScope">[AEGIS-KNIGHT-SCOPE-01] Fontes fora do escopo salvo do tenant. O escopo VENCE a seleção: uma fonte fora
+    /// dele nunca é incluída, mesmo pedida, e aparece como "OutOfScope" sem números nem limitações.</param>
+    public static KnightConsolidatedAssessment Build(
+        KnightLatestBySource latest, IReadOnlyCollection<KnightSourceType>? requestedSources,
+        IReadOnlyCollection<KnightSourceType>? outOfScope = null)
     {
         var candidates = KnightConsolidatedCandidates.Sources;
+        var excluded = new HashSet<KnightSourceType>(outOfScope ?? Array.Empty<KnightSourceType>());
 
         var wanted = new HashSet<KnightSourceType>(
-            requestedSources is null ? candidates : requestedSources.Where(candidates.Contains));
+            (requestedSources is null ? candidates : requestedSources.Where(candidates.Contains)).Where(s => !excluded.Contains(s)));
 
         var bySource = latest.Sources.ToDictionary(s => s.Source);
 
@@ -211,6 +244,12 @@ public static class KnightConsolidatedBuilder
             bySource.TryGetValue(source, out var slot);
             var assessment = slot?.Assessment;
             var label = slot?.Label ?? KnightConsolidatedCandidates.StaticLabel(source);
+
+            if (excluded.Contains(source))
+            {
+                entries.Add(KnightConsolidatedAvailability.OutOfScopeEntry(source, label));
+                continue;
+            }
 
             if (assessment is null)
             {
@@ -255,6 +294,6 @@ public static class KnightConsolidatedBuilder
             .OrderBy(c => c.Capability)
             .Select(c => string.IsNullOrWhiteSpace(c.Detail)
                 ? $"{c.Capability}: {c.Outcome}"
-                : $"{c.Capability}: {c.Outcome} — {c.Detail}")
+                : $"{c.Capability}: {c.Outcome} — {KnightCapabilityPresentation.Detail(c)}")
             .ToList();
 }

@@ -725,14 +725,31 @@ public record KnightSourceLatestDto(
 /// apresentar só a sincronização mais recente esconderia a avaliação da outra fonte. Não há nota somada entre
 /// fontes: cada bloco traz a própria nota, a própria cobertura e a própria data.
 /// </summary>
-public record KnightLatestBySourceDto(IReadOnlyList<KnightSourceLatestDto> Sources);
+public record KnightLatestBySourceDto(IReadOnlyList<KnightSourceLatestDto> Sources, KnightAssessmentScopeDto? Scope = null);
+
+/// <summary>
+/// [AEGIS-KNIGHT-SCOPE-01] Escopo SALVO da avaliação KNIGHT do tenant: as fontes elegíveis dentro e fora da avaliação
+/// consolidada (slugs, na ordem de apresentação), quando e por quem foi salvo. Sem registro salvo, todas estão no escopo e
+/// <paramref name="UpdatedAt"/> é nulo. Uma fonte fora do escopo continua com conector, avaliações e relatórios próprios.
+/// </summary>
+public record KnightAssessmentScopeDto(
+    IReadOnlyList<string> InScope,
+    IReadOnlyList<string> OutOfScope,
+    DateTimeOffset? UpdatedAt,
+    string? UpdatedByName);
+
+/// <summary>
+/// [AEGIS-KNIGHT-SCOPE-01] Corpo de <c>PUT /scope</c>: as fontes DENTRO do escopo — o mesmo vocabulário do parâmetro
+/// <c>sources</c> do consolidado (slug, apelido ou nome do enum). Toda fonte elegível ausente da lista fica fora do escopo.
+/// </summary>
+public record SaveKnightAssessmentScopeRequest(IReadOnlyList<string>? Sources);
 
 // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório KNIGHT consolidado (fontes elegíveis do catálogo) ----------------
 
 /// <summary>
 /// Composição de UMA fonte candidata no relatório consolidado. <paramref name="AvailabilityState"/> é
-/// <c>"Included"</c>, <c>"Available"</c> (avaliação concluída, mas não escolhida) ou <c>"NotAssessed"</c> (nunca
-/// concluiu uma avaliação). Nota e cobertura são SEMPRE as da própria fonte — nunca somadas às demais.
+/// <c>"Included"</c>, <c>"Available"</c> (avaliação concluída, mas não escolhida), <c>"NotAssessed"</c> (nunca
+/// concluiu uma avaliação) ou <c>"OutOfScope"</c> (retirada do escopo salvo do tenant: sem números nem limitações). Nota e cobertura são SEMPRE as da própria fonte — nunca somadas às demais.
 /// </summary>
 public record KnightConsolidatedSourceDto(
     string Source,

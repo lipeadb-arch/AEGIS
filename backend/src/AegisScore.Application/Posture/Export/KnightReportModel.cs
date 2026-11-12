@@ -63,7 +63,9 @@ public sealed record ReportControl(
     // [AEGIS-KNIGHT-PRESENTATION-01] Siglas do glossário que aparecem nos textos congelados deste controle.
     IReadOnlyList<string>? GlossaryTerms = null,
     // [AEGIS-KNIGHT-CLOSURE-01] Versões preview (beta) das APIs que o controle consome, pelas capacidades congeladas.
-    IReadOnlyList<string>? PreviewApis = null);
+    IReadOnlyList<string>? PreviewApis = null,
+    // [AEGIS-KNIGHT-SCOPE-01] Fonte do controle numa fotografia consolidada (nula na fonte única).
+    string? Source = null);
 
 /// <summary>[AEGIS-KNIGHT-COVERAGE-01] Uma linha da cobertura de implementação congelada (total, plataforma ou serviço).</summary>
 public sealed record ReportCoverageRow(
@@ -115,6 +117,16 @@ public sealed record ReportLimitationGroup(
 /// </summary>
 public sealed record ReportSourceInclusion(int Included, int WithEvaluated, IReadOnlyList<string> WithoutEvaluated, string Text);
 
+/// <summary>
+/// [AEGIS-KNIGHT-SCOPE-01] Uma fonte INCLUÍDA num relatório consolidado, para a aba própria dela: nota, cobertura, contagens,
+/// estado e limitações CONGELADOS na composição da fotografia (nunca recalculados), e a chave pela qual os controles da fonte são
+/// encontrados (<see cref="ReportControl.Source"/>).
+/// </summary>
+public sealed record ReportSourceTab(
+    string Key, string Label, double? Score, double? Coverage, int Evaluated, int Applicable, int Passed, int Failed,
+    int Mitigated, int NotEvaluated, int Errors, int NotApplicable, string? SourceState, string? SourceStateLabel,
+    DateTimeOffset? CapturedAt, string? CatalogVersion, IReadOnlyList<string> Limitations);
+
 public sealed record ReportAdvisory(bool FromAi, string ExecutiveSummary, IReadOnlyList<string> PriorityRisks,
     IReadOnlyList<string> RecommendedActions, IReadOnlyList<string> CollectionGaps);
 
@@ -136,7 +148,9 @@ public sealed record KnightReportModel(
     ReportSourceInclusion? Sources = null,
     IReadOnlyList<ReportLimitationGroup>? LimitationGroups = null,
     /// <summary>[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que dizer quando não há limitação a listar — fiel ao registro da fotografia.</summary>
-    string? NoLimitationText = null);
+    string? NoLimitationText = null,
+    /// <summary>[AEGIS-KNIGHT-SCOPE-01] Abas das fontes incluídas no consolidado (nula fora dele), na ordem da composição.</summary>
+    IReadOnlyList<ReportSourceTab>? SourceTabs = null);
 
 public static class KnightReportModelBuilder
 {
@@ -256,7 +270,10 @@ public static class KnightReportModelBuilder
                 + "com a própria versão de catálogo e data de coleta (ver \"Composição das fontes\"). A nota KNIGHT "
                 + "acima aplica a mesma fórmula sobre a união dos controles das fontes INCLUÍDAS — não é a média das "
                 + "notas de cada fonte. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece na "
-                + "composição sem virar aprovação.");
+                + "composição sem virar aprovação."
+                + (composition?.Any(e => e.AvailabilityState == KnightConsolidatedAvailability.OutOfScope) == true
+                    ? " Uma fonte fora do escopo salvo do tenant aparece na composição só para dizer que foi retirada: os controles, achados e limitações dela não entram em nenhum total deste relatório."
+                    : ""));
         if (isV2 && s.ProfileCatalogVersion is { } pv && !string.Equals(pv, s.CatalogVersion, StringComparison.Ordinal))
             notes.Add($"Os textos descritivos (problema, impacto, configuração esperada) são do catálogo {pv}; o veredito foi produzido pelo catálogo {s.CatalogVersion}. O critério da regra só é exibido quando os dois coincidem.");
         if (controls.Any(c => c.Impact is not null))
@@ -289,8 +306,26 @@ public static class KnightReportModelBuilder
             KnightGlossary.IdentifierExplanation,
             Inclusion(composition, header.SourceLabel, evaluated),
             GroupLimitations(limitations, controls),
-            NoLimitationText(KnightCapabilitiesJson.Deserialize(s.CapabilitiesJson), kpis));
+            NoLimitationText(KnightCapabilitiesJson.Deserialize(s.CapabilitiesJson), kpis),
+            sourceType == KnightSourceType.Consolidated ? SourceTabs(composition) : null);
     }
+
+    /// <summary>[AEGIS-KNIGHT-SCOPE-01] As fontes INCLUÍDAS da composição congelada, com os números que a própria composição guardou.</summary>
+    public static IReadOnlyList<ReportSourceTab> SourceTabs(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>
+        (composition ?? Array.Empty<KnightConsolidatedSourceEntry>())
+            .Where(e => e.Included)
+            .Select(e =>
+            {
+                int passed = e.PassedCount ?? 0, failed = e.ExposedCount ?? 0, mitigated = e.MitigatedCount ?? 0;
+                int notEvaluated = e.NotEvaluatedCount ?? 0, errors = e.ErrorCount ?? 0;
+                var evaluated = passed + failed + mitigated;
+                return new ReportSourceTab(
+                    e.Source.ToString(), e.Label, e.Score, e.Coverage, evaluated, evaluated + notEvaluated + errors,
+                    passed, failed, mitigated, notEvaluated, errors, e.NotApplicableCount ?? 0,
+                    e.SourceState, e.SourceState is null ? null : KnightConsolidatedCollection.Label(e.SourceState),
+                    e.CapturedAt, e.CatalogVersion, e.CollectionLimitations);
+            })
+            .ToList();
 
     /// <summary>
     /// [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Ausência de registro não é coleta comprovada: só se afirma que todas as capacidades foram
@@ -369,6 +404,17 @@ public static class KnightReportModelBuilder
     };
 
     /// <summary>Detalhe técnico SEGURO em linhas (vocabulário fechado e números), como na tela.</summary>
+    /// <summary>[AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Detalhe técnico da limitação: o diagnóstico e, quando a frase foi reescrita, o registro da coleta.</summary>
+    private static IReadOnlyList<string> Technical(KnightCapabilityStatus c)
+    {
+        var lines = TechnicalLines(c.Diagnostic);
+        if (!KnightCapabilityPresentation.Rewritten(c)) return lines;
+        var all = new List<string>(lines);
+        if (c.Diagnostic?.HttpStatus is null) all.Add("HTTP: não registrado nesta coleta (autorização recusada)");
+        all.Add("Registro da coleta: " + c.Detail);
+        return all;
+    }
+
     public static IReadOnlyList<string> TechnicalLines(KnightCapabilityDiagnostic? d)
     {
         if (d is null) return Array.Empty<string>();
@@ -470,7 +516,10 @@ public static class KnightReportModelBuilder
                 .Select(c => Enum.TryParse<KnightCapability>(c, out var cap) ? KnightCapabilityLabels.Label(cap) : c)
                 .ToList(),
             null,
-            KnightCapabilityLabels.PreviewApis(i.RequiredCapabilities));
+            KnightCapabilityLabels.PreviewApis(i.RequiredCapabilities),
+            // [AEGIS-KNIGHT-SCOPE-01] No consolidado, a fonte CONGELADA de cada controle: é por ela que o relatório navega pelos
+            // resultados de cada fonte incluída, com os dados da própria fotografia.
+            source == KnightSourceType.Consolidated ? i.SourceType.ToString() : null);
     }
 
     private static IReadOnlyList<ReportDistributionRow> Distribution(
@@ -498,10 +547,10 @@ public static class KnightReportModelBuilder
                         && x.Status is "NotEvaluated" or "Error")
                     .Select(x => x.Id).ToList();
                 return new ReportLimitation(
-                    name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), c.Detail,
+                    name, KnightCapabilityLabels.Label(c.Capability), c.Outcome.ToString(), CauseLabel(c.Outcome), KnightCapabilityPresentation.Detail(c),
                     c.Outcome == KnightCapabilityOutcome.InsufficientPermission ? KnightCapabilityLabels.RequiredPermission(c.Capability, s.SourceType) : null,
                     affected, Guidance(c.Capability, c.Outcome), s.DataRecency is { } t ? Iso(t) : null,
-                    c.Diagnostic?.Kind.ToString(), TechnicalLines(c.Diagnostic));
+                    c.Diagnostic?.Kind.ToString(), Technical(c));
             })
             .ToList();
     }
@@ -555,7 +604,10 @@ public static class KnightReportModelBuilder
         var outcomeText = dash < 0 ? rest : rest[..dash];
         if (!Enum.TryParse<KnightCapability>(raw[..sep], out var cap) || !Enum.TryParse<KnightCapabilityOutcome>(outcomeText, out var outcome))
             return raw;
-        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (dash < 0 ? "" : rest[dash..]);
+        // [AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Só a frase lida muda; o registro congelado na composição continua o mesmo.
+        var detail = dash < 0 ? null : rest[(dash + 3)..];
+        var shown = KnightCapabilityPresentation.Detail(cap, outcome, detail, null);
+        return $"{KnightCapabilityLabels.Label(cap)}: {CauseLabel(outcome)}" + (shown is null ? "" : " — " + shown);
     }
 
     public static IReadOnlyList<KnightConsolidatedSourceEntry>? ReadableComposition(IReadOnlyList<KnightConsolidatedSourceEntry>? composition) =>

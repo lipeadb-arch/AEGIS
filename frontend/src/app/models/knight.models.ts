@@ -239,8 +239,11 @@ export interface KnightConsolidatedSource {
   slug: string;
   label: string;
   included: boolean;
-  /** "Included" | "Available" (avaliação concluída, não escolhida) | "NotAssessed" (nunca concluiu uma avaliação). */
-  availabilityState: 'Included' | 'Available' | 'NotAssessed';
+  /**
+   * "Included" | "Available" (avaliação concluída, não escolhida) | "NotAssessed" (nunca concluiu uma avaliação) |
+   * "OutOfScope" ([AEGIS-KNIGHT-SCOPE-01] retirada do escopo salvo do tenant: sem números nem limitações, fora dos totais).
+   */
+  availabilityState: KnightAvailabilityState;
   sourceRunId: string | null;
   sourceState: KnightSourceState | null;
   catalogVersion: string | null;
@@ -289,6 +292,41 @@ export interface KnightSourceLatest {
 /** Resposta de `GET /latest-by-source`: um bloco por fonte que já produziu alguma avaliação. */
 export interface KnightLatestBySource {
   sources: KnightSourceLatest[];
+  /** [AEGIS-KNIGHT-SCOPE-01] Escopo salvo do tenant (ausente em servidor anterior a este pacote = todas no escopo). */
+  scope?: KnightAssessmentScope | null;
+}
+
+export type KnightAvailabilityState = 'Included' | 'Available' | 'NotAssessed' | 'OutOfScope';
+
+/** [AEGIS-KNIGHT-SCOPE-01] Situação de uma fonte na composição — o mesmo texto do HTML e do PDF. */
+export function availabilityLabel(state: KnightAvailabilityState, included = state === 'Included'): string {
+  if (included) return 'Incluída';
+  switch (state) {
+    case 'NotAssessed':
+      return 'Sem avaliação concluída';
+    case 'OutOfScope':
+      return 'Fora do escopo';
+    default:
+      return 'Disponível, não incluída';
+  }
+}
+
+/**
+ * [AEGIS-KNIGHT-SCOPE-01] Escopo SALVO da avaliação KNIGHT do tenant (espelha KnightAssessmentScopeDto): as fontes elegíveis
+ * dentro e fora do consolidado, por slug. Fora do escopo, a fonte continua com conector, avaliações e relatórios próprios —
+ * só deixa de contar nos totais da avaliação. `updatedAt` nulo = nunca salvo (todas no escopo).
+ */
+export interface KnightAssessmentScope {
+  inScope: string[];
+  outOfScope: string[];
+  updatedAt: string | null;
+  updatedByName: string | null;
+}
+
+/** Fontes fora do escopo, pelo tipo (slugs desconhecidos são ignorados — nunca viram outra fonte). */
+export function outOfScopeSources(scope: KnightAssessmentScope | null | undefined): KnightSourceType[] {
+  const slugs = new Set(scope?.outOfScope ?? []);
+  return CONSOLIDATION_CANDIDATES.filter((s) => slugs.has(sourceSlug(s)));
 }
 
 /**

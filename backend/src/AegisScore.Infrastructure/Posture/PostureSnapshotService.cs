@@ -437,6 +437,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         IReadOnlyCollection<KnightConsolidatedSourceSelection>? selection, CancellationToken ct)
     {
         var candidates = KnightConsolidatedCandidates.Sources;
+        // [AEGIS-KNIGHT-SCOPE-01] O escopo SALVO do tenant vale também aqui (prévia e publicação): uma fonte fora dele nunca
+        // entra, e congela na composição como "Fora do escopo", sem números nem limitações.
+        var scope = await AegisScore.Infrastructure.Knight.KnightAssessmentScopeService.ReadAsync(_db, ct);
 
         // Cada fonte pedida aparece no MÁXIMO uma vez — duas execuções pinadas para a mesma fonte seriam uma
         // composição ambígua (qual das duas contaria?). O controller já rejeita isso antes de chegar aqui;
@@ -453,6 +456,10 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 if (!pinned.TryAdd(s.Source, s.RunId))
                     throw new PostureSnapshotNotAvailableException(
                         $"Mais de uma execução foi indicada para {KnightConsolidatedCandidates.StaticLabel(s.Source)}.");
+                if (scope.IsOutOfScope(s.Source))
+                    throw new PostureSnapshotNotAvailableException(
+                        $"{KnightConsolidatedCandidates.StaticLabel(s.Source)} está fora do escopo salvo da avaliação deste tenant. " +
+                        "Reabra o relatório consolidado e publique novamente a partir da composição exibida.");
             }
         }
 
@@ -499,6 +506,12 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         {
             KnightAssessmentRun? run;
             bool included;
+
+            if (scope.IsOutOfScope(source))
+            {
+                entries.Add(KnightConsolidatedAvailability.OutOfScopeEntry(source, KnightConsolidatedCandidates.StaticLabel(source)));
+                continue;
+            }
 
             if (pinned is not null && pinned.TryGetValue(source, out var pinnedRunId))
             {

@@ -140,6 +140,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-KNIGHT-PERSISTENCE-01] Motivo de não avaliado (execução e fotografia), evidência e limitação congeladas
             // passam de varchar(n) para text — conversão binariamente compatível, sem reescrever linhas nem backfill.
             "20261027222356_KnightPersistence01_DiagnosticTextColumns",
+            // [AEGIS-KNIGHT-SCOPE-01] Escopo salvo da avaliação KNIGHT por tenant: uma tabela NOVA, sem alterar nenhuma existente
+            // e sem backfill — sem registro, todas as fontes elegíveis continuam no escopo, como antes.
+            "20261112140227_KnightScope01_TenantAssessmentScope",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

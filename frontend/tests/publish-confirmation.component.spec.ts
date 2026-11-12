@@ -37,6 +37,7 @@ import { KnightService } from '../src/app/services/knight.service';
 import { RemediationService } from '../src/app/services/remediation.service';
 import { HistoryChangedError, PostureHistoryService } from '../src/app/services/posture-history.service';
 import { IdentityRiskService } from '../src/app/services/identity-risk.service';
+import { AuthService } from '../src/app/services/auth.service';
 import { NistApiError, NistService } from '../src/app/services/nist.service';
 import { KnightAssessment, KnightSourceType } from '../src/app/models/knight.models';
 import { FrozenPostureHistory, HistoryWindowRequest } from '../src/app/models/posture-history.models';
@@ -93,6 +94,7 @@ class FakeKnight extends Recorder {
   getLatestState() { return this.call('getLatestState', []); }
   getById(...a: unknown[]) { return this.call('getById', a); }
   getConsolidated(...a: unknown[]) { return this.call('getConsolidated', a); }
+  saveScope(...a: unknown[]) { return this.call('saveScope', a); }
   getAffectedSummary() { return this.call('getAffectedSummary', []); }
   getCompositionAffectedSummary() { return this.call('getCompositionAffectedSummary', []); }
   getReferenceCoverage() { return this.call('getReferenceCoverage', []); }
@@ -180,6 +182,7 @@ function mountKnight(): Knight {
       { provide: PostureHistoryService, useValue: hist },
       { provide: RemediationService, useValue: { list: silent, get: silent } },
       { provide: IdentityRiskService, useValue: { get: silent } },
+      { provide: AuthService, useValue: { activeRole: () => 'TenantAdmin' } },
       { provide: ActivatedRoute, useValue: { snapshot: { queryParamMap: query } } },
       { provide: Router, useValue: { navigate: () => Promise.resolve(true) } },
     ],
@@ -189,7 +192,15 @@ function mountKnight(): Knight {
   reply(api.last('getLatestBySource'), {
     sources: [block('MicrosoftEntraId', RUN_ENTRA), block('MicrosoftTeams', RUN_TEAMS)],
   });
-  return { c, api, hist };
+  const k = { c, api, hist };
+  // [AEGIS-KNIGHT-SCOPE-01] A seção abre em "Geral"; estes testes partem da aba de uma fonte.
+  openSource(k, 'MicrosoftEntraId');
+  return k;
+}
+/** Abre a aba de uma fonte e entrega a avaliação dela (lida por Id). */
+function openSource(k: Knight, source: KnightSourceType): void {
+  k.c.selectView(source);
+  reply(k.api.last('getById'), assessment(source === 'MicrosoftEntraId' ? RUN_ENTRA : RUN_TEAMS, source));
 }
 /** Abre a prévia da avaliação exibida (por fonte) e, se pedido, entrega a resposta. */
 function previewRun(k: Knight, fp: string | null): void {
@@ -197,7 +208,7 @@ function previewRun(k: Knight, fp: string | null): void {
   if (fp) reply(k.hist.last('historyPreview'), frozen(fp));
 }
 function enterConsolidated(k: Knight, included: [KnightSourceType, string][]): void {
-  k.c.showConsolidated();
+  k.c.selectView('geral');
   reply(k.api.last('getConsolidated'), consolidated(included));
 }
 
@@ -212,7 +223,7 @@ test('KNIGHT: prévia da fonte A, troca para B — a confirmação antiga não p
   previewRun(k, 'fp-a');
   ok(k.c.pubPreview()?.history?.basisFingerprint === 'fp-a', 'a prévia de A está aberta');
 
-  k.c.selectSource(fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
+  openSource(k, fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
   eq(k.c.pubPreview(), null, 'mudar o resultado exibido descarta a prévia');
   k.c.confirmPublish();
   eq(k.hist.of('publish').length, 0, 'nada é publicado');
@@ -222,7 +233,7 @@ test('KNIGHT: resposta atrasada da prévia de A, depois da troca para B, não re
   const k = mountKnight();
   const fonteA = k.c.assessment()!.id;
   previewRun(k, null);
-  k.c.selectSource(fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
+  openSource(k, fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
   reply(k.hist.last('historyPreview'), frozen('fp-a-atrasada'));
   eq(k.c.pubPreview(), null, 'a resposta de A é descartada');
   k.c.confirmPublish();
@@ -265,6 +276,8 @@ test('KNIGHT: prévia consolidada e composição alterada — não publica; a no
   k.c.confirmPublish();
   eq(k.hist.of('publishConsolidated').length, 0, 'a composição antiga não é publicada');
 
+  // [AEGIS-KNIGHT-SCOPE-01] Desmarcar SALVA o escopo do tenant; confirmada a gravação, "Geral" é relido sem a fonte.
+  reply(k.api.last('saveScope'), { inScope: [], outOfScope: ['teams'], updatedAt: '2026-11-12T10:00:00Z', updatedByName: null });
   reply(k.api.last('getConsolidated'), consolidated([['MicrosoftEntraId', RUN_ENTRA]]));
   k.c.publishConsolidatedReport();
   const pedido = k.hist.last('consolidatedHistoryPreview').args[0] as { source: string; runId: string }[];
@@ -283,7 +296,7 @@ test('KNIGHT: prévia consolidada e saída para uma fonte — não publica', () 
   enterConsolidated(k, [['MicrosoftEntraId', RUN_ENTRA], ['MicrosoftTeams', RUN_TEAMS]]);
   k.c.publishConsolidatedReport();
   reply(k.hist.last('consolidatedHistoryPreview'), frozen('fp-ab'));
-  k.c.exitConsolidated();
+  openSource(k, 'MicrosoftEntraId');
   eq(k.c.pubPreview(), null, 'sair do consolidado descarta a prévia');
   k.c.confirmPublish();
   eq(k.hist.of('publishConsolidated').length + k.hist.of('publish').length, 0, 'nada é publicado');
@@ -308,7 +321,7 @@ test('KNIGHT: publicação enviada que responde depois da troca não apaga a pr�
   k.c.confirmPublish();
   eq(k.c.publishing(), true, 'publicação de A enviada');
 
-  k.c.selectSource(fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
+  openSource(k, fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
   eq(k.c.publishing(), false, 'a tela de B não fica presa à publicação de A');
   const fonteB = k.c.assessment()!.id;
   previewRun(k, 'fp-b');
@@ -330,7 +343,7 @@ test('KNIGHT: erro atrasado de uma publicação superada não aparece na seleç�
   const fonteA = k.c.assessment()!.id;
   previewRun(k, 'fp-a');
   k.c.confirmPublish();
-  k.c.selectSource(fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
+  openSource(k, fonteA === RUN_ENTRA ? 'MicrosoftTeams' : 'MicrosoftEntraId');
   previewRun(k, 'fp-b');
   fail(k.hist.of('publish')[0], new HistoryChangedError('A série mudou.'));
   eq(k.c.error(), null, 'sem erro de A na tela de B');
@@ -358,8 +371,8 @@ test('KNIGHT: o descarte cobre fonte, consolidado, composição, releitura e nov
     ok(i >= 0, `método ${nome}`);
     return SRC.slice(i, SRC.indexOf('\n  }\n', i));
   };
-  for (const m of ['selectSource(source: KnightSourceType): void', 'showConsolidated(): void', 'exitConsolidated(): void',
-    'private loadConsolidated(): void', 'private execute(']) {
+  for (const m of ['selectView(v: KnightViewKey', 'private loadGeral(', 'toggleConsolidatedSource(source: KnightSourceType',
+    'private execute(']) {
     contains(corpo(m), 'this.discardPublishPreview()', m);
   }
   contains(corpo('reload(): void'), 'this.discardPublishPreview()', 'reload');

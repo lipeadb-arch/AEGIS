@@ -26,14 +26,69 @@ public class KnightAssessmentsController : ControllerBase
     private readonly ITenantContext _tenant;
     private readonly IKnightManualResultService? _manual;
     private readonly ILogger<KnightAssessmentsController>? _log;
+    private readonly IKnightAssessmentScopeService? _scope;
 
     public KnightAssessmentsController(IAegisKnightAssessmentService service, ITenantContext tenant, IKnightManualResultService? manual = null,
-        ILogger<KnightAssessmentsController>? log = null)
+        ILogger<KnightAssessmentsController>? log = null, IKnightAssessmentScopeService? scope = null)
     {
         _service = service;
         _tenant = tenant;
         _manual = manual;
         _log = log;
+        _scope = scope;
+    }
+
+    /// <summary>[AEGIS-KNIGHT-SCOPE-01] Escopo salvo do tenant — sem o serviço registrado, todas as candidatas estão no escopo.</summary>
+    private async Task<KnightAssessmentScopeView> ScopeAsync(CancellationToken ct) =>
+        _scope is null ? KnightAssessmentScopeView.Default : await _scope.GetAsync(ct);
+
+    private static KnightAssessmentScopeDto ScopeDto(KnightAssessmentScopeView v) => new(
+        v.InScope.Select(KnightConnectorSources.Slug).ToList(),
+        v.OutOfScope.Select(KnightConnectorSources.Slug).ToList(),
+        v.UpdatedAt, v.UpdatedByName);
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-SCOPE-01] Escopo SALVO da avaliação KNIGHT deste tenant: quais fontes elegíveis compõem o consolidado.
+    /// Somente leitura.
+    /// </summary>
+    [HttpGet("scope")]
+    public async Task<ActionResult<KnightAssessmentScopeDto>> GetScope(CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        return Ok(ScopeDto(await ScopeAsync(ct)));
+    }
+
+    /// <summary>
+    /// [AEGIS-KNIGHT-SCOPE-01] Salva o escopo da avaliação deste tenant a partir das fontes DENTRO dele (mesmo vocabulário do
+    /// parâmetro <c>sources</c> do consolidado). Toda fonte elegível ausente da lista fica FORA do escopo: os controles, achados
+    /// e limitações dela saem dos totais do consolidado (tela, painel, prévia e publicação). Não coleta nada, não apaga avaliação
+    /// e não altera fotografia já publicada. O autor vem do token.
+    /// </summary>
+    /// <response code="200">Escopo salvo (o vigente, como ficou gravado).</response>
+    /// <response code="400">Fonte desconhecida ou não elegível ao consolidado.</response>
+    /// <response code="403">Papel insuficiente (requer Manager ou TenantAdmin).</response>
+    [HttpPut("scope")]
+    [Authorize(Roles = "Manager,TenantAdmin")]
+    public async Task<ActionResult<KnightAssessmentScopeDto>> SaveScope([FromBody] SaveKnightAssessmentScopeRequest request, CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+        if (request?.Sources is null) return BadRequest("Informe as fontes dentro do escopo (sources), mesmo que vazio.");
+        if (_scope is null) return StatusCode(StatusCodes.Status503ServiceUnavailable);
+
+        var inScope = new HashSet<KnightSourceType>();
+        foreach (var name in request.Sources)
+        {
+            if (!KnightSourceNames.TryParse(name, out var s))
+                return BadRequest($"Fonte desconhecida: '{name}'.");
+            if (!KnightConsolidatedCandidates.Sources.Contains(s))
+                return BadRequest($"A fonte '{name}' não compõe a avaliação consolidada e não tem escopo a salvar.");
+            inScope.Add(s);
+        }
+
+        var saved = await _scope.SaveAsync(inScope, User?.FindFirst("name")?.Value, ct);
+        return Ok(ScopeDto(saved));
     }
 
     /// <summary>Executa um assessment de DEMONSTRAÇÃO (fonte Demo, sintética) e devolve o resultado completo.</summary>
@@ -163,7 +218,8 @@ public class KnightAssessmentsController : ControllerBase
 
     /// <summary>[AEGIS-KNIGHT-CLOSURE-01] Capacidade com o requisito e a versão preview, da mesma autoridade das exportações.</summary>
     private static KnightCapabilityDto CapabilityDto(KnightCapabilityStatus c) => new(
-        c.Capability.ToString(), c.Outcome.ToString(), c.Detail,
+        // [AEGIS-KNIGHT-SCOPE-NAVIGATION-01] Frase de apresentação; HTTP e endpoint seguem no diagnóstico.
+        c.Capability.ToString(), c.Outcome.ToString(), KnightCapabilityPresentation.Detail(c),
         // [AEGIS-KNIGHT-COLLECTION-RELIABILITY-01] Limitação de plataforma não se resolve com permissão: nenhum requisito é exibido.
         // [AEGIS-KNIGHT-RUNTIME-DIAGNOSIS] Nem interrupção por memória nem resposta fora do contrato: exibir a permissão ao lado delas
         // a apresentaria como causa.
@@ -259,6 +315,7 @@ public class KnightAssessmentsController : ControllerBase
             return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
 
         var latest = await _service.GetLatestBySourceAsync(ct);
+        var scope = await ScopeAsync(ct);
         return Ok(new KnightLatestBySourceDto(latest.Sources
             .Select(s => new KnightSourceLatestDto(
                 s.Source.ToString(),
@@ -266,7 +323,8 @@ public class KnightAssessmentsController : ControllerBase
                 s.Label,
                 s.Assessment is null ? null : ToDto(s.Assessment),
                 s.UnfinishedAttempt is null ? null : ToDto(s.UnfinishedAttempt)))
-            .ToList()));
+            .ToList(),
+            ScopeDto(scope)));
     }
 
     /// <summary>
@@ -301,7 +359,9 @@ public class KnightAssessmentsController : ControllerBase
         IReadOnlyCollection<KnightSourceType>? requested = explicitSelection ? parsed : (parsed.Count > 0 ? parsed : null);
 
         var latest = await _service.GetLatestBySourceAsync(ct);
-        var combined = KnightConsolidatedBuilder.Build(latest, requested);
+        // [AEGIS-KNIGHT-SCOPE-01] O escopo SALVO vence a seleção: uma fonte fora dele nunca compõe os totais, mesmo pedida.
+        var scope = await ScopeAsync(ct);
+        var combined = KnightConsolidatedBuilder.Build(latest, requested, scope.OutOfScope);
         return Ok(ToConsolidatedDto(combined));
     }
 

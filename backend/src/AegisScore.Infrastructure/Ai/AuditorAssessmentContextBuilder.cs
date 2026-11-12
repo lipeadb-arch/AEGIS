@@ -126,7 +126,9 @@ public sealed class AuditorAssessmentContextBuilder : IAuditorAssessmentContextB
         }
         else
         {
-            var consolidated = KnightConsolidatedBuilder.Build(latest, null);
+            // [AEGIS-KNIGHT-SCOPE-01] O consolidado citado é o do escopo salvo do tenant — o mesmo da tela e da publicação.
+            var scope = await AegisScore.Infrastructure.Knight.KnightAssessmentScopeService.ReadAsync(_db, ct);
+            var consolidated = KnightConsolidatedBuilder.Build(latest, null, scope.OutOfScope);
             if (consolidated.IncludedSources.Count > 0)
             {
                 var included = consolidated.Sources.Where(s => s.Included).Select(s => s.Label).ToList();
