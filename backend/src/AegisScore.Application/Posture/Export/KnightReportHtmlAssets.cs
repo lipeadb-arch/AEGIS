@@ -84,6 +84,7 @@ table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::befo
 .tech{font-size:12px;color:var(--muted)}.tech summary{cursor:pointer}.tech ul{margin:4px 0 0;padding-left:16px}
 @media (max-width:600px){.pdl{grid-template-columns:minmax(0,1fr)}.pdl dd{margin-bottom:4px}}
 @media (prefers-color-scheme:dark){.chart .in-ok,.chart .in-bad{fill:#0d1422}}
+.tabs[hidden]{display:none}.srcnav{margin-top:10px;border-bottom:2px solid var(--line)}.srcnav button{font-size:15px}.src-meta{margin:0 0 10px}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
 
@@ -104,7 +105,7 @@ function lbl(list,k){for(var i=0;i<list.length;i++)if(list[i][0]===k)return list
 function pill(cls,text){return el('span',{cls:'pill '+cls,text:text});}
 function pct(v){return v===null||v===undefined?'—':(Math.round(v*10)/10).toString().replace('.',',')+'%';}
 var main=document.getElementById('app');
-function setTab(t){ST.tab=t;var b=document.querySelectorAll('.tabs button');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-tab')===t;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
+function setTab(t){ST.tab=t;var b=document.querySelectorAll('.tabs button[data-tab]');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-tab')===t;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
 ['overview','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=t!==x;});}
 // [AEGIS-KNIGHT-PRESENTATION-01] Controle citado fora do detalhe: título CONGELADO na fotografia como informação principal,
 // código como secundária; clique, Enter ou Espaço abrem o detalhe. Sem título na fotografia, o código fica e isso é dito.
@@ -121,7 +122,7 @@ var b=el('button',{cls:'linkbtn no-print',type:'button','aria-expanded':'false',
 extra.forEach(function(li){li.hidden=o;});b.setAttribute('aria-expanded',o?'false':'true');b.textContent=o?more:less;if(!o){var f=extra[0].querySelector('button');if(f)f.focus();}}});
 box.appendChild(b);return box;}
 function refsOf(ids){return ids.map(function(id){return{id:id,title:null};});}
-function go(filters,open){ST.f={q:'',status:'',severity:'',platform:'',service:'',domain:'',framework:''};for(var k in filters)ST.f[k]=filters[k];syncFilterInputs();renderList(open);setTab('controls');
+function go(filters,open){if(srcSel!=='geral')setSrc('geral');ST.f={q:'',status:'',severity:'',platform:'',service:'',domain:'',framework:''};for(var k in filters)ST.f[k]=filters[k];syncFilterInputs();renderList(open);setTab('controls');
 var h=document.getElementById('tab-controls');if(open){var c=document.getElementById('ctl-'+open);if(c){c.scrollIntoView();var b=c.querySelector('button');if(b)b.focus();}}else h.scrollIntoView();}
 // ---------- Visão geral ----------
 function help(t,body){return el('details',null,[el('summary',{text:t}),el('span',{text:body})]);}
@@ -165,8 +166,8 @@ b.appendChild(el('button',{cls:'bar',type:'button','aria-label':desc,title:desc,
 p.appendChild(b);var lg=el('div',{cls:'legend'});STATUS.forEach(function(s){var i=el('i',{cls:'seg '+s[0]});lg.appendChild(el('span',null,[i,s[1]]));});p.appendChild(lg);return p;}
 var SST={Completed:'Coleta concluída',PartialCollection:'Coleta parcial',InsufficientPermission:'Permissão insuficiente',AuthenticationFailure:'Falha de autenticação',Throttled:'Limite de requisições',Unavailable:'Indisponível',Error:'Erro'};
 function composition(){var p=el('div',{cls:'panel'},[el('h2',{text:'Composição do relatório consolidado'}),
-el('p',{cls:'sub',text:'Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece aqui sem virar aprovação.'})]);
-var tb=el('tbody');D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:['s-Mitigated','Disponível, não incluída']);
+el('p',{cls:'sub',text:'Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece aqui sem virar aprovação. Uma fonte fora do escopo do tenant não entra em nenhum total deste relatório.'})]);
+var tb=el('tbody');D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:s.availabilityState==='OutOfScope'?['s-NotApplicable','Fora do escopo']:['s-Mitigated','Disponível, não incluída']);
 tb.appendChild(el('tr',null,[el('td',{text:s.label}),el('td',null,[pill(sit[0],sit[1])]),
 el('td',{text:s.score===null||s.score===undefined?'—':String(Math.round(s.score))}),
 el('td',{text:s.coverage===null||s.coverage===undefined?'—':pct(s.coverage)}),
@@ -245,7 +246,7 @@ function renderList(open){var list=D.controls.filter(matches);listBox.textConten
 recorte.textContent='Mostrando '+list.length+' de '+D.controls.length+' controle(s) · Recorte: '+describeFilter()+' · os filtros afetam só a visualização; o arquivo contém a avaliação completa.';
 if(!list.length){listBox.appendChild(el('p',{cls:'empty',text:'Nenhum controle corresponde aos filtros. Use “Limpar filtros”.'}));return;}
 list.forEach(function(c){listBox.appendChild(controlItem(c,open===c.id));});}
-function controlItem(c,isOpen){var body=detail(c);body.hidden=!isOpen;var id='ctl-'+c.id;
+function controlItem(c,isOpen,pfx){var body=detail(c);body.hidden=!isOpen;var id=(pfx||'')+'ctl-'+c.id;
 var head=el('button',{type:'button','aria-expanded':isOpen?'true':'false','aria-controls':id+'-b',onclick:function(){var o=head.getAttribute('aria-expanded')==='true';head.setAttribute('aria-expanded',o?'false':'true');body.hidden=o;}},
 [el('span',null,[el('div',{cls:'t',text:c.title}),el('div',{cls:'s',text:c.id+' · '+c.service+' · '+c.domainLabel+(c.affectedCount>0?' · '+(c.affectedComposition||c.affectedCount+' afetado(s)'):'')})]),
 el('span',{cls:'tags'},[pill('s-'+c.status,c.statusLabel),pill('v-'+c.severity,c.severityLabel)])]);
@@ -308,12 +309,45 @@ el('td',null,[el('div',{text:o.displayName||o.userPrincipalName||o.externalId}),
 el('td',{text:o.detail||'—'}),el('td',{cls:'mono',text:o.observedConfiguration||'—'})]));});
 more.textContent='Mostrar todos ('+rows.length+')';more.hidden=rows.length<=shown;}
 if(q)wrap.appendChild(q);wrap.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Relação','Tipo','Item','Por que está aqui','Configuração encontrada'].map(function(x){return el('th',{text:x});}))]),tb])]));wrap.appendChild(more);draw();return wrap;}
+// ---------- [AEGIS-KNIGHT-SCOPE-01] Resultados por fonte (consolidado) ----------
+// "Geral" é o consolidado (as abas de seções abaixo). Cada fonte incluída tem a própria aba, desenhada só com o que a fotografia
+// congelou: nota, cobertura e contagens da composição e os controles cuja fonte é ela. Nada é lido de fora do arquivo.
+var SRC=D.sourceTabs||[],srcNav=null,srcBox=null,srcSel='geral';
+function setSrc(k){srcSel=k;if(!srcNav)return;var b=srcNav.querySelectorAll('button');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-src')===k;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
+var geral=k==='geral';tabs.hidden=!geral;srcBox.hidden=geral;if(geral){setTab(ST.tab);return;}
+['overview','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=true;});renderSrc(k);}
+function srcKpi(l,v,n){return el('div',{cls:'kpi'},[el('div',{cls:'l',text:l}),el('div',{cls:'v',text:v}),el('div',{cls:'n',text:n})]);}
+function renderSrc(k){var t=SRC.filter(function(x){return x.key===k;})[0];srcBox.textContent='';if(!t)return;
+var ctl=D.controls.filter(function(c){return c.source===k;}),fnd=ctl.filter(function(c){return c.status==='Exposed'||c.status==='Mitigated';});
+var noScore=t.score===null||t.score===undefined;
+srcBox.appendChild(el('h2',{cls:'grp-h',id:'src-h',text:'Resultados — '+t.label}));
+srcBox.appendChild(el('p',{cls:'sub src-meta',text:'Dados congelados nesta fotografia. Nota, cobertura e contagens são as da própria fonte, não somadas às demais. Coleta em '+dt(t.capturedAt)+' · catálogo '+(t.catalogVersion||'—')+' · '+(t.sourceStateLabel||'estado da coleta não registrado')+'.'}));
+var g=el('div',{cls:'grid g4'});
+g.appendChild(srcKpi('Nota da fonte',noScore?'—':String(Math.round(t.score))+'/100',noScore?'Sem nota: nenhum controle avaliado nesta fonte.':'Sobre os '+t.evaluated+' controles avaliados desta fonte.'));
+g.appendChild(srcKpi('Cobertura da fonte',pct(t.coverage),t.evaluated+' de '+t.applicable+' controles aplicáveis avaliados'));
+g.appendChild(srcKpi('Controles reprovados',String(t.failed),t.mitigated+' mitigado(s) · '+(t.notEvaluated+t.errors)+' sem avaliação'));
+g.appendChild(srcKpi('Aprovados',String(t.passed),t.notApplicable+' não aplicável(is) fora da base'));
+srcBox.appendChild(g);
+var lp=el('div',{cls:'panel'},[el('h2',{text:'Limitações de coleta desta fonte'})]);
+if(t.limitations&&t.limitations.length)lp.appendChild(el('ul',null,t.limitations.map(function(x){return el('li',{text:x});})));
+else lp.appendChild(el('p',{cls:'sub',text:'Nenhuma limitação de coleta registrada para esta fonte nesta fotografia.'}));
+srcBox.appendChild(lp);
+var fp=el('div',{cls:'panel'},[el('h2',{text:'Achados e controles desta fonte'}),el('p',{cls:'sub',text:fnd.length+' achado(s) (reprovado ou mitigado) entre '+ctl.length+' controle(s) desta fonte, na ordem do relatório. Clique para abrir o detalhe.'})]);
+if(!ctl.length)fp.appendChild(el('p',{cls:'empty',text:'Nenhum controle desta fonte foi congelado na fotografia.'}));
+ctl.forEach(function(c){fp.appendChild(controlItem(c,false,'src-'));});
+srcBox.appendChild(fp);}
 // ---------- Montagem ----------
 var tabs=el('div',{cls:'tabs',role:'tablist','aria-label':'Seções do relatório'});
 var TABS=[['overview','Resumo e resultados'],['controls','Detalhes técnicos'],['glossary','Metodologia e glossário']];
 TABS.forEach(function(t,i){tabs.appendChild(el('button',{id:'t-'+t[0],type:'button',role:'tab','data-tab':t[0],'aria-controls':'tab-'+t[0],'aria-selected':i===0?'true':'false',text:t[1],
 onclick:function(){setTab(t[0]);},onkeydown:function(e){if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=TABS[(i+(e.key==='ArrowRight'?1:TABS.length-1))%TABS.length][0];setTab(n);document.getElementById('t-'+n).focus();e.preventDefault();}}}));});
-main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());main.appendChild(glossaryTab());renderList();setTab('overview');
+if(SRC.length){srcNav=el('div',{cls:'tabs srcnav',role:'tablist','aria-label':'Resultados: geral e por fonte'});
+var SK=[['geral','Geral']].concat(SRC.map(function(t){return[t.key,t.label];}));
+SK.forEach(function(t,i){srcNav.appendChild(el('button',{id:'s-'+t[0],type:'button',role:'tab','data-src':t[0],'aria-controls':i===0?'tab-overview':'src-view','aria-selected':i===0?'true':'false',tabindex:i===0?'0':'-1',text:t[1],
+onclick:function(){setSrc(t[0]);},onkeydown:function(e){var n=null;if(e.key==='ArrowRight')n=SK[(i+1)%SK.length][0];else if(e.key==='ArrowLeft')n=SK[(i+SK.length-1)%SK.length][0];else if(e.key==='Home')n=SK[0][0];else if(e.key==='End')n=SK[SK.length-1][0];
+if(n!==null){setSrc(n);document.getElementById('s-'+n).focus();e.preventDefault();}}}));});
+srcBox=el('section',{id:'src-view',role:'tabpanel','aria-labelledby':'src-h',cls:'grp'});srcBox.hidden=true;main.appendChild(srcNav);}
+main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());main.appendChild(glossaryTab());if(srcBox)main.appendChild(srcBox);renderList();setTab('overview');
 // [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Os riscos prioritários (desenhados no servidor) abrem o detalhe do controle.
 Array.prototype.forEach.call(document.querySelectorAll('[data-open]'),function(a){a.addEventListener('click',function(e){e.preventDefault();go({},a.getAttribute('data-open'));});});
 // [AEGIS-ASSESSMENT-VISUALS-01] Links dos gráficos e das tabelas de valores abrem a aba de controles já filtrada.

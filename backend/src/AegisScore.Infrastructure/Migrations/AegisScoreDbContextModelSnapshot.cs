@@ -3004,6 +3004,38 @@ namespace AegisScore.Infrastructure.Migrations
                     b.ToTable("KnightAssessmentRuns");
                 });
 
+            modelBuilder.Entity("AegisScore.Domain.KnightAssessmentScope", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExcludedSources")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("character varying(400)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UpdatedByName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique();
+
+                    b.ToTable("KnightAssessmentScopes");
+                });
+
             modelBuilder.Entity("AegisScore.Domain.KnightIndicatorResult", b =>
                 {
                     b.Property<Guid>("Id")

@@ -21,6 +21,8 @@ import {
   sourceTypeLabel,
   statusLabel,
   threeMeasures,
+  KnightAvailabilityState,
+  availabilityLabel,
 } from '../../models/knight.models';
 import { approvalBasis, limitationGroups, noLimitationText, priorityViews, scoreCoverage, sourceInclusion } from '../../models/knight-summary.models';
 import { KnightControlRefsComponent } from './knight-control-refs.component';
@@ -316,7 +318,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
         <p class="muted small">
           Cada fonte tem a própria nota, cobertura e data — não são somadas. A nota consolidada aplica a mesma fórmula sobre a união
           dos controles das fontes incluídas; não é a média. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece
-          aqui sem virar aprovação.
+          aqui sem virar aprovação. Uma fonte fora do escopo do tenant não entra em nenhum total.
         </p>
         <p class="small" [class.warn-text]="!collection(comp).complete"><b>Estado da coleta:</b> {{ collection(comp).text }}</p>
         <div class="table-wrap">
@@ -451,6 +453,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
       .avail.Included { color: var(--cyan); background: color-mix(in srgb, var(--cyan) 16%, transparent); }
       .avail.Available { color: var(--amber); background: color-mix(in srgb, var(--amber) 16%, transparent); }
       .avail.NotAssessed { color: var(--text-2); background: var(--hover); }
+      .avail.OutOfScope { color: var(--muted); background: var(--hover); border: 1px dashed var(--line-strong); }
       .prio { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: var(--sp-3); }
       .prio li { padding-bottom: var(--sp-3); border-bottom: 1px solid var(--line-2); }
       .prio li:last-child { border-bottom: 0; padding-bottom: 0; }
@@ -573,14 +576,7 @@ export class KnightOverviewComponent {
     return consolidatedCollection(sources);
   }
 
-  availabilityLabel(state: 'Included' | 'Available' | 'NotAssessed'): string {
-    switch (state) {
-      case 'Included':
-        return 'Incluída';
-      case 'Available':
-        return 'Disponível, não incluída';
-      case 'NotAssessed':
-        return 'Sem avaliação concluída';
-    }
+  availabilityLabel(state: KnightAvailabilityState): string {
+    return availabilityLabel(state);
   }
 }

@@ -166,6 +166,7 @@ public static class DependencyInjection
         services.AddScoped<IAegisKnightAssessmentService, AegisKnightAssessmentService>();
         // [AEGIS-KNIGHT-CLOSURE-01] Resultado manual estruturado dos controles de referência sem avaliação automatizada.
         services.AddScoped<AegisScore.Application.Knight.Reference.IKnightManualResultService, KnightManualResultService>();
+        services.AddScoped<AegisScore.Application.Knight.IKnightAssessmentScopeService, KnightAssessmentScopeService>();
         // [AEGIS-NIST-JOURNEY-01] Jornada persistida do AEGIS NIST (avaliação, escopo, subcategoria, evidência, perfil).
         services.AddScoped<AegisScore.Application.Nist.INistAssessmentService, AegisScore.Infrastructure.Nist.NistAssessmentService>();
         // [AEGIS-NIST-JOURNEY-02] Procedimentos, achados e planos; publicação da maturidade; importação CSV de trabalho.

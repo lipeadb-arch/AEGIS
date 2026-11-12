@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { catchError, map } from 'rxjs';
+import { map } from 'rxjs';
 import { environment } from '../../environments/environment';
 import {
   EMPTY_FILTERS,
@@ -25,6 +25,9 @@ import {
   sourceTypeLabel,
   CONSOLIDATION_CANDIDATES,
   KnightGlossary,
+  KnightAssessmentScope,
+  outOfScopeSources,
+  sourceSlug,
 } from '../models/knight.models';
 import { IdentityRiskPanelComponent } from '../components/identity/identity-risk-panel.component';
 import { KnightFindingDetailComponent } from '../components/knight/finding-detail.component';
@@ -35,6 +38,8 @@ import { KnightCoverageComponent } from '../components/knight/knight-coverage.co
 
 /** [AEGIS-KNIGHT-PRESENTATION-01] Abas da avaliação. */
 type KnightPageTab = 'overview' | 'controls' | 'coverage' | 'glossary';
+/** [AEGIS-KNIGHT-SCOPE-01] Abas da seção: "Geral" (o consolidado do escopo) e uma por fonte em escopo. */
+type KnightViewKey = 'geral' | KnightSourceType;
 import { IdentityEvidenceProjection } from '../models/identity-risk.models';
 import { advisoryOrigin } from '../models/knight-summary.models';
 import { IdentityRiskService } from '../services/identity-risk.service';
@@ -49,6 +54,8 @@ import {
   planForPanel,
 } from '../models/remediation.models';
 import { RemediationService } from '../services/remediation.service';
+import { AuthService } from '../services/auth.service';
+import { canManageActionPlans } from '../models/remediation.models';
 import { HistoryChangedError, PostureHistoryService } from '../services/posture-history.service';
 import { FrozenPostureHistory, HistoryWindowRequest, KnightConsolidatedSourceSelection, PostureExportFormat } from '../models/posture-history.models';
 import { HistoryPreviewComponent } from '../components/history-preview.component';
@@ -189,64 +196,70 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
           </div>
         }
 
-        <!-- [AEGIS-KNIGHT-COVERAGE-02] As fontes JÁ AVALIADAS, cada uma com a própria avaliação. Sincronizar
-             uma não descarta a outra: a que não está na tela continua existindo, com a data da coleta dela. -->
-        @if (hasMultipleSources()) {
-          <nav class="panel sources" aria-label="Fonte avaliada">
-            <div class="sources-hd">
-              <p class="sources-title">Fontes e última avaliação de cada uma</p>
-              @if (!consolidatedMode()) {
-                <button type="button" class="btn ghost" (click)="showConsolidated()">Ver relatório consolidado</button>
-              } @else {
-                <button type="button" class="btn ghost" (click)="exitConsolidated()">Ver por fonte</button>
+        <!-- [AEGIS-KNIGHT-SCOPE-01] A seção abre em "Geral" (o consolidado do escopo salvo do tenant) e depois mostra uma aba por
+             fonte EM ESCOPO, cada uma com a própria avaliação. Trocar de aba é uma LEITURA: nada é coletado, e a avaliação da
+             aba anterior continua existindo. Uma fonte fora do escopo não tem aba; ela aparece em "Geral" como "Fora do escopo". -->
+        @if (hasViews()) {
+          <nav class="panel sources" aria-label="Avaliação KNIGHT: geral e por fonte">
+            <div class="viewbar" role="tablist" aria-label="Avaliação: geral e por fonte">
+              <button type="button" role="tab" class="src" [id]="viewTabId('geral')" [class.on]="view() === 'geral'"
+                      [attr.aria-selected]="view() === 'geral'" [attr.tabindex]="view() === 'geral' ? 0 : -1"
+                      aria-controls="knight-view-panel" (click)="selectView('geral')" (keydown)="viewKey($event)">
+                <b>Geral</b>
+                <span class="when">Consolidado do escopo</span>
+              </button>
+              @for (s of viewTabs(); track s.source) {
+                <button type="button" role="tab" class="src" [id]="viewTabId(s.source)" [class.on]="view() === s.source"
+                        [attr.aria-selected]="view() === s.source" [attr.tabindex]="view() === s.source ? 0 : -1"
+                        aria-controls="knight-view-panel" (click)="selectView(s.source)" (keydown)="viewKey($event)">
+                  <b>{{ s.label }}</b>
+                  @if (s.assessment; as sa) {
+                    <span class="when">Coletado em {{ sa.startedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+                  } @else {
+                    <span class="when">Sem avaliação concluída</span>
+                  }
+                </button>
               }
             </div>
-            <ul>
-              @for (s of latestBySource(); track s.source) {
-                <li>
-                  <button
-                    type="button"
-                    class="src"
-                    [class.on]="!consolidatedMode() && shownSource() === s.source"
-                    [attr.aria-current]="!consolidatedMode() && shownSource() === s.source ? 'true' : null"
-                    (click)="selectSource(s.source)"
-                  >
-                    <b>{{ s.label }}</b>
-                    @if (s.assessment; as sa) {
-                      <span class="when">Coletado em {{ sa.startedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
-                    } @else {
-                      <span class="when">Sem avaliação concluída</span>
-                    }
-                  </button>
-                </li>
-              }
-            </ul>
-            @if (consolidatedMode()) {
-              <div class="consolidated-picker">
-                <p class="sources-title">Compor com</p>
+            @if (view() === 'geral') {
+              <!-- O seletor "Compor com" é o ESCOPO salvo do tenant: a mesma escolha vale ao recarregar, no painel, na prévia
+                   e na publicação do consolidado. Desmarcar uma fonte a retira dos totais; o conector e as avaliações dela ficam. -->
+              <div class="consolidated-picker" role="group" aria-labelledby="knight-scope-title">
+                <p class="sources-title" id="knight-scope-title">Compor com</p>
                 @for (c of consolidatedCandidates(); track c.source) {
-                  <label class="pick" [class.off]="!c.hasAssessment">
-                    <input type="checkbox" [checked]="isSourceIncluded(c.source)" [disabled]="!c.hasAssessment || consolidatedLoading()"
-                           (change)="toggleConsolidatedSource(c.source)" />
+                  <label class="pick" [class.off]="!c.inScope">
+                    <input type="checkbox" [checked]="c.inScope" [disabled]="!canEditScope() || scopeSaving() || viewLoading()"
+                           (change)="toggleConsolidatedSource(c.source, $event)" />
                     {{ c.label }}
-                    @if (!c.hasAssessment) { <span class="when">sem avaliação concluída</span> }
+                    @if (!c.inScope) { <span class="when">fora do escopo</span> }
+                    @else if (!c.hasAssessment) { <span class="when">sem avaliação concluída</span> }
                   </label>
                 }
               </div>
-              <p class="sources-note">
-                A nota consolidada aplica a mesma fórmula do KNIGHT sobre os controles das fontes marcadas acima —
-                não é a média das notas por fonte. Uma fonte sem avaliação, ou desmarcada, aparece na composição
-                sem virar aprovação.
-              </p>
+              <p class="sources-note" role="status">{{ scopeSaving() ? 'Salvando o escopo da avaliação…' : scopeNote() }}</p>
+              @if (scopeError(); as serr) {
+                <p class="sources-note err" role="alert">{{ serr }} O escopo salvo não mudou.</p>
+              }
             } @else {
               <p class="sources-note">
-                Cada fonte tem nota, cobertura e data próprias — elas não são somadas. O relatório publicado é o
-                da fonte aberta aqui.
+                Cada fonte tem nota, cobertura, achados e limitações próprios — eles não são somados aqui. O relatório publicado
+                nesta aba é o da fonte aberta; o consolidado fica em “Geral”.
               </p>
             }
           </nav>
         }
 
+        <div id="knight-view-panel" [attr.role]="hasViews() ? 'tabpanel' : null"
+             [attr.aria-labelledby]="hasViews() ? viewTabId(view()) : null" class="view-panel">
+        @if (viewLoading()) {
+          <div class="panel"><div class="state" role="status"><span class="spinner" aria-hidden="true"></span><p>{{ viewLoadingText() }}</p></div></div>
+        } @else if (viewError()) {
+          <div class="panel state err" role="alert">
+            <b>{{ viewError() }}</b>
+            <span>A avaliação desta aba não foi carregada agora. As demais abas não foram afetadas.</span>
+            <button type="button" class="btn ghost" (click)="retryView()">Tentar novamente</button>
+          </div>
+        } @else {
         @if (assessment(); as a) {
           @if (unfinishedView()) {
             <!-- [AEGIS-KNIGHT-DURABLE-01] Aberta por Id: o registro é mostrado como é. Resultado registrado,
@@ -447,7 +460,11 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
             </div>
           } @else {
           <div class="panel state empty">
-            <b>{{ unfinishedAttempt() ? 'Nenhuma avaliação concluída.' : 'Nenhuma avaliação executada ainda.' }}</b>
+            @if (viewEmptyText(); as ve) {
+              <b>{{ ve }}</b>
+            } @else {
+              <b>{{ unfinishedAttempt() ? 'Nenhuma avaliação concluída.' : 'Nenhuma avaliação executada ainda.' }}</b>
+            }
             <span>
               A avaliação nasce da sincronização de uma fonte conectada. Configure o conector e use
               “Sincronizar agora” em Configurações → Integrações.
@@ -467,6 +484,8 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
           </div>
           }
         }
+        }
+        </div>
       }
 
       <!-- Demonstração sintética: só em builds de DESENVOLVIMENTO, fora da jornada normal. A build de produção não
@@ -535,6 +554,20 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
         margin: 0;
         font-size: 0.82rem;
         color: var(--muted);
+      }
+      .sources-note.err {
+        color: var(--red-text);
+      }
+      /* [AEGIS-KNIGHT-SCOPE-01] Abas da seção (Geral + fontes): mesma aparência sóbria do seletor anterior. */
+      .viewbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--sp-2);
+      }
+      .view-panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--sp-4);
       }
       .sources-hd {
         display: flex;
@@ -761,6 +794,7 @@ export class AegisKnightComponent implements OnInit {
   private readonly identityRisk = inject(IdentityRiskService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly auth = inject(AuthService);
 
   readonly assessment = signal<KnightAssessment | null>(null);
 
@@ -816,33 +850,43 @@ export class AegisKnightComponent implements OnInit {
    */
   readonly latestBySource = signal<KnightSourceLatest[]>([]);
 
-  /** Fonte cuja avaliação está sendo exibida. `null` enquanto a leitura por fonte não chegou. */
-  readonly shownSource = signal<KnightSourceType | null>(null);
+  // ---- [AEGIS-KNIGHT-SCOPE-01] Abas da seção e escopo salvo ---------------------------------------------------------
+  // "Geral" é a primeira aba e mostra o consolidado do escopo salvo do tenant; depois vem uma aba por fonte EM ESCOPO. Cada
+  // troca de aba é uma leitura com número de pedido próprio: uma resposta de uma aba anterior (ou de uma releitura superada)
+  // é descartada, mesmo que chegue depois de a tela já mostrar outra coisa.
 
-  /** Só vale oferecer a troca quando há mais de uma fonte com resultado. */
-  readonly hasMultipleSources = computed(() => this.latestBySource().length > 1);
+  /** A aba aberta. */
+  readonly view = signal<KnightViewKey>('geral');
+  /** A avaliação da aba está sendo lida. */
+  readonly viewLoading = signal(false);
+  /** A leitura da aba falhou (estado próprio, com nova tentativa). */
+  readonly viewError = signal<string | null>(null);
+  private viewSeq = 0;
 
-  // ---- [AEGIS-KNIGHT-CONSOLIDATED-01] Relatório consolidado (fontes elegíveis do catálogo) ----------------------
-  // Reaproveita as MESMAS abas/telas do assessment de fonte única: a leitura ao vivo do servidor já devolve o
-  // contrato KnightAssessment (sintético, id vazio), com `sources` preenchido para a composição. Nada aqui
-  // dispara coleta — é leitura sobre o que já foi sincronizado.
+  /** Escopo salvo do tenant, lido junto com as avaliações por fonte. */
+  readonly scope = signal<KnightAssessmentScope | null>(null);
+  readonly outOfScope = computed(() => outOfScopeSources(this.scope()));
+  readonly scopeSaving = signal(false);
+  readonly scopeError = signal<string | null>(null);
+  private scopeSeq = 0;
+  /** Gate de apresentação; o servidor continua sendo a autoridade (403 para quem não pode). */
+  readonly canEditScope = computed(() => canManageActionPlans(this.auth.activeRole()));
+
+  /** As abas só existem na leitura por fonte — um link para UMA execução (`?run=`) mostra só ela. */
+  readonly hasViews = computed(() => !this.pinnedRun() && this.latestBySource().length > 0);
+
+  /** Abas de fonte: as que já produziram alguma avaliação, menos as fora do escopo. */
+  readonly viewTabs = computed(() => {
+    const out = this.outOfScope();
+    return this.latestBySource().filter((s) => !out.includes(s.source));
+  });
+
+  /** Modo consolidado = aba "Geral" na leitura por fonte. */
+  readonly consolidatedMode = computed(() => this.hasViews() && this.view() === 'geral');
+  readonly consolidatedLoading = computed(() => this.viewLoading() && this.view() === 'geral');
 
   // [AEGIS-KNIGHT-COVERAGE-04] As candidatas vêm do catálogo único de fontes — nunca uma lista fixa de três.
   private static readonly CONSOLIDATED_CANDIDATES: KnightSourceType[] = CONSOLIDATION_CANDIDATES;
-
-  readonly consolidatedMode = signal(false);
-  readonly consolidatedLoading = signal(false);
-  /** Fontes marcadas para compor o relatório — inicializada com todas as que têm avaliação concluída. */
-  readonly consolidatedSelection = signal<KnightSourceType[]>([]);
-  /** A fonte exibida antes de entrar no modo consolidado — para onde "Ver por fonte" volta. */
-  private sourceBeforeConsolidated: KnightSourceType | null = null;
-  /**
-   * [AEGIS-KNIGHT-CONSOLIDATED-02] Identifica o pedido de leitura consolidada EM VOO. Uma mudança de seleção,
-   * uma nova entrada no modo consolidado ou a SAÍDA dele avança este contador — uma resposta cujo número não é
-   * mais o atual pertence a um pedido superado e é descartada, mesmo chegando depois de a tela já mostrar outra
-   * coisa (outra seleção, outra fonte, ou nem estar mais em modo consolidado).
-   */
-  private consolidatedRequestSeq = 0;
 
   /**
    * A publicação só é possível com uma composição ESTÁVEL: nenhuma leitura em voo (a resposta ainda pode trocar
@@ -850,88 +894,226 @@ export class AegisKnightComponent implements OnInit {
    * checkboxes por si só, que pode estar momentaneamente à frente da resposta do servidor.
    */
   readonly consolidatedPublishable = computed(
-    () => !this.consolidatedLoading() && (this.assessment()?.sources ?? []).some((s) => s.included && !!s.sourceRunId),
+    () => !this.consolidatedLoading() && !this.scopeSaving() && (this.assessment()?.sources ?? []).some((s) => s.included && !!s.sourceRunId),
   );
 
   readonly consolidatedCandidates = computed(() => {
     const bySource = new Map(this.latestBySource().map((s) => [s.source, s]));
+    const out = this.outOfScope();
     return AegisKnightComponent.CONSOLIDATED_CANDIDATES.map((source) => {
       const bloco = bySource.get(source);
       return {
         source,
         label: bloco?.label ?? sourceTypeLabel(source),
-        hasAssessment: !!bloco?.assessment,
+        hasAssessment: !!bloco?.assessment && !bloco.assessment.isDemo,
+        inScope: !out.includes(source),
       };
     });
   });
 
+  /** A composição pedida ao servidor: as fontes EM ESCOPO com avaliação concluída (o servidor aplica o escopo de novo). */
+  readonly consolidatedSelection = computed(() =>
+    this.consolidatedCandidates().filter((c) => c.inScope && c.hasAssessment).map((c) => c.source),
+  );
+
   isSourceIncluded(source: KnightSourceType): boolean {
-    return this.consolidatedSelection().includes(source);
+    return !this.outOfScope().includes(source);
   }
 
-  /** Entra no modo consolidado: seleção padrão CLARA (todas as candidatas com avaliação concluída). */
-  showConsolidated(): void {
-    if (this.consolidatedMode()) return;
-    this.discardPublishPreview();
-    this.sourceBeforeConsolidated = this.shownSource();
-    this.consolidatedMode.set(true);
-    this.consolidatedSelection.set(this.consolidatedCandidates().filter((c) => c.hasAssessment).map((c) => c.source));
-    this.selected.set(null);
-    this.loadConsolidated();
+  /** Frase do escopo: salvo (quando e por quem) ou padrão, e o que a escolha faz. */
+  readonly scopeNote = computed(() => {
+    const sc = this.scope();
+    const base = sc?.updatedAt
+      ? `Escopo salvo para este tenant em ${formatDateTime(sc.updatedAt)}${sc.updatedByName ? ` por ${sc.updatedByName}` : ''}.`
+      : 'Escopo padrão: todas as fontes elegíveis.';
+    const out = this.outOfScope().length;
+    return `${base} A nota consolidada aplica a mesma fórmula do KNIGHT sobre os controles das fontes marcadas — não é a média ` +
+      'das notas por fonte. ' +
+      (out > 0 ? `${out === 1 ? 'Uma fonte está fora' : `${out} fontes estão fora`} do escopo: os controles, achados e limitações dela(s) ` +
+        'não entram nos totais; o conector e as avaliações continuam. ' : '') +
+      'A escolha vale ao recarregar, no painel, na prévia e na publicação.' +
+      (this.canEditScope() ? '' : ' Alterar o escopo exige o papel Manager ou TenantAdmin.');
+  });
+
+  readonly viewLoadingText = computed(() =>
+    this.view() === 'geral' ? 'Carregando o consolidado do escopo…' : `Carregando a avaliação de ${sourceTypeLabel(this.view() as KnightSourceType)}…`,
+  );
+
+  /** Estado vazio dito NA aba: fonte sem avaliação concluída, ou "Geral" sem nenhuma fonte do escopo avaliada. */
+  readonly viewEmptyText = computed<string | null>(() => {
+    if (!this.hasViews()) return null;
+    const v = this.view();
+    if (v === 'geral') return 'Nenhuma fonte do escopo tem avaliação concluída para compor o consolidado.';
+    return `${sourceTypeLabel(v)}: ${this.unfinishedAttempt() ? 'nenhuma avaliação concluída.' : 'sem avaliação concluída.'}`;
+  });
+
+  viewTabId(v: KnightViewKey): string {
+    return `knight-view-${v === 'geral' ? 'geral' : sourceSlug(v)}`;
   }
 
-  /** Sai do modo consolidado e volta a mostrar a fonte que estava aberta antes. */
-  exitConsolidated(): void {
-    if (!this.consolidatedMode()) return;
-    // Invalida qualquer leitura consolidada em voo ANTES de trocar de tela: uma resposta atrasada não pode
-    // preencher `assessment` depois que a pessoa já saiu do modo consolidado.
-    this.consolidatedRequestSeq++;
-    this.consolidatedLoading.set(false);
-    this.discardPublishPreview();
-    const alvo = this.sourceBeforeConsolidated ?? this.latestBySource()[0]?.source;
-    if (alvo) this.selectSource(alvo);
-    else this.consolidatedMode.set(false);
-  }
-
-  toggleConsolidatedSource(source: KnightSourceType): void {
-    const atual = this.consolidatedSelection();
-    this.consolidatedSelection.set(
-      atual.includes(source) ? atual.filter((s) => s !== source) : [...atual, source],
-    );
-    this.loadConsolidated();
+  /** Setas, Home e End percorrem as abas da seção (padrão WAI-ARIA de tablist); a aba focada é aberta. */
+  viewKey(ev: KeyboardEvent): void {
+    const order: KnightViewKey[] = ['geral', ...this.viewTabs().map((s) => s.source)];
+    const at = Math.max(0, order.indexOf(this.view()));
+    const next =
+      ev.key === 'ArrowRight' ? order[(at + 1) % order.length]
+        : ev.key === 'ArrowLeft' ? order[(at + order.length - 1) % order.length]
+          : ev.key === 'Home' ? order[0]
+            : ev.key === 'End' ? order[order.length - 1]
+              : null;
+    if (next === null) return;
+    ev.preventDefault();
+    this.selectView(next);
+    const el = typeof document !== 'undefined' ? document.getElementById(this.viewTabId(next)) : null;
+    el?.focus();
   }
 
   /**
-   * [AEGIS-KNIGHT-CONSOLIDATED-02] Lê a composição consolidada da seleção ATUAL. Protegida contra respostas
-   * OBSOLETAS: cada chamada recebe um número de pedido próprio, e só a resposta do pedido mais recente grava em
-   * `assessment` — uma troca de seleção, uma nova entrada no modo consolidado ou a saída dele descarta qualquer
-   * resposta anterior ainda em voo, mesmo que ela chegue depois.
+   * Abre uma aba. "Geral" lê o consolidado do escopo; uma fonte lê a avaliação concluída DELA por Id (nota, cobertura,
+   * achados e limitações). Cada chamada recebe um número de pedido: só a resposta do pedido mais recente grava na tela.
+   * `initial` é a 1ª abertura (aplica os links do endereço); `force` relê a mesma aba (depois de salvar o escopo, ou de um erro).
    */
-  private loadConsolidated(): void {
-    const seq = ++this.consolidatedRequestSeq;
-    // [AEGIS-ASSESSMENT-VISUALS-01] Outra composição: a prévia aberta era da composição anterior.
+  selectView(v: KnightViewKey, opts: { initial?: boolean; force?: boolean } = {}): void {
+    const { initial = false, force = false } = opts;
+    if (!initial && !force && v === this.view() && !this.viewError() && (this.viewLoading() || this.assessment())) return;
+    const seq = ++this.viewSeq;
+    // O resultado exibido vai mudar: a prévia aberta (e qualquer resposta dela em voo) deixa de valer.
     this.discardPublishPreview();
-    this.consolidatedLoading.set(true);
+    this.view.set(v);
+    this.viewError.set(null);
     this.error.set(null);
     this.publishedId.set(null);
     this.publishNotice.set(null);
-    this.knight.getConsolidated(this.consolidatedSelection()).subscribe({
+    if (!initial) {
+      this.selected.set(null);
+      this.pinned.set({ kind: 'livre' });
+      this.findingNotice.set(null);
+      this.syncViewParam(v);
+    }
+    if (v === 'geral') {
+      this.loadGeral(seq, initial);
+      return;
+    }
+    const bloco = this.latestBySource().find((s) => s.source === v);
+    this.unfinishedAttempt.set(bloco?.unfinishedAttempt ?? null);
+    if (!bloco?.assessment) {
+      this.viewLoading.set(false);
+      this.showView(null, initial);
+      return;
+    }
+    this.assessment.set(null);
+    this.viewLoading.set(true);
+    this.knight.getById(bloco.assessment.id).subscribe({
       next: (a) => {
-        if (seq !== this.consolidatedRequestSeq) return; // pedido superado — outra seleção/saída já aconteceu
-        this.consolidatedLoading.set(false);
-        this.assessment.set(a);
-        this.unfinishedAttempt.set(null);
-        this.selected.set(null);
-        // [AEGIS-KNIGHT-COVERAGE-04] A composição não tem execução própria, mas cada achado tem a da SUA fonte: o
-        // resumo de afetados é o das execuções incluídas e as ações são as da fonte do achado — as mesmas da visão
-        // por fonte, sem duplicata.
-        this.loadSummary(a);
-        this.reloadPlans();
+        if (seq !== this.viewSeq) return; // aba superada — outra troca já aconteceu
+        this.viewLoading.set(false);
+        this.showView(a, initial);
       },
       error: (e: Error) => {
-        if (seq !== this.consolidatedRequestSeq) return;
-        this.consolidatedLoading.set(false);
-        this.error.set(e.message);
+        if (seq !== this.viewSeq) return;
+        this.viewLoading.set(false);
+        this.viewError.set(`${sourceTypeLabel(v)}: ${e.message}`);
+      },
+    });
+  }
+
+  /** Uma execução foi fixada por outra via (nova execução, consulta): a leitura de aba em voo não grava mais na tela. */
+  private cancelView(): void {
+    this.viewSeq++;
+    this.viewLoading.set(false);
+    this.viewError.set(null);
+  }
+
+  /** Relê a aba aberta depois de uma falha — decisão de quem está na tela. */
+  retryView(): void {
+    this.selectView(this.view(), { force: true });
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CONSOLIDATED-02] Lê a composição consolidada do escopo ATUAL. Protegida contra respostas OBSOLETAS pelo
+   * número de pedido da aba: uma troca de aba, de escopo ou uma releitura descarta qualquer resposta anterior ainda em voo.
+   */
+  private loadGeral(seq: number, initial: boolean): void {
+    // [AEGIS-ASSESSMENT-VISUALS-01] Outra composição: a prévia aberta era da composição anterior.
+    this.discardPublishPreview();
+    this.unfinishedAttempt.set(null);
+    const selection = this.consolidatedSelection();
+    if (selection.length === 0) {
+      this.viewLoading.set(false);
+      this.showView(null, initial);
+      return;
+    }
+    this.assessment.set(null);
+    this.viewLoading.set(true);
+    this.knight.getConsolidated(selection).subscribe({
+      next: (a) => {
+        if (seq !== this.viewSeq) return; // pedido superado — outra aba, outro escopo ou outra releitura
+        this.viewLoading.set(false);
+        this.showView(a, initial);
+      },
+      error: (e: Error) => {
+        if (seq !== this.viewSeq) return;
+        this.viewLoading.set(false);
+        this.viewError.set(`Geral: ${e.message}`);
+      },
+    });
+  }
+
+  /** Mostra o resultado da aba: resumo de afetados e ações relidos para ELE; na 1ª abertura, os links do endereço. */
+  private showView(a: KnightAssessment | null, initial: boolean): void {
+    this.assessment.set(a);
+    // [AEGIS-KNIGHT-COVERAGE-04] A composição não tem execução própria, mas cada achado tem a da SUA fonte: o resumo de
+    // afetados é o das execuções incluídas e as ações são as da fonte do achado — as mesmas da visão por fonte.
+    this.loadSummary(a);
+    if (initial) {
+      this.applyDeepLink(a);
+      this.applyFilterLink();
+    }
+    // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
+    this.reloadPlans();
+    if (initial) this.reloadPinnedPlan();
+  }
+
+  /** A aba vive no endereço (`?fonte=`), para recarregar, voltar ou compartilhar a mesma aba. */
+  private syncViewParam(v: KnightViewKey): void {
+    void this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { fonte: v === 'geral' ? null : sourceSlug(v), modo: null, finding: null, plan: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
+  }
+
+  /**
+   * [AEGIS-KNIGHT-SCOPE-01] Marca/desmarca uma fonte em "Compor com" e SALVA o escopo do tenant. Enquanto a gravação corre, o
+   * seletor fica bloqueado; o checkbox só muda quando o servidor confirma (uma recusa deixa o escopo salvo como estava).
+   */
+  toggleConsolidatedSource(source: KnightSourceType, ev?: Event): void {
+    const out = this.outOfScope();
+    // O checkbox reflete o escopo SALVO: volta ao estado atual até o servidor confirmar a mudança.
+    const box = ev?.target as HTMLInputElement | undefined;
+    if (box) box.checked = !out.includes(source);
+    if (this.scopeSaving() || !this.canEditScope()) return;
+    const nextOut = out.includes(source) ? out.filter((s) => s !== source) : [...out, source];
+    const inScope = AegisKnightComponent.CONSOLIDATED_CANDIDATES.filter((s) => !nextOut.includes(s));
+    this.discardPublishPreview();
+    this.scopeSaving.set(true);
+    this.scopeError.set(null);
+    const seq = ++this.scopeSeq;
+    this.knight.saveScope(inScope).subscribe({
+      next: (saved) => {
+        if (seq !== this.scopeSeq) return;
+        this.scopeSaving.set(false);
+        this.scope.set(saved);
+        const v = this.view();
+        // A composição mudou: "Geral" é relido; uma aba de fonte que saiu do escopo deixa de existir.
+        if (v === 'geral') this.selectView('geral', { force: true });
+        else if (this.outOfScope().includes(v)) this.selectView('geral');
+      },
+      error: (e: Error) => {
+        if (seq !== this.scopeSeq) return;
+        this.scopeSaving.set(false);
+        this.scopeError.set(e.message);
       },
     });
   }
@@ -1124,6 +1306,7 @@ export class AegisKnightComponent implements OnInit {
   // Central de Prioridades usa, de modo que os dois lugares não podem discordar sobre "existe ação ativa?".
 
   readonly activePlans = signal<ActionPlan[]>([]);
+  private plansSeq = 0;
   readonly publishing = signal(false);
   readonly publishNotice = signal<string | null>(null);
   /** A fotografia recém-publicada DESTA avaliação — os downloads saem dela, por Id (nunca "a mais recente"). */
@@ -1206,8 +1389,12 @@ export class AegisKnightComponent implements OnInit {
     if ((!fonte && !consolidado) || !modo) return;
     // No consolidado, as ações de TODAS as fontes reais desta procedência (coleta real × demonstração); cada achado
     // escolhe a da própria fonte em `activePlan`.
+    // [AEGIS-KNIGHT-SCOPE-01] Troca rápida de aba: só a resposta da leitura mais recente grava a fila.
+    const seq = ++this.plansSeq;
     this.remediation.list(consolidado ? { activeOnly: true, mode: modo } : { activeOnly: true, sourceType: fonte!, mode: modo }).subscribe({
-      next: (plans) => this.activePlans.set(plans),
+      next: (plans) => {
+        if (seq === this.plansSeq) this.activePlans.set(plans);
+      },
       error: () => {
         /* seção secundária: preserva a lista anterior em vez de fingir que não há ação alguma */
       },
@@ -1613,34 +1800,13 @@ export class AegisKnightComponent implements OnInit {
     // à parte, a tentativa que não concluiu depois dele. Abrir por Id continua alcançando qualquer execução
     // — inclusive uma não concluída, que é mostrada com o estado real, sem virar "resultado".
     this.consultNotice.set(null);
-    //
-    // [AEGIS-KNIGHT-COVERAGE-02] Sem um Id pedido, a leitura é POR FONTE: cada fonte tem a própria avaliação,
-    // e a tela exibe uma delas de cada vez, dizendo qual. A leitura antiga (`latest-state`) fica como recuo se
-    // o servidor for anterior a este pacote — nunca como o caminho normal, porque ela responde "a mais recente
-    // de qualquer fonte", que é justamente a pergunta errada aqui.
-    const wanted$ = requested
-      ? this.knight.getById(requested).pipe(
-          map((a) => ({ assessment: a, unfinishedAttempt: null }) as KnightLatest),
-        )
-      : this.knight.getLatestBySource().pipe(
-          map(({ sources }) => {
-            this.latestBySource.set(sources);
-            const escolhida = this.pickSource(sources);
-            this.shownSource.set(escolhida?.source ?? null);
-            return {
-              assessment: escolhida?.assessment ?? null,
-              unfinishedAttempt: escolhida?.unfinishedAttempt ?? null,
-            } as KnightLatest;
-          }),
-          catchError(() => {
-            this.latestBySource.set([]);
-            this.shownSource.set(null);
-            return this.knight.getLatestState();
-          }),
-        );
+    this.discardPublishPreview();
+    this.viewSeq++; // uma aba ainda em voo pertence à leitura anterior
+    this.viewLoading.set(false);
+    this.viewError.set(null);
 
-    wanted$.subscribe({
-      next: ({ assessment: a, unfinishedAttempt }) => {
+    const show = {
+      next: ({ assessment: a, unfinishedAttempt }: KnightLatest) => {
         this.discardPublishPreview();
         this.assessment.set(a);
         this.unfinishedAttempt.set(unfinishedAttempt);
@@ -1648,7 +1814,7 @@ export class AegisKnightComponent implements OnInit {
         this.publishedId.set(null);
         this.loadSummary(a);
         this.applyDeepLink(a);
-        this.applyFilterLink(!requested);
+        this.applyFilterLink();
         // Só agora a PROCEDÊNCIA é conhecida — ler a fila antes traria ações de outra fonte/modo.
         this.reloadPlans();
         this.reloadPinnedPlan();
@@ -1666,7 +1832,28 @@ export class AegisKnightComponent implements OnInit {
         }
         this.error.set(e.message);
       },
-    });
+    };
+
+    if (requested) {
+      this.knight.getById(requested).pipe(map((a) => ({ assessment: a, unfinishedAttempt: null }) as KnightLatest)).subscribe(show);
+    } else {
+      // [AEGIS-KNIGHT-SCOPE-01] Sem um Id pedido, a leitura é POR FONTE (com o escopo salvo) e a tela abre numa aba: "Geral" por
+      // padrão, a do endereço (`?fonte=`) quando pedida. A leitura antiga (`latest-state`) fica como recuo se o servidor for
+      // anterior à leitura por fonte — nunca como o caminho normal, porque ela responde "a mais recente de qualquer fonte".
+      this.knight.getLatestBySource().subscribe({
+        next: ({ sources, scope }) => {
+          this.latestBySource.set(sources);
+          this.scope.set(scope ?? null);
+          this.loading.set(false);
+          this.selectView(this.initialView(), { initial: true });
+        },
+        error: () => {
+          this.latestBySource.set([]);
+          this.scope.set(null);
+          this.knight.getLatestState().subscribe(show);
+        },
+      });
+    }
     this.reloadRisk();
   }
 
@@ -1706,12 +1893,11 @@ export class AegisKnightComponent implements OnInit {
   }
 
   /**
-   * [AEGIS-ASSESSMENT-VISUALS-01] Um gráfico dos Dashboards aponta para um RECORTE dos controles (?status=Exposed&service=…) e,
-   * no consolidado, para o modo consolidado (?modo=consolidado). Valores desconhecidos são ignorados — nunca viram outro filtro.
+   * [AEGIS-ASSESSMENT-VISUALS-01] Um gráfico dos Dashboards aponta para um RECORTE dos controles (?status=Exposed&service=…).
+   * O antigo `?modo=consolidado` cai na aba "Geral", que já é a primeira. Valores desconhecidos são ignorados — nunca viram outro filtro.
    */
-  private applyFilterLink(latestView: boolean): void {
+  private applyFilterLink(): void {
     const q = this.route.snapshot.queryParamMap;
-    if (latestView && q.get('modo') === 'consolidado' && this.consolidatedCandidates().some((c) => c.hasAssessment)) this.showConsolidated();
     const statuses = ['findings', 'Passed', 'Exposed', 'Mitigated', 'NotEvaluated', 'Error', 'NotApplicable'];
     const severities = ['Critical', 'High', 'Medium', 'Low', 'Informational'];
     const status = q.get('status');
@@ -1745,28 +1931,18 @@ export class AegisKnightComponent implements OnInit {
   }
 
   /**
-   * Troca a avaliação exibida para a de outra fonte. É uma troca de LEITURA: nada é coletado, e a avaliação
-   * da fonte anterior continua existindo — some da tela, não do produto.
+   * [AEGIS-KNIGHT-SCOPE-01] A aba em que a seção abre: a do endereço (`?fonte=`) quando existe; senão "Geral", desde que alguma
+   * fonte do escopo tenha avaliação concluída; sem isso, a fonte com o resultado mais recente — para que a pendência apareça
+   * em vez de um consolidado vazio.
    */
-  selectSource(source: KnightSourceType): void {
-    const bloco = this.latestBySource().find((s) => s.source === source);
-    if (!bloco || (this.shownSource() === source && !this.consolidatedMode())) return;
-
-    // Saindo do modo consolidado (ou nem estando nele): invalida qualquer leitura consolidada ainda em voo,
-    // para que uma resposta atrasada não sobrescreva a fonte escolhida agora.
-    this.consolidatedRequestSeq++;
-    this.consolidatedLoading.set(false);
-    this.consolidatedMode.set(false);
-    this.discardPublishPreview();
-    this.shownSource.set(source);
-    this.assessment.set(bloco.assessment);
-    this.unfinishedAttempt.set(bloco.unfinishedAttempt);
-    this.publishedId.set(null);
-    this.publishNotice.set(null);
-    this.selected.set(null);
-    this.loadSummary(bloco.assessment);
-    this.reloadPlans();
-    this.reloadPinnedPlan();
+  private initialView(): KnightViewKey {
+    const fonte = this.route.snapshot.queryParamMap.get('fonte');
+    const tabs = this.viewTabs();
+    if (fonte === 'geral') return 'geral';
+    const pedida = fonte ? tabs.find((s) => s.slug === fonte || sourceSlug(s.source) === fonte) : undefined;
+    if (pedida) return pedida.source;
+    if (this.consolidatedSelection().length > 0) return 'geral';
+    return this.pickSource(tabs)?.source ?? 'geral';
   }
 
   /** Executa o assessment de demonstração (ferramenta de desenvolvimento; fora da jornada normal). */
@@ -1791,6 +1967,7 @@ export class AegisKnightComponent implements OnInit {
     this.shownBeforeAttempt = this.assessment()?.id ?? null;
     run().subscribe({
       next: (a) => {
+        this.cancelView();
         this.discardPublishPreview();
         this.assessment.set(a);
         this.publishedId.set(null);
@@ -1870,6 +2047,7 @@ export class AegisKnightComponent implements OnInit {
 
         // OUTRA avaliação ocupa a posição de última. Ela passa a ser a exibida — com procedência, data e
         // endereço próprios — mas NÃO é apresentada como a tentativa: outra execução pode tê-la produzido.
+        this.cancelView();
         this.discardPublishPreview();
         this.assessment.set(a);
         this.publishedId.set(null);

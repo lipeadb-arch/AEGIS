@@ -107,7 +107,7 @@ export function consolidableAssessed(sources: readonly KnightSourceLatest[]): Kn
 export function defaultKnightView(sources: readonly KnightSourceLatest[]): { view: KnightView; reason: string } | null {
   const elig = consolidableAssessed(sources);
   if (elig.length > 0)
-    return { view: { kind: 'consolidated', sources: elig }, reason: `Consolidado das ${elig.length} fonte(s) elegíveis com avaliação concluída.` };
+    return { view: { kind: 'consolidated', sources: elig }, reason: `Consolidado das ${elig.length} fonte(s) do escopo da avaliação com avaliação concluída.` };
   const done = sources
     .filter((s) => !!s.assessment)
     .sort((x, y) => Date.parse(y.assessment!.completedAt ?? y.assessment!.startedAt) - Date.parse(x.assessment!.completedAt ?? x.assessment!.startedAt));
