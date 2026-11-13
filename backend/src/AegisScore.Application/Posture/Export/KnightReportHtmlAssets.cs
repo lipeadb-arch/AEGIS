@@ -85,6 +85,14 @@ table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::befo
 @media (max-width:600px){.pdl{grid-template-columns:minmax(0,1fr)}.pdl dd{margin-bottom:4px}}
 @media (prefers-color-scheme:dark){.chart .in-ok,.chart .in-bad{fill:#0d1422}}
 .tabs[hidden]{display:none}.srcnav{margin-top:10px;border-bottom:2px solid var(--line)}.srcnav button{font-size:15px}.src-meta{margin:0 0 10px}
+.s-Compliant{color:var(--ok);background:var(--ok-bg)}.s-NonCompliant{color:var(--fail);background:var(--fail-bg)}.s-OutOfScope{color:var(--ne);background:var(--panel);border:1px dashed var(--ne)}
+.cisbar{display:flex;height:16px;border-radius:4px;overflow:hidden;background:var(--ne-bg);margin:10px 0 6px}.cisbar span{height:100%}
+.c-Compliant{background:var(--ok)}.c-NonCompliant{background:var(--fail)}.c-NotEvaluated{background:var(--ne)}.c-NotApplicable{background:var(--na)}
+.c-OutOfScope{background:repeating-linear-gradient(45deg,var(--na),var(--na) 3px,var(--panel) 3px,var(--panel) 6px)}
+.cis-legend{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px}.cis-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.bm h3{margin-top:0}.bm .kv{margin-top:8px;grid-template-columns:150px minmax(0,1fr)}.cisf{grid-template-columns:2fr repeat(4,minmax(0,1fr)) auto}
+.cis-sec{font-family:Consolas,Menlo,monospace;font-weight:700;margin-right:6px}.cis-rules td{font-size:12px}.lgrp li{margin-bottom:4px}
+@media (max-width:980px){.cisf{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:700px){.bm .kv{grid-template-columns:minmax(0,1fr)}}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
 
@@ -106,7 +114,7 @@ function pill(cls,text){return el('span',{cls:'pill '+cls,text:text});}
 function pct(v){return v===null||v===undefined?'—':(Math.round(v*10)/10).toString().replace('.',',')+'%';}
 var main=document.getElementById('app');
 function setTab(t){ST.tab=t;var b=document.querySelectorAll('.tabs button[data-tab]');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-tab')===t;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
-['overview','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=t!==x;});}
+['overview','cis','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=t!==x;});}
 // [AEGIS-KNIGHT-PRESENTATION-01] Controle citado fora do detalhe: título CONGELADO na fotografia como informação principal,
 // código como secundária; clique, Enter ou Espaço abrem o detalhe. Sem título na fotografia, o código fica e isso é dito.
 var CT={};D.controls.forEach(function(c){CT[c.id]=c;});
@@ -130,7 +138,9 @@ function help(t,body){return el('details',null,[el('summary',{text:t}),el('span'
 // sem JavaScript — aqui só são movidos), resultados e composição e, por fim, limitações detalhadas e interpretação (também do servidor). Detalhes técnicos e metodologia ficam nas outras abas.
 function overview(){var k=D.kpis,box=el('div',{id:'tab-overview',role:'tabpanel','aria-labelledby':'t-overview'});
 ['aegis-summary','aegis-risks'].forEach(function(id){var s=document.getElementById(id);if(s)box.appendChild(s);});
-var res=el('section',{cls:'grp','aria-labelledby':'res-h'},[el('h2',{id:'res-h',cls:'grp-h',text:'Resultados e composição'})]);
+// [AEGIS-KNIGHT-CIS-01] Ordem da leitura: resumo da avaliação, prioridades, resultados por fonte e, por fim, limitações.
+if(D.composition&&D.composition.length)box.appendChild(el('section',{cls:'grp','aria-labelledby':'bysrc-h'},[el('h2',{id:'bysrc-h',cls:'grp-h',text:'Resultados por fonte'}),composition()]));
+var res=el('section',{cls:'grp','aria-labelledby':'res-h'},[el('h2',{id:'res-h',cls:'grp-h',text:'Distribuição dos resultados'})]);
 // [AEGIS-ASSESSMENT-VISUALS-01] Painel visual congelado (desenhado no servidor): substitui as barras de severidade, domínio e serviço —
 // a mesma distribuição não aparece duas vezes.
 var VIS=document.getElementById('aegis-visuals');if(VIS)res.appendChild(VIS);
@@ -141,7 +151,6 @@ k.findingsBySeverity.forEach(function(x){var tr=el('span',{cls:'track'}),s=el('s
 sb.appendChild(el('button',{cls:'bar',type:'button','aria-label':x.label+': '+x.count+' controle(s) com achado',onclick:function(){go({status:'findings',severity:x.key});}},[el('span',{cls:'lbl'},[pill('v-'+x.key,x.label)]),tr,el('span',{cls:'num',text:String(x.count)})]));});
 sp.appendChild(sb);two.appendChild(sp);two.appendChild(dist('Resultado por serviço',D.byService,'service'));res.appendChild(two);}
 if(D.byPlatform&&D.byPlatform.length>1)res.appendChild(dist('Resultado por plataforma',D.byPlatform,'platform'));
-if(D.composition&&D.composition.length)res.appendChild(composition());
 var to=el('div',{cls:'panel'},[el('h2',{text:'Contas, aplicativos e demais itens mais recorrentes'}),el('p',{cls:'sub',text:'Itens afetados (contas, aplicativos, grupos, papéis, políticas…) que aparecem em mais controles reprovados ou mitigados.'})]);
 if(D.topObjects.length===0)to.appendChild(el('p',{cls:'empty',text:D.kpis.uniqueAffected===null?'Esta fotografia não congelou os itens afetados.':'Nenhum item afetado preservado.'}));
 else{var tb=el('tbody'),H=['Conta ou recurso afetado','Tipo','Quantidade de controles','Controles relacionados'];D.topObjects.forEach(function(o){tb.appendChild(el('tr',null,[el('td',{'data-l':H[0]},[el('div',{text:o.label}),el('div',{cls:'mono',text:o.externalId})]),el('td',{'data-l':H[1],text:o.kindLabel}),el('td',{'data-l':H[2],text:String(o.controlCount)}),
@@ -165,18 +174,26 @@ var f={};f[key]=r.key;var desc=r.label+': '+r.failed+' reprovado(s), '+r.passed+
 b.appendChild(el('button',{cls:'bar',type:'button','aria-label':desc,title:desc,onclick:function(){go(f);}},[el('span',{cls:'lbl',text:r.label}),tr,el('span',{cls:'num',text:String(tot)})]));});
 p.appendChild(b);var lg=el('div',{cls:'legend'});STATUS.forEach(function(s){var i=el('i',{cls:'seg '+s[0]});lg.appendChild(el('span',null,[i,s[1]]));});p.appendChild(lg);return p;}
 var SST={Completed:'Coleta concluída',PartialCollection:'Coleta parcial',InsufficientPermission:'Permissão insuficiente',AuthenticationFailure:'Falha de autenticação',Throttled:'Limite de requisições',Unavailable:'Indisponível',Error:'Erro'};
-function composition(){var p=el('div',{cls:'panel'},[el('h2',{text:'Composição do relatório consolidado'}),
+function composition(){var p=el('div',{cls:'panel'},[el('h3',{text:'Composição do relatório consolidado'}),
 el('p',{cls:'sub',text:'Cada fonte tem a própria nota, cobertura e data — não são somadas. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece aqui sem virar aprovação. Uma fonte fora do escopo do tenant não entra em nenhum total deste relatório.'})]);
-var tb=el('tbody');D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:s.availabilityState==='OutOfScope'?['s-NotApplicable','Fora do escopo']:['s-Mitigated','Disponível, não incluída']);
-tb.appendChild(el('tr',null,[el('td',{text:s.label}),el('td',null,[pill(sit[0],sit[1])]),
-el('td',{text:s.score===null||s.score===undefined?'—':String(Math.round(s.score))}),
-el('td',{text:s.coverage===null||s.coverage===undefined?'—':pct(s.coverage)}),
-el('td',{text:s.catalogVersion||'—'}),el('td',{text:dt(s.capturedAt)}),
-el('td',{text:s.sourceState?(SST[s.sourceState]||s.sourceState):'—'}),
-el('td',null,(s.collectionLimitations&&s.collectionLimitations.length)?[el('ul',null,s.collectionLimitations.map(function(x){return el('li',{text:x});}))]:[el('span',{text:'—'})])]));});
+var tb=el('tbody'),H=['Fonte','Situação','Nota','Avaliados','Aprovados','Achados','Sem avaliação','Catálogo','Coleta','Limitações da fonte'];
+D.composition.forEach(function(s){var sit=s.included?['s-Passed','Incluída']:(s.availabilityState==='NotAssessed'?['s-NotEvaluated','Sem avaliação concluída']:s.availabilityState==='OutOfScope'?['s-NotApplicable','Fora do escopo']:['s-Mitigated','Disponível, não incluída']);
+var has=s.passedCount!==null&&s.passedCount!==undefined,ev=has?s.passedCount+s.exposedCount+s.mitigatedCount:0,ap=has?ev+s.notEvaluatedCount+s.errorCount:0;
+tb.appendChild(el('tr',null,[el('td',{'data-l':H[0],text:s.label}),el('td',{'data-l':H[1]},[pill(sit[0],sit[1])]),
+el('td',{'data-l':H[2],text:s.score===null||s.score===undefined?'—':String(Math.round(s.score))}),
+el('td',{'data-l':H[3],text:has?ev+' de '+ap+' ('+pct(s.coverage)+')':'—'}),el('td',{'data-l':H[4],text:has?String(s.passedCount):'—'}),
+el('td',{'data-l':H[5],text:has?String(s.exposedCount+s.mitigatedCount):'—'}),el('td',{'data-l':H[6],text:has?String(s.notEvaluatedCount+s.errorCount):'—'}),
+el('td',{'data-l':H[7],text:s.catalogVersion||'—'}),el('td',{'data-l':H[8],text:has?dt(s.capturedAt)+(s.sourceState?' · '+(SST[s.sourceState]||s.sourceState):''):'—'}),
+el('td',{'data-l':H[9]},[limGroups(s.collectionLimitations||[])])]));});
 if(D.header.collectionSummary)p.appendChild(el('p',{cls:'sub',text:D.header.collectionSummary}));
-p.appendChild(el('div',{cls:'tw'},[el('table',null,[el('thead',null,[el('tr',null,['Fonte','Situação','Nota','Cobertura','Catálogo','Coleta','Estado da coleta','Limitações da fonte'].map(function(x){return el('th',{text:x});}))]),tb])]));
+p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[el('thead',null,[el('tr',null,H.map(function(x){return el('th',{text:x});}))]),tb])]));
+p.appendChild(el('p',{cls:'sub',text:'Avaliados = aprovados + achados (reprovados e mitigados) sobre os controles aplicáveis da fonte; os não aplicáveis ficam fora da base.'}));
 return p;}
+// Causas repetidas agrupadas (ex.: "Autorização recusada · 5 leituras"); a frase de cada leitura fica recolhida.
+function limGroups(list){if(!list.length)return el('span',{text:'—'});var g={},order=[];list.forEach(function(x){var i=x.indexOf(': '),cap=i>0?x.slice(0,i):x,rest=i>0?x.slice(i+2):'',j=rest.indexOf(' — '),cause=j>=0?rest.slice(0,j):(rest||'Limitação registrada');
+if(!g[cause]){g[cause]=[];order.push(cause);}g[cause].push({cap:cap,detail:j>=0?rest.slice(j+3):''});});
+var ul=el('ul',{cls:'lgrp'});order.forEach(function(c){var it=g[c];ul.appendChild(el('li',null,[el('strong',{text:c}),' · '+(it.length===1?'1 leitura':it.length+' leituras'),
+el('details',{cls:'tech'},[el('summary',{text:'Ver leituras e detalhes'}),el('ul',null,it.map(function(x){return el('li',null,[el('span',{text:x.cap}),x.detail?el('div',{cls:'mono',text:x.detail}):null]);}))])]));});return ul;}
 function sources(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Fontes, datas e limitações de coleta'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fonte'}),el('span',{text:h.sourceLabel+' · provedor '+h.provider+(h.isDemo?' (demonstração sintética)':'')}),
 el('span',{cls:'k',text:'Coleta mais recente'}),el('span',{text:dt(h.dataRecency)}),
@@ -193,7 +210,7 @@ return p;}
 function integrity(){var h=D.header,p=el('div',{cls:'panel'},[el('h2',{text:'Integridade, versões e reconciliação'})]);
 p.appendChild(el('div',{cls:'kv'},[el('span',{cls:'k',text:'Fotografia'}),el('span',{cls:'mono',text:h.snapshotId}),el('span',{cls:'k',text:'Avaliação de origem'}),el('span',{cls:'mono',text:h.runId||'não registrada nesta fotografia'}),
 el('span',{cls:'k',text:'Hash do conteúdo (SHA-256)'}),el('span',{cls:'mono',text:h.contentHash+(h.integrityVerified?' · verificado na exportação':'')}),
-el('span',{cls:'k',text:'Versões'}),el('span',{cls:'mono',text:'schema '+h.schemaVersion+' · catálogo '+h.catalogVersion+' · fórmula '+h.formulaVersion+(h.profileCatalogVersion?' · perfis '+h.profileCatalogVersion:'')})]));
+el('span',{cls:'k',text:'Versões'}),el('span',{cls:'mono',text:'schema '+h.schemaVersion+' · '+(h.sourceType==='Consolidated'&&D.composition?'catálogo por fonte: '+(D.composition.filter(function(s){return s.included;}).map(function(s){return s.label+' '+(s.catalogVersion||'não registrado');}).join(', ')||'nenhuma fonte incluída'):'catálogo '+h.catalogVersion)+' · fórmula '+h.formulaVersion+(h.profileCatalogVersion?' · textos '+h.profileCatalogVersion:'')})]));
 p.appendChild(el('p',{cls:'sub',text:'Este arquivo contém a avaliação completa (todos os controles e itens congelados), não um recorte: os filtros da aba de controles afetam só a visualização. O CSV da mesma fotografia tem uma linha por item de cada controle (ou uma linha para o controle sem itens): nas linhas da avaliação automatizada (Origin "Automatizado"), controles = valores distintos de IndicatorId; ocorrências = linhas com ObjectRelation "Afetado" em controles reprovados ou mitigados; itens únicos = pares distintos (ObjectType, ObjectExternalId) dessas linhas. Linhas de verificação manual, do painel e do histórico têm Origin próprio.'}));
 D.notes.forEach(function(n){p.appendChild(el('p',{cls:'note',text:n}));});return p;}
 function coverage(){var c=D.referenceCoverage,p=el('div',{cls:'panel'},[el('h2',{text:'Cobertura do catálogo de referência'}),
@@ -212,6 +229,95 @@ el('td',{text:[r.evidenceReference,r.evidenceDocumentTitle?('Documento: '+r.evid
 el('td',{text:(r.recordedByName||'—')+' em '+r.recordedAt.slice(0,10)+(r.validUntil?' · válido até '+r.validUntil:'')})]));});
 p.appendChild(el('div',{cls:'tw'},[el('table',{cls:'cov'},[el('thead',null,[el('tr',null,['Controle de referência','Resultado','Justificativa','Responsável','Evidência','Registro'].map(function(x){return el('th',{text:x});}))]),mb])]));
 return p;}
+// ---------- [AEGIS-KNIGHT-CIS-01] CIS Benchmarks ----------
+// Tudo vem da visão CONGELADA na publicação (D.cis): resultado por recomendação, regras e recursos que o sustentam e o mapeamento.
+var CS=[['NonCompliant','Não conforme'],['NotEvaluated','Não avaliado'],['Compliant','Conforme'],['NotApplicable','Não aplicável'],['OutOfScope','Fora do escopo']];
+var CF={q:'',bench:'',service:'',status:'',profile:''},cisBox=null,cisRec=null,cisIn={},RULE={};
+function cnt(c,k){return k==='Compliant'?c.compliant:k==='NonCompliant'?c.nonCompliant:k==='NotEvaluated'?c.notEvaluated:k==='NotApplicable'?c.notApplicable:c.outOfScope;}
+function thead(h){return el('thead',null,[el('tr',null,h.map(function(x){return el('th',{text:x});}))]);}
+function kvl(rows){var d=el('div',{cls:'kv'});rows.forEach(function(r){if(r[1]===null||r[1]===undefined||r[1]==='')return;d.appendChild(el('span',{cls:'k',text:r[0]}));d.appendChild(typeof r[1]==='string'?el('span',{text:r[1]}):r[1]);});return d;}
+function segBar(c,label){var tot=c.compliant+c.nonCompliant+c.notEvaluated+c.notApplicable+c.outOfScope,b=el('div',{cls:'cisbar',role:'img','aria-label':label+': '+CS.map(function(s){return s[1]+' '+cnt(c,s[0]);}).join(', ')});
+CS.forEach(function(s){var n=cnt(c,s[0]);if(!n||!tot)return;var x=el('span',{cls:'c-'+s[0],title:s[1]+': '+n});x.style.width=(100*n/tot)+'%';b.appendChild(x);});return b;}
+function bmCard(b){var c=b.counts,cons=c.compliant+c.nonCompliant+c.notEvaluated+c.notApplicable,ev=c.compliant+c.nonCompliant,m=b.manualCounts,man=m.compliant+m.nonCompliant+m.notApplicable;
+var p=el('div',{cls:'panel bm'},[el('h3',{text:b.label}),el('p',{cls:'sub',text:b.recommendations+' recomendações · '+b.catalogEntries+' entradas do catálogo (variantes contam na recomendação) · '+cons+' consideradas'+(c.outOfScope?' · '+c.outOfScope+' fora do escopo':'')})]);
+p.appendChild(segBar(c,b.label));var ul=el('ul',{cls:'cis-legend'});
+CS.forEach(function(s){var n=cnt(c,s[0]);ul.appendChild(el('li',null,[el('i',{cls:'c-'+s[0]}),el('button',{type:'button',cls:'linkbtn','aria-label':b.label+': '+s[1]+', '+n+' — ver a lista',onclick:function(){cisGo({bench:b.key,status:s[0]});},text:s[1]+': '+n})]));});p.appendChild(ul);
+p.appendChild(kvl([['Conformes',ev?c.compliant+' de '+ev+' com veredito ('+pct(100*c.compliant/ev)+')':'nenhuma recomendação com veredito'],['Com veredito',cons?ev+' de '+cons+' consideradas ('+pct(100*ev/cons)+')':'nenhuma considerada'],
+['Verificação manual',man?man+' (conforme '+m.compliant+' · não conforme '+m.nonCompliant+' · não aplicável '+m.notApplicable+')':'nenhuma registrada'],['Não conformes mitigadas',b.mitigated?String(b.mitigated)+' (mitigação não é conformidade)':null],
+['Perfil (rastreio)',b.profileNotRecorded+b.profileDivergent?(b.profileNotRecorded?b.profileNotRecorded+' sem perfil registrado':'')+(b.profileDivergent?(b.profileNotRecorded?' · ':'')+b.profileDivergent+' divergente(s)':'')+' na fonte de rastreio':'registrado em todas']]));
+p.appendChild(el('p',{cls:'sub'},[link(b.url,'Página do benchmark no CIS'),' · edição '+b.version]));return p;}
+function benchLabel(k){var b=(D.cis.benchmarks||[]).filter(function(x){return x.key===k;})[0];return b?b.label:k;}
+function cisTab(){var box=el('div',{id:'tab-cis',role:'tabpanel','aria-labelledby':'t-cis'});box.hidden=true;var C=D.cis;
+box.appendChild(el('h2',{cls:'grp-h',text:'CIS Benchmarks'}));
+if(!C){box.appendChild(el('div',{cls:'panel'},[el('p',{text:D.cisState==='SingleSource'?'A visão CIS Benchmarks é publicada no relatório consolidado, que compõe as fontes do escopo. Este relatório é de uma fonte só.':D.cisState==='Frozen'?'A visão CIS registrada nesta fotografia não pôde ser lida.':'Esta publicação é anterior à visão CIS Benchmarks e não registrou resultados por recomendação. Os resultados do KNIGHT continuam valendo nas demais abas; uma nova publicação congela a visão CIS.'})]));return box;}
+C.rules.forEach(function(r){RULE[r.indicatorId]=r;});
+box.appendChild(el('p',{cls:'note info',text:C.disclaimer}));
+var o=C.origin,op=el('div',{cls:'panel'},[el('h3',{text:'Avaliação de origem'}),kvl([['Composição',o.label],['Dados de',dt(o.dataRecency)],['Publicado em',dt(D.header.capturedAt)],['Mapeamento',C.mapping.note]])]);
+var tb=el('tbody'),H=['Fonte','Situação','Coleta','Catálogo','Execução','Mapeamento'];
+o.sources.forEach(function(s){tb.appendChild(el('tr',null,[el('td',{'data-l':H[0],text:s.label}),el('td',{'data-l':H[1]},[pill(s.included?'s-Passed':s.availability==='OutOfScope'?'s-OutOfScope':'s-NotEvaluated',s.availabilityLabel)]),
+el('td',{'data-l':H[2],text:s.included?dt(s.capturedAt)+(s.sourceStateLabel?' · '+s.sourceStateLabel:''):'—'}),el('td',{'data-l':H[3],text:s.catalogVersion||'—'}),el('td',{'data-l':H[4],cls:'mono',text:s.runId||'—'}),
+el('td',{'data-l':H[5],text:s.included?(s.mappingReliable?'Confirmado para esta versão':(s.note||'Não confirmado')):'—'})]));});
+op.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[thead(H),tb])]));box.appendChild(op);
+var sg=el('div',{cls:'grid g2'});C.benchmarks.forEach(function(b){sg.appendChild(bmCard(b));});
+box.appendChild(el('section',{cls:'grp','aria-labelledby':'cis-sum-h'},[el('h3',{id:'cis-sum-h',text:'Resumo por benchmark'}),el('p',{cls:'sub',text:'Cada recomendação conta uma vez no seu benchmark. Percentuais sobre as consideradas (Fora do escopo não entra). A nota KNIGHT ('+(D.kpis.score===null||D.kpis.score===undefined?'sem nota':Math.round(D.kpis.score)+'/100')+') é outra medida: pondera as regras do KNIGHT, não as recomendações, e não sai destes totais.'}),sg]));
+var R=C.reconciliation,rp=el('div',{cls:'panel'},[el('h3',{text:'Por que os totais CIS diferem dos totais do KNIGHT'})]);
+rp.appendChild(kvl([['KNIGHT',R.knightEvaluated+' de '+R.knightApplicable+' controles aplicáveis avaliados · '+R.knightNotApplicable+' não aplicáveis · '+R.knightControls+' no total'],['Regras na composição',R.rulesInComposition+' · '+R.rulesLinked+' sustentam recomendações CIS · '+R.ownChecks+' verificações próprias'],['Recomendações CIS',R.evaluated+' com veredito de '+R.considered+' consideradas · '+R.outOfScope+' fora do escopo · '+R.recommendations+' no total']]));
+rp.appendChild(el('ul',null,R.explanation.map(function(x){return el('li',{text:x});})));box.appendChild(rp);
+var f=el('div',{cls:'panel filters cisf',role:'search','aria-label':'Filtrar recomendações'});
+function sel(name,label,opts){var s=el('select',{id:'cf-'+name,onchange:function(){CF[name]=s.value;if(name==='bench'){CF.profile='';fillProfiles();}cisRender();}},[el('option',{value:'',text:'Todos'})].concat(opts.map(function(o){return el('option',{value:o[0],text:o[1]});})));cisIn[name]=s;return el('label',{'for':'cf-'+name},[label,s]);}
+var q=el('input',{id:'cf-q',type:'search',placeholder:'Seção (ex.: 5.2.2.1) ou título',oninput:function(){CF.q=q.value;cisRender();}});cisIn.q=q;
+f.appendChild(el('label',{'for':'cf-q'},['Pesquisa',q]));f.appendChild(sel('bench','Benchmark',C.benchmarks.map(function(b){return[b.key,b.label];})));
+f.appendChild(sel('service','Serviço',uniqPairs(C.recommendations.map(function(r){return[r.service,r.serviceLabel];}))));f.appendChild(sel('status','Resultado',CS));
+f.appendChild(sel('profile','Perfil',[]));f.appendChild(el('button',{cls:'btn',type:'button',onclick:function(){cisGo({});},text:'Limpar filtros'}));
+box.appendChild(f);cisRec=el('p',{cls:'recorte',role:'status','aria-live':'polite'});box.appendChild(cisRec);cisBox=el('div');box.appendChild(cisBox);
+if(C.ownChecks.length){var ob=el('tbody');C.ownChecks.forEach(function(x){ob.appendChild(el('tr',null,[el('td',{'data-l':'Regra'},[ctlRef(x.indicatorId,x.title)]),el('td',{'data-l':'Fonte',text:x.sourceLabel}),el('td',{'data-l':'Resultado do KNIGHT'},[pill('s-'+x.status,x.statusLabel)]),el('td',{'data-l':'Por que fica fora',text:x.note})]));});
+box.appendChild(el('details',{cls:'panel'},[el('summary',{text:'Verificações próprias do KNIGHT, fora dos totais CIS ('+C.ownChecks.length+')'}),el('p',{cls:'sub',text:'Regras do KNIGHT (inclusive de Entra ID) sem recomendação correspondente nos CIS Benchmarks registrados. Continuam na nota e nos resultados do KNIGHT.'}),el('div',{cls:'tw'},[el('table',{cls:'stack'},[thead(['Regra','Fonte','Resultado do KNIGHT','Por que fica fora']),ob])])]));}
+box.appendChild(el('details',{cls:'panel'},[el('summary',{text:'Limitações da visão CIS'}),el('ul',null,C.limitations.map(function(x){return el('li',{text:x});}))]));
+fillProfiles();cisRender();return box;}
+function fillProfiles(){var s=cisIn.profile;if(!s)return;s.textContent='';s.appendChild(el('option',{value:'',text:'Todos os perfis'}));
+var bs=D.cis.benchmarks.filter(function(b){return!CF.bench||b.key===CF.bench;}),seen={};bs.forEach(function(b){b.profiles.forEach(function(p){if(seen[p.key])return;seen[p.key]=1;s.appendChild(el('option',{value:p.key,text:p.label+(CF.bench?' ('+p.recommendations+')':'')}));});});
+s.appendChild(el('option',{value:'-',text:'Perfil não registrado na fonte de rastreio'}));s.value=CF.profile||'';}
+function cisMatch(r){var f=CF;if(f.bench&&r.benchmark!==f.bench)return false;if(f.service&&r.service!==f.service)return false;if(f.status&&r.status!==f.status)return false;
+if(f.profile==='-'){if(r.profiles.length)return false;}else if(f.profile&&r.profiles.indexOf(f.profile)<0)return false;
+if(f.q){var t=f.q.toLowerCase().trim();if((r.section+' '+r.title+' '+r.id).toLowerCase().indexOf(t)<0)return false;}return true;}
+function cisGo(fl,open){if(srcSel!=='geral')setSrc('geral');CF={q:'',bench:'',service:'',status:'',profile:''};for(var k in fl)CF[k]=fl[k];fillProfiles();for(var k2 in cisIn)cisIn[k2].value=CF[k2]||'';cisRender(open);setTab('cis');
+var h=document.getElementById(open?'cis-'+open:'tab-cis');if(h){h.scrollIntoView();var b=h.querySelector('button');if(b&&open)b.focus();}}
+function cisRender(open){if(!cisBox)return;var all=D.cis.recommendations,list=all.filter(cisMatch);cisBox.textContent='';
+var c={compliant:0,nonCompliant:0,notEvaluated:0,notApplicable:0,outOfScope:0};list.forEach(function(r){var k=r.status;c[k.charAt(0).toLowerCase()+k.slice(1)]++;});
+var cons=c.compliant+c.nonCompliant+c.notEvaluated+c.notApplicable;
+cisRec.textContent='Mostrando '+list.length+' de '+all.length+' recomendações · '+(c.compliant+c.nonCompliant)+' com veredito de '+cons+' consideradas no recorte ('+c.compliant+' conformes, '+c.nonCompliant+' não conformes, '+c.notEvaluated+' não avaliadas, '+c.notApplicable+' não aplicáveis'+(c.outOfScope?', '+c.outOfScope+' fora do escopo':'')+').';
+if(!list.length){cisBox.appendChild(el('p',{cls:'empty',text:'Nenhuma recomendação corresponde aos filtros. Use “Limpar filtros”.'}));return;}
+list.forEach(function(r){cisBox.appendChild(cisItem(r,open===r.id));});}
+function cisItem(r,isOpen){var body=null,id='cis-'+r.id;
+var head=el('button',{type:'button','aria-expanded':isOpen?'true':'false','aria-controls':id+'-b',onclick:function(){var o=head.getAttribute('aria-expanded')==='true';head.setAttribute('aria-expanded',o?'false':'true');if(!body){body=cisDetail(r);body.id=id+'-b';wrap.appendChild(body);}body.hidden=o;}},
+[el('span',null,[el('div',{cls:'t'},[el('span',{cls:'cis-sec',text:r.section}),r.title]),el('div',{cls:'s',text:benchLabel(r.benchmark)+' · '+r.serviceLabel+(r.profileLabels.length?' · '+r.profileLabels.join(', '):'')+(r.ruleIds.length?' · regras '+r.ruleIds.join(', '):' · sem regra automatizada')})]),
+el('span',{cls:'tags'},[pill('s-'+r.status,r.statusLabel+(r.mitigated?' (mitigada)':'')),r.origin==='Manual'||r.origin==='AutomatedAndManual'?pill('s-Mitigated',r.originLabel):null,pill('v-'+r.severity,r.severityLabel)])]);
+var wrap=el('div',{cls:'ctl',id:id},[head]);if(isOpen){body=cisDetail(r);body.id=id+'-b';wrap.appendChild(body);}return wrap;}
+function cisDetail(r){var b=el('div',{cls:'ctl-body'});
+b.appendChild(sec('O que foi verificado',[el('p',{text:r.whatChecked}),kvl([['Recomendação',benchLabel(r.benchmark)+' · seção '+r.section],['Serviço',r.serviceLabel+' · '+r.platform],['Perfil',r.profileLabels.length?r.profileLabels.join(', '):r.profileStateLabel],['Severidade de referência',r.severityLabel],['Origem do resultado',r.originLabel]])]));
+b.appendChild(sec('O que encontramos',[el('p',{text:r.found}),r.status==='NotEvaluated'||!r.reason?null:el('p',{cls:'sub',text:r.reason})]));
+if(r.whyItMatters)b.appendChild(sec('Por que importa',[el('p',{text:r.whyItMatters})]));
+var fix=[];if(r.howToFix)fix.push(el('p',{text:r.howToFix}));
+if(r.links.length){var ul=el('ul');r.links.forEach(function(l){ul.appendChild(el('li',null,[link(l.url,l.title),' (Microsoft Learn)']));});fix.push(el('div',null,[el('div',{cls:'k',text:'Documentação oficial'}),ul]));}
+if(r.status==='NonCompliant')fix.push(el('p',{cls:'sub',text:'Orientação para revisão humana: confirme o impacto na operação antes de alterar a configuração e valide pela próxima coleta.'}));
+if(!fix.length)fix.push(el('p',{cls:'sub',text:r.status==='Compliant'?'Nada a corrigir: a evidência comprova o critério.':r.status==='NotApplicable'?'Nada a corrigir: o critério não se aplica a este ambiente.':r.status==='OutOfScope'?'A fonte desta recomendação foi retirada do escopo da avaliação.':'Sem orientação adicional registrada.'}));
+b.appendChild(sec('Como corrigir',fix));
+var rows=[];r.variants.forEach(function(v){v.rules.forEach(function(x){rows.push({v:v,x:x});});});
+if(rows.length){var tb=el('tbody'),H=['Regra do KNIGHT','Resultado','Valor observado','Valor esperado','Contas e recursos','Limitação','O que prova'];
+rows.forEach(function(o){var ru=RULE[o.x.indicatorId];tb.appendChild(el('tr',null,[el('td',{'data-l':H[0]},[ctlRef(o.x.indicatorId,ru?ru.title:null),el('div',{cls:'sub',text:(ru?ru.sourceLabel+' · ':'')+'vínculo '+o.x.matchLabel.toLowerCase()+(o.v.variant?' · variante '+o.v.variant:'')})]),
+el('td',{'data-l':H[1]},[ru?pill('s-'+ru.status,ru.statusLabel):el('span',{text:'sem resultado'})]),el('td',{'data-l':H[2],text:ru?ru.evidence:'—'}),el('td',{'data-l':H[3],text:ru&&ru.expected?ru.expected:'—'}),
+el('td',{'data-l':H[4],text:ru?((ru.affectedComposition||(ru.affectedCount?ru.affectedCount+' afetado(s)':'nenhum afetado'))+(ru.evidenceCount?' · '+ru.evidenceCount+' evidência(s) de configuração':'')):'—'}),
+el('td',{'data-l':H[5],text:[ru&&ru.notEvaluatedReason,ru&&ru.detailLimitation,o.x.note].filter(function(x){return x;}).join(' · ')||'—'}),el('td',{'data-l':H[6],text:o.x.proofLabel})]));});
+b.appendChild(sec('Regras e recursos que sustentam o resultado',[el('p',{cls:'sub',text:'O detalhe de cada regra (com a lista de contas e recursos) abre em Detalhes técnicos.'}),el('div',{cls:'tw'},[el('table',{cls:'stack cis-rules'},[thead(H),tb])])]));}
+if(r.variants.length>1||r.variants[0].variant){var vb=el('tbody');r.variants.forEach(function(v){vb.appendChild(el('tr',null,[el('td',{'data-l':'Variante do catálogo',text:(v.variant||'—')+' · '+v.title}),el('td',{'data-l':'Resultado'},[pill('s-'+v.status,v.statusLabel)]),el('td',{'data-l':'Motivo',text:v.reason||'—'}),el('td',{'data-l':'Disposição',text:v.dispositionLabel})]));});
+b.appendChild(sec('Variantes do catálogo nesta recomendação',[el('p',{cls:'sub',text:'As variantes verificam partes da mesma recomendação oficial; a recomendação conta uma vez.'}),el('div',{cls:'tw'},[el('table',{cls:'stack'},[thead(['Variante do catálogo','Resultado','Motivo','Disposição']),vb])])]));}
+if(r.manual){var m=r.manual;b.appendChild(sec('Verificação manual',[kvl([['Resultado',m.resultLabel+(m.expired?' — VENCIDO':'')+(m.complement?' (complemento da leitura automatizada)':'')],['Justificativa',m.justification],['Responsável',m.responsibleName],['Evidência',[m.evidenceReference,m.evidenceDocumentTitle?'Documento: '+m.evidenceDocumentTitle+(m.evidenceDocumentSha256?' (SHA-256 '+m.evidenceDocumentSha256.slice(0,12)+'…)':''):null].filter(function(x){return x;}).join(' · ')||'—'],
+['Registro',(m.recordedByName||'—')+' em '+dt(m.recordedAt)],['Validade',m.validUntil?'até '+m.validUntil+(m.expired?' (vencida)':''):'sem data de revisão']]),el('p',{cls:'sub',text:'Atestação registrada por pessoas: aparece com a origem manual e não entra na nota KNIGHT.'})]));}
+if(r.limitations.length)b.appendChild(sec('Limitações',[el('ul',null,r.limitations.map(function(x){return el('li',{text:x});}))]));
+var tr=r.variants.map(function(v){return v.traceRule;}).filter(function(x){return x;});
+b.appendChild(el('details',{cls:'tech'},[el('summary',{text:'Identificadores e rastreio'}),el('ul',null,[el('li',{cls:'mono',text:'Recomendação: '+r.id}),el('li',{cls:'mono',text:'Entradas do catálogo: '+r.variants.map(function(v){return v.key;}).join(', ')}),
+tr.length?el('li',{cls:'mono',text:'Regra de rastreio (Monkey365): '+tr.filter(function(x,i){return tr.indexOf(x)===i;}).join(', ')}):null,el('li',{cls:'mono',text:'Perfil: '+r.profileStateLabel})])]));
+return b;}
 // ---------- Controles e achados ----------
 var listBox,recorte,inputs={};
 function controlsTab(){var box=el('div',{id:'tab-controls',role:'tabpanel','aria-labelledby':'t-controls'});box.hidden=true;
@@ -315,7 +421,7 @@ if(q)wrap.appendChild(q);wrap.appendChild(el('div',{cls:'tw'},[el('table',null,[
 var SRC=D.sourceTabs||[],srcNav=null,srcBox=null,srcSel='geral';
 function setSrc(k){srcSel=k;if(!srcNav)return;var b=srcNav.querySelectorAll('button');for(var i=0;i<b.length;i++){var on=b[i].getAttribute('data-src')===k;b[i].setAttribute('aria-selected',on?'true':'false');b[i].tabIndex=on?0:-1;}
 var geral=k==='geral';tabs.hidden=!geral;srcBox.hidden=geral;if(geral){setTab(ST.tab);return;}
-['overview','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=true;});renderSrc(k);}
+['overview','cis','controls','glossary'].forEach(function(x){document.getElementById('tab-'+x).hidden=true;});renderSrc(k);}
 function srcKpi(l,v,n){return el('div',{cls:'kpi'},[el('div',{cls:'l',text:l}),el('div',{cls:'v',text:v}),el('div',{cls:'n',text:n})]);}
 function renderSrc(k){var t=SRC.filter(function(x){return x.key===k;})[0];srcBox.textContent='';if(!t)return;
 var ctl=D.controls.filter(function(c){return c.source===k;}),fnd=ctl.filter(function(c){return c.status==='Exposed'||c.status==='Mitigated';});
@@ -338,7 +444,7 @@ ctl.forEach(function(c){fp.appendChild(controlItem(c,false,'src-'));});
 srcBox.appendChild(fp);}
 // ---------- Montagem ----------
 var tabs=el('div',{cls:'tabs',role:'tablist','aria-label':'Seções do relatório'});
-var TABS=[['overview','Resumo e resultados'],['controls','Detalhes técnicos'],['glossary','Metodologia e glossário']];
+var TABS=[['overview','Resumo e resultados'],['cis','CIS Benchmarks'],['controls','Detalhes técnicos'],['glossary','Metodologia e glossário']];
 TABS.forEach(function(t,i){tabs.appendChild(el('button',{id:'t-'+t[0],type:'button',role:'tab','data-tab':t[0],'aria-controls':'tab-'+t[0],'aria-selected':i===0?'true':'false',text:t[1],
 onclick:function(){setTab(t[0]);},onkeydown:function(e){if(e.key==='ArrowRight'||e.key==='ArrowLeft'){var n=TABS[(i+(e.key==='ArrowRight'?1:TABS.length-1))%TABS.length][0];setTab(n);document.getElementById('t-'+n).focus();e.preventDefault();}}}));});
 if(SRC.length){srcNav=el('div',{cls:'tabs srcnav',role:'tablist','aria-label':'Resultados: geral e por fonte'});
@@ -347,7 +453,7 @@ SK.forEach(function(t,i){srcNav.appendChild(el('button',{id:'s-'+t[0],type:'butt
 onclick:function(){setSrc(t[0]);},onkeydown:function(e){var n=null;if(e.key==='ArrowRight')n=SK[(i+1)%SK.length][0];else if(e.key==='ArrowLeft')n=SK[(i+SK.length-1)%SK.length][0];else if(e.key==='Home')n=SK[0][0];else if(e.key==='End')n=SK[SK.length-1][0];
 if(n!==null){setSrc(n);document.getElementById('s-'+n).focus();e.preventDefault();}}}));});
 srcBox=el('section',{id:'src-view',role:'tabpanel','aria-labelledby':'src-h',cls:'grp'});srcBox.hidden=true;main.appendChild(srcNav);}
-main.appendChild(tabs);main.appendChild(overview());main.appendChild(controlsTab());main.appendChild(glossaryTab());if(srcBox)main.appendChild(srcBox);renderList();setTab('overview');
+main.appendChild(tabs);main.appendChild(overview());main.appendChild(cisTab());main.appendChild(controlsTab());main.appendChild(glossaryTab());if(srcBox)main.appendChild(srcBox);renderList();setTab('overview');
 // [AEGIS-KNIGHT-RESULTS-PRESENTATION-01] Os riscos prioritários (desenhados no servidor) abrem o detalhe do controle.
 Array.prototype.forEach.call(document.querySelectorAll('[data-open]'),function(a){a.addEventListener('click',function(e){e.preventDefault();go({},a.getAttribute('data-open'));});});
 // [AEGIS-ASSESSMENT-VISUALS-01] Links dos gráficos e das tabelas de valores abrem a aba de controles já filtrada.

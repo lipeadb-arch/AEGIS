@@ -21,7 +21,7 @@ const STATUSES: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 'Not
 const SEVERITIES: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Informational'];
 
 /**
- * [AEGIS-KNIGHT-MULTICLOUD-01] Aba "Controles e findings": pesquisa e filtros COMBINÁVEIS (resultado,
+ * [AEGIS-KNIGHT-MULTICLOUD-01] Aba "Controles e achados": pesquisa e filtros COMBINÁVEIS (resultado,
  * severidade, serviço, domínio, framework), recorte aplicado sempre descrito em palavras e lista de controles
  * que abre o detalhe sem perder o contexto. O estado dos filtros pertence à página (e ao endereço) — este
  * componente só o exibe e pede mudanças.
@@ -42,7 +42,7 @@ const SEVERITIES: SeverityLevel[] = ['Critical', 'High', 'Medium', 'Low', 'Infor
           <span class="filter-label">Resultado</span>
           <select [value]="filters().status" (change)="set('status', $any($event.target).value)">
             <option value="">Todos</option>
-            <option value="findings">Findings (reprovado + mitigado)</option>
+            <option value="findings">Achados (reprovado + mitigado)</option>
             @for (s of statuses; track s) { <option [value]="s">{{ statusLabel(s) }}</option> }
           </select>
         </label>

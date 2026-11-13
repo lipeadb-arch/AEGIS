@@ -150,7 +150,14 @@ public sealed record KnightReportModel(
     /// <summary>[AEGIS-KNIGHT-RESULTS-PRESENTATION-01] O que dizer quando não há limitação a listar — fiel ao registro da fotografia.</summary>
     string? NoLimitationText = null,
     /// <summary>[AEGIS-KNIGHT-SCOPE-01] Abas das fontes incluídas no consolidado (nula fora dele), na ordem da composição.</summary>
-    IReadOnlyList<ReportSourceTab>? SourceTabs = null);
+    IReadOnlyList<ReportSourceTab>? SourceTabs = null,
+    /// <summary>
+    /// [AEGIS-KNIGHT-CIS-01] Visão CIS Benchmarks CONGELADA na publicação (nula quando a fotografia não a registrou) e o estado dela:
+    /// "Frozen" (registrada), "NotRecorded" (consolidado publicado antes deste recurso) ou "SingleSource" (relatório de uma fonte,
+    /// cuja visão CIS é publicada no consolidado).
+    /// </summary>
+    AegisScore.Application.Knight.Cis.KnightCisView? Cis = null,
+    string? CisState = null);
 
 public static class KnightReportModelBuilder
 {
@@ -274,8 +281,24 @@ public static class KnightReportModelBuilder
                 + (composition?.Any(e => e.AvailabilityState == KnightConsolidatedAvailability.OutOfScope) == true
                     ? " Uma fonte fora do escopo salvo do tenant aparece na composição só para dizer que foi retirada: os controles, achados e limitações dela não entram em nenhum total deste relatório."
                     : ""));
-        if (isV2 && s.ProfileCatalogVersion is { } pv && !string.Equals(pv, s.CatalogVersion, StringComparison.Ordinal))
-            notes.Add($"Os textos descritivos (problema, impacto, configuração esperada) são do catálogo {pv}; o veredito foi produzido pelo catálogo {s.CatalogVersion}. O critério da regra só é exibido quando os dois coincidem.");
+        if (isV2 && s.ProfileCatalogVersion is { } pv)
+        {
+            if (sourceType == KnightSourceType.Consolidated)
+            {
+                // [AEGIS-KNIGHT-CIS-01] "ak-knight-consolidated" só identifica a composição: o veredito de cada controle vem do
+                // catálogo da FONTE, congelado na composição. A comparação é fonte a fonte.
+                var included = (composition ?? Array.Empty<KnightConsolidatedSourceEntry>()).Where(e => e.Included).ToList();
+                var other = included.Where(e => !string.Equals(e.CatalogVersion, pv, StringComparison.Ordinal)).ToList();
+                if (included.Count > 0)
+                    notes.Add(other.Count == 0
+                        ? $"Os textos descritivos (problema, impacto, configuração esperada) e os vereditos das {included.Count} fontes incluídas usam o mesmo catálogo, {pv}; o critério de cada regra é exibido."
+                        : $"Os textos descritivos são do catálogo {pv}. Fontes avaliadas com outro catálogo: "
+                          + string.Join(", ", other.Select(e => $"{e.Label} ({e.CatalogVersion ?? "não registrado"})"))
+                          + " — nos controles delas o critério da regra não é exibido. As demais fontes usam o mesmo catálogo dos textos.");
+            }
+            else if (!string.Equals(pv, s.CatalogVersion, StringComparison.Ordinal))
+                notes.Add($"Os textos descritivos (problema, impacto, configuração esperada) são do catálogo {pv}; o veredito foi produzido pelo catálogo {s.CatalogVersion}. O critério da regra só é exibido quando os dois coincidem.");
+        }
         if (controls.Any(c => c.Impact is not null))
             notes.Add("Risco e impacto descrevem o que cada condição encontrada permite, no limite do acesso que ela concede. Não indicam que um incidente ocorreu nem que houve acesso indevido.");
         var coverage = BuildCoverage(s.ReferenceCoverageJson);
@@ -307,7 +330,9 @@ public static class KnightReportModelBuilder
             Inclusion(composition, header.SourceLabel, evaluated),
             GroupLimitations(limitations, controls),
             NoLimitationText(KnightCapabilitiesJson.Deserialize(s.CapabilitiesJson), kpis),
-            sourceType == KnightSourceType.Consolidated ? SourceTabs(composition) : null);
+            sourceType == KnightSourceType.Consolidated ? SourceTabs(composition) : null,
+            AegisScore.Application.Knight.Cis.KnightCisJson.Deserialize(s.CisBenchmarkJson),
+            !string.IsNullOrEmpty(s.CisBenchmarkJson) ? "Frozen" : sourceType == KnightSourceType.Consolidated ? "NotRecorded" : "SingleSource");
     }
 
     /// <summary>[AEGIS-KNIGHT-SCOPE-01] As fontes INCLUÍDAS da composição congelada, com os números que a própria composição guardou.</summary>

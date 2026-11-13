@@ -171,7 +171,7 @@ public sealed class KnightResultsReportTests
         var stat = Static(html);
 
         using var _ = new AssertionScope();
-        stat.Should().Contain("Resumo executivo").And.Contain("Nota KNIGHT").And.Contain($"{k.Evaluated} de {applicable} controles aplicáveis avaliados");
+        stat.Should().Contain("Resumo da avaliação").And.Contain("Nota KNIGHT").And.Contain($"{k.Evaluated} de {applicable} controles aplicáveis avaliados");
         stat.Should().Contain($"Avaliação parcial: a nota considera {k.Evaluated} de {applicable} controles aplicáveis");
         stat.Should().NotContain(" style=", "a CSP só autoriza estilo por hash: nada de atributo de estilo");
         html.Should().Contain("default-src 'none'").And.NotContain("<script src").And.NotContain("<link");

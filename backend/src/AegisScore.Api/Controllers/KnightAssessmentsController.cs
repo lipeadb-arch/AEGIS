@@ -365,6 +365,28 @@ public class KnightAssessmentsController : ControllerBase
         return Ok(ToConsolidatedDto(combined));
     }
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-CIS-01] Visão CIS Benchmarks AO VIVO da composição do escopo salvo (a mesma da aba "Geral"): resultado por
+    /// recomendação nas edições registradas, com as regras e os recursos que o sustentam, a versão do mapeamento e os resultados
+    /// manuais vigentes. Projeção determinística — a MESMA que a publicação consolidada congela para o HTML. Somente leitura: não
+    /// coleta nada e não muda nota, cobertura ou resultado do KNIGHT.
+    /// </summary>
+    /// <response code="200">Visão CIS (mesmo sem fonte avaliada — as recomendações ficam não avaliadas, com o motivo).</response>
+    /// <response code="401">Tenant não resolvido no contexto.</response>
+    [HttpGet("cis")]
+    public async Task<ActionResult<AegisScore.Application.Knight.Cis.KnightCisView>> GetCisBenchmarks(CancellationToken ct)
+    {
+        if (_tenant.TenantId is not Guid)
+            return Unauthorized("Tenant não resolvido no contexto (claim tenant_id ausente).");
+
+        var latest = await _service.GetLatestBySourceAsync(ct);
+        var scope = await ScopeAsync(ct);
+        var combined = KnightConsolidatedBuilder.Build(latest, null, scope.OutOfScope);
+        var manual = _manual is null ? Array.Empty<KnightManualResultView>() : await _manual.CurrentAsync(ct);
+        return Ok(AegisScore.Application.Knight.Cis.KnightCisProjection.Build(
+            AegisScore.Application.Knight.Cis.KnightCisInputs.FromConsolidated(combined, manual)));
+    }
+
     /// <summary>Assessment por Id (401 sem tenant; 404 inexistente/de outro tenant com tenant válido).</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<KnightAssessmentDto>> GetById(Guid id, CancellationToken ct)
