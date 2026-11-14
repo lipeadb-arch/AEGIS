@@ -242,6 +242,7 @@ import { KnightService } from '../services/knight.service';
                             <dt>Critério da edição</dt><dd>{{ cr.edition }} · seção {{ cr.section }} — {{ cr.stateLabel }}</dd>
                             <dt>Procedência</dt>
                             <dd>@if (cr.state === 'Confirmed') { {{ cr.officialSource }}@if (cr.location) { · {{ cr.location }} }@if (cr.reviewedBy) { · conferido por {{ cr.reviewedBy }}@if (cr.consultedOn) { em {{ cr.consultedOn }} } }@if (cr.reviewedCatalogVersions.length) { · catálogo {{ cr.reviewedCatalogVersions.join(', ') }} } } @else { {{ cr.trace }} }</dd>
+                            @if (cr.state === 'Confirmed' && cr.reviewedRules.length) { <dt>Vínculos conferidos</dt><dd>{{ cr.reviewedRules.join(', ') }}@if (cr.note) { — {{ cr.note }} }</dd> }
                             @if (rec.mappingOrigin) { <dt>Origem do mapeamento</dt><dd>{{ rec.mappingOrigin }}</dd> }
                           </dl>
                           @if (cr.state !== 'Confirmed') {
@@ -383,7 +384,7 @@ import { KnightService } from '../services/knight.service';
       .hd { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px var(--sp-3); }
       .hd h3 { margin: 0; }
       .hint { font-size: var(--fs-meta); color: var(--muted); }
-      .small { font-size: var(--fs-sm); } .muted { color: var(--muted); }
+      .small { font-size: var(--fs-sm); overflow-wrap: anywhere; } .muted { color: var(--muted); }
       .warn-text { color: var(--amber); }
       .notice.info { margin: 0 0 var(--sp-3); padding: var(--sp-2) var(--sp-3); border-left: 3px solid var(--cyan); background: var(--tint-cyan); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; font-size: var(--fs-sm); }
       .bm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); }

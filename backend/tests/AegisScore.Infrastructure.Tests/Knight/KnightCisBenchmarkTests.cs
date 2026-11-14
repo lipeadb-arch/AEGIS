@@ -132,8 +132,8 @@ public sealed class KnightCisBenchmarkTests : IDisposable
             b.ManualCounts.Total.Should().Be(rows.Count(r => r.Knight!.Origin == "Manual"));
             b.KnightCounts.Should().BeEquivalentTo(KnightCisProjection.KnightCountsOf(rows), b.Key);
             (b.Counts.Compliant + b.Counts.NonCompliant + b.Counts.NotApplicable).Should().Be(0,
-                "sem fonte oficial consultada, nenhum critério de edição está confirmado e nenhuma recomendação recebe resultado CIS");
-            b.CriterionConfirmed.Should().Be(0);
+                "só a seção 8 (Teams) do M365 7.0.0 tem critério confirmado, e o Teams não foi coletado no caso de referência");
+            b.CriterionConfirmed.Should().Be(b.Key == "CIS-M365-7.0.0" ? 15 : 0, b.Key);
             (b.KnightCounts!.Compliant + b.KnightCounts.NonCompliant).Should().BeGreaterThan(0, "a leitura do KNIGHT continua visível");
         }
 
@@ -150,8 +150,8 @@ public sealed class KnightCisBenchmarkTests : IDisposable
             .And.Contain(x => x.Contains("Fora do escopo") && x.Contains("Microsoft Fabric (Power BI)"))
             .And.Contain(x => x.StartsWith($"Totais CIS: {r.Considered} recomendações consideradas"))
             .And.Contain(x => x.StartsWith("O resultado do KNIGHT chega a uma conclusão técnica em"));
-        view.Mapping.OfficialSources.Should().BeEmpty();
-        view.Mapping.CriteriaConfirmed.Should().Be(0);
+        view.Mapping.OfficialSources.Should().Equal(KnightCisCriteria.M365V700Pdf);
+        view.Mapping.CriteriaConfirmed.Should().Be(15);
         r.Evaluated.Should().NotBe(201, "os totais CIS contam recomendações, não as 201 regras avaliadas — e a explicação diz por quê");
     }
 
@@ -319,8 +319,9 @@ public sealed class KnightCisBenchmarkTests : IDisposable
         r.MappingOrigin.Should().Contain(r.RuleIds[0] + " (integral)").And.Contain("avaliação executada com ak-knight-v13").And.Contain("revisados para ak-knight-v13");
 
         view.Recommendations.Should().NotContain(x => x.Status == KnightCisStatus.Compliant || x.Status == KnightCisStatus.NonCompliant || x.Status == KnightCisStatus.NotApplicable);
-        view.Recommendations.Where(x => x.Status == KnightCisStatus.NotEvaluated).Should().OnlyContain(x => x.Reason!.StartsWith(KnightCisCriteria.NotConfirmedReason));
-        view.Limitations[0].Should().StartWith("Nenhuma fonte oficial do CIS foi consultada");
+        view.Recommendations.Where(x => x.Status == KnightCisStatus.NotEvaluated && x.Criterion!.State == KnightCisCriterionState.NotConfirmed)
+            .Should().OnlyContain(x => x.Reason!.StartsWith(KnightCisCriteria.NotConfirmedReason));
+        view.Limitations[0].Should().StartWith("Critérios conferidos em: " + KnightCisCriteria.M365V700Pdf);
     }
 
     [Fact]
@@ -409,6 +410,127 @@ public sealed class KnightCisBenchmarkTests : IDisposable
         var b = KnightCisJson.Serialize(KnightCisProjection.Build(Input(composition)));
         (a == b).Should().BeTrue("a mesma composição produz os mesmos bytes");
         KnightCisJson.Deserialize(a)!.Recommendations.Should().HaveCount(435);
+    }
+
+    // ---- Primeiro lote conferido: CIS M365 7.0.0, seção 8 (Teams), no PDF oficial --------------------------------------
+
+    /// <summary>Teams COLETADO (fora da contagem do caso de referência), com um desfecho dirigido por seção do lote.</summary>
+    private static readonly IReadOnlyDictionary<string, KnightIndicatorStatus> TeamsLot = new Dictionary<string, KnightIndicatorStatus>
+    {
+        ["AK-TEAMS-001"] = KnightIndicatorStatus.Exposed,       // 8.1.1: reprovação não sustentada (provedor pode ser autorizado)
+        ["AK-TEAMS-002"] = KnightIndicatorStatus.Passed,        // 8.1.2: Conforme
+        ["AK-TEAMS-003"] = KnightIndicatorStatus.Passed,        // 8.2.1: Conforme (estado de aprovação opcional)
+        ["AK-TEAMS-005"] = KnightIndicatorStatus.NotApplicable, // 8.2.3: não aplicável do KNIGHT não sustentado
+        ["AK-TEAMS-006"] = KnightIndicatorStatus.Exposed,       // 8.2.4: Não conforme
+        ["AK-TEAMS-008"] = KnightIndicatorStatus.Passed,        // 8.5.1: Conforme
+        ["AK-TEAMS-011"] = KnightIndicatorStatus.Exposed,       // 8.5.4: reprovação não sustentada (política Global × todas)
+    };
+
+    [Fact]
+    public void LoteTeams_M365_700_RegistradoComFonteOficial_PaginaEVinculosRevisados()
+    {
+        var view = KnightCisProjection.Build(Input(ReferenceComposition()));
+        var registered = KnightCisCriteria.Registered;
+        registered.Should().HaveCount(15);
+        registered.Select(c => c.RecommendationId).Should().OnlyHaveUniqueItems()
+            .And.OnlyContain(id => id.StartsWith("CIS-M365-7.0.0:8."))
+            .And.NotContain(new[] { "CIS-M365-7.0.0:8.4.1", "CIS-M365-7.0.0:8.6.1" }, "8.4.1 não tem regra e 8.6.1 depende do AK-MDO-019, não conferido");
+        foreach (var c in registered)
+        {
+            var r = view.Recommendations.Single(x => x.Id == c.RecommendationId);
+            c.OfficialSource.Should().Be(KnightCisCriteria.M365V700Pdf);
+            c.Location.Should().StartWith("seção " + r.Section + ", p. ");
+            c.ConsultedOn.Should().Be("2026-11-14");
+            c.ReviewedBy.Should().Contain("sem segunda revisão humana");
+            c.ReviewedCatalogVersions.Should().Equal("ak-knight-v13");
+            c.ReviewedRules.Should().Equal(r.RuleIds, $"{c.RecommendationId}: o vínculo revisado é o vínculo do catálogo");
+            c.Note.Should().StartWith("Edição: ");
+            if (c.SustainedResults is not null) c.UnsustainedReason.Should().NotBeNullOrWhiteSpace();
+            r.Criterion!.State.Should().Be(KnightCisCriterionState.Confirmed);
+            r.Criterion.Location.Should().Be(c.Location);
+        }
+        registered.Where(c => c.SustainedResults is null).Select(c => c.RecommendationId)
+            .Should().BeEquivalentTo(new[] { "CIS-M365-7.0.0:8.1.2", "CIS-M365-7.0.0:8.2.4" }, "só nelas a regra e a edição leem o mesmo valor, da mesma configuração");
+        KnightCisCriteria.OfficialSourcesConsulted.Should().Equal(KnightCisCriteria.M365V700Pdf);
+    }
+
+    [Fact]
+    public void LoteTeams_Conforme_NaoConforme_ENaoAvaliado_ComEvidenciaETotais()
+    {
+        var view = KnightCisProjection.Build(Input(ReferenceComposition(exact: TeamsLot)));
+        KnightCisRecommendation R(string section) => view.Recommendations.Single(r => r.Id == "CIS-M365-7.0.0:" + section);
+
+        var channel = R("8.1.2");
+        channel.Status.Should().Be(KnightCisStatus.Compliant);
+        channel.Origin.Should().Be("Automated");
+        channel.Found.Should().Contain("AK-TEAMS-002 aprovou");
+        channel.Criterion!.OfficialSource.Should().Be(KnightCisCriteria.M365V700Pdf);
+        channel.Criterion.Location.Should().Be("seção 8.1.2, p. 504–507 (Descrição, Auditoria e Valor padrão)");
+
+        var trial = R("8.2.4");
+        trial.Status.Should().Be(KnightCisStatus.NonCompliant);
+        trial.Found.Should().Contain("AK-TEAMS-006");
+        R("8.2.1").Status.Should().Be(KnightCisStatus.Compliant);
+        R("8.5.1").Status.Should().Be(KnightCisStatus.Compliant);
+
+        var lobby = R("8.5.4");
+        lobby.Knight!.Status.Should().Be(KnightCisStatus.NonCompliant);
+        lobby.Status.Should().Be(KnightCisStatus.NotEvaluated);
+        lobby.Reason.Should().StartWith("Reprovado pelo KNIGHT não vale como resultado CIS: ")
+            .And.Contain("Critério da edição conferido em " + KnightCisCriteria.M365V700Pdf).And.Contain("só sustenta Conforme.")
+            .And.Contain("política de reunião padrão da organização (Global)");
+        lobby.Found.Should().Contain("AK-TEAMS-011", "a regra, o resultado e a evidência continuam visíveis");
+
+        R("8.1.1").Status.Should().Be(KnightCisStatus.NotEvaluated);
+        R("8.1.1").Reason.Should().Contain("provedores AUTORIZADOS");
+        R("8.2.3").Knight!.Status.Should().Be(KnightCisStatus.NotApplicable);
+        R("8.2.3").Status.Should().Be(KnightCisStatus.NotEvaluated);
+        R("8.2.3").Reason.Should().Contain("Não aplicável pelo KNIGHT não vale como resultado CIS");
+
+        var notCollected = R("8.5.6");
+        notCollected.Status.Should().Be(KnightCisStatus.NotEvaluated);
+        notCollected.Criterion!.State.Should().Be(KnightCisCriterionState.Confirmed);
+        notCollected.Reason.Should().Contain("Autorização recusada pela Microsoft (sintético)", "sem coleta, o motivo é o da regra, não o do critério");
+
+        R("8.6.1").Criterion!.State.Should().Be(KnightCisCriterionState.NotConfirmed);
+        R("8.6.1").Reason.Should().StartWith(KnightCisCriteria.NotConfirmedReason);
+
+        var m365 = view.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0");
+        (m365.Counts.Compliant, m365.Counts.NonCompliant, m365.Counts.NotApplicable).Should().Be((3, 1, 0));
+        m365.Counts.Should().BeEquivalentTo(KnightCisProjection.CountsOf(view.Recommendations.Where(r => r.Benchmark == m365.Key).ToList()));
+        m365.CriterionConfirmed.Should().Be(15);
+        view.Benchmarks.Where(b => b.Key != m365.Key).Should().OnlyContain(b => b.Counts.Compliant + b.Counts.NonCompliant + b.Counts.NotApplicable == 0);
+        view.Reconciliation.Explanation.Should().Contain(x => x.Contains(" 4 têm o critério da edição confirmado"));
+    }
+
+    [Fact]
+    public async Task LoteTeams_TelaEHtmlOffline_MesmoResultadoEvidenciaETotais()
+    {
+        await using var db = NewContext(TenantA);
+        var composition = ReferenceComposition(exact: TeamsLot);
+        await SeedAsync(db, composition);
+        await new KnightAssessmentScopeService(db, new SystemTenantContext(TenantA), TimeProvider.System)
+            .SaveAsync(KnightConsolidatedCandidates.Sources.Where(s => s != KnightSourceType.MicrosoftFabric).ToList(), "Pessoa Gestora");
+        var controller = new KnightAssessmentsController(new FixedLatest(composition), new SystemTenantContext(TenantA),
+            new KnightManualResultService(db, new SystemTenantContext(TenantA), TimeProvider.System),
+            scope: new KnightAssessmentScopeService(db, new SystemTenantContext(TenantA), TimeProvider.System));
+        var live = (KnightCisView)((OkObjectResult)(await controller.GetCisBenchmarks(default)).Result!).Value!;
+
+        var detail = await new PostureSnapshotService(db, new SystemTenantContext(TenantA)).PublishConsolidatedKnightAsync(null);
+        var snapshot = await db.PostureSnapshots.AsNoTracking().AsSplitQuery().SingleAsync(s => s.Id == detail.Summary.Id);
+        var frozen = KnightCisJson.Deserialize(snapshot.CisBenchmarkJson)!;
+
+        frozen.Benchmarks.Select(b => (b.Key, b.Counts, b.CriterionConfirmed)).Should().BeEquivalentTo(live.Benchmarks.Select(b => (b.Key, b.Counts, b.CriterionConfirmed)));
+        frozen.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:8."))
+            .Select(r => (r.Id, r.Status, r.Reason, r.Found, r.Knight!.Status, r.Criterion!.State, r.Criterion.OfficialSource, r.Criterion.Location))
+            .Should().Equal(live.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:8."))
+                .Select(r => (r.Id, r.Status, r.Reason, r.Found, r.Knight!.Status, r.Criterion!.State, r.Criterion.OfficialSource, r.Criterion.Location)));
+        frozen.Recommendations.Count(r => r.Status is KnightCisStatus.Compliant).Should().Be(3);
+        frozen.Recommendations.Count(r => r.Status is KnightCisStatus.NonCompliant).Should().Be(1);
+
+        var html = Encoding.UTF8.GetString((await new PostureSnapshotExporter(db).ExportAsync(snapshot.Id, PostureExportFormat.Html))!.Content);
+        html.Should().Contain("CIS_Microsoft_365_Foundations_Benchmark_v7.0.0.pdf").And.Contain("8.2.4, p. 521");
+        html.Should().NotContain("src=\"http").And.NotContain("href=\"http://", "o arquivo funciona offline, sem nada externo");
     }
 
     // ---- API, publicação e HTML ---------------------------------------------------------------------------------
@@ -570,7 +692,7 @@ public sealed class KnightCisBenchmarkTests : IDisposable
     };
 
     private static KnightLatestBySource ReferenceComposition(IReadOnlyDictionary<string, KnightIndicatorStatus>? overrides = null,
-        Func<KnightSourceType, string>? catalogOf = null)
+        Func<KnightSourceType, string>? catalogOf = null, IReadOnlyDictionary<string, KnightIndicatorStatus>? exact = null)
     {
         var pins = new Dictionary<string, KnightIndicatorStatus>(Fixed);
         foreach (var (k, v) in overrides ?? new Dictionary<string, KnightIndicatorStatus>()) pins[k] = v;
@@ -600,12 +722,21 @@ public sealed class KnightCisBenchmarkTests : IDisposable
                 status[d.Id] = s;
             }
             left.Values.Should().OnlyContain(n => n == 0);
+            // Desfechos dirigidos FORA da contagem do caso de referência (ex.: o Teams coletado no lote conferido).
+            foreach (var d in defs.Where(d => exact?.ContainsKey(d.Id) == true)) status[d.Id] = exact![d.Id];
+            var (fp, fe, fne) = (p, e, ne);
+            if (exact is not null && defs.Any(d => exact.ContainsKey(d.Id)))
+            {
+                fp = status.Values.Count(s => s == KnightIndicatorStatus.Passed);
+                fe = status.Values.Count(s => s is KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated);
+                fne = status.Values.Count(s => s == KnightIndicatorStatus.NotEvaluated);
+            }
 
             var label = KnightSourceCatalog.Label(source);
             var catalog = catalogOf?.Invoke(source) ?? KnightCatalog.Version;
             var views = defs.Select(d => View(d, status[d.Id], source, catalog)).ToList();
             var score = KnightScoreFormula.Compute(views.Select(v => (v.Severity, v.Status)));
-            var state = ne > 0 && p + e == 0 ? KnightSourceState.InsufficientPermission : ne > 0 ? KnightSourceState.PartialCollection : KnightSourceState.Completed;
+            var state = fne > 0 && fp + fe == 0 ? KnightSourceState.InsufficientPermission : fne > 0 ? KnightSourceState.PartialCollection : KnightSourceState.Completed;
             list.Add(new KnightSourceLatest(source, label, new KnightAssessment(
                 Guid.NewGuid(), KnightAssessmentMode.Live, source, state, label, KnightRunStatus.Completed, catalog, KnightScoreFormula.Version,
                 Now.AddMinutes(-40), Now.AddMinutes(-30), score.Score, score.Coverage, score.PassedCount, score.ExposedCount, score.MitigatedCount,

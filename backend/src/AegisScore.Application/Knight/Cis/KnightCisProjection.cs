@@ -623,6 +623,11 @@ public static class KnightCisProjection
                 else if (otherVersion.Count > 0)
                     gate = $"O vínculo foi revisado contra o critério da edição para o catálogo {string.Join(", ", conf.ReviewedCatalogVersions)}; "
                         + $"a avaliação usou {string.Join(", ", otherVersion)}.";
+                else if (conf.SustainedResults is { } sustainedResults && !sustainedResults.Contains(knightStatus, StringComparer.Ordinal))
+                    gate = $"{KnightReadingLabel(knightStatus)} não vale como resultado CIS: "
+                        + $"{conf.UnsustainedReason ?? "o critério da edição difere do critério da regra."} Critério da edição conferido em "
+                        + $"{conf.OfficialSource} ({conf.Location}); por ele, a leitura do KNIGHT só sustenta "
+                        + $"{string.Join(" ou ", sustainedResults.Select(KnightCisStatus.Label))}.";
             }
         }
         if (gate is not null)
