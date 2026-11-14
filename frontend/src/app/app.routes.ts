@@ -4,6 +4,7 @@ import { DashboardsComponent } from './pages/dashboards.component';
 import { AssetInventoryComponent } from './pages/asset-inventory.component';
 import { DocumentHubComponent } from './pages/document-hub.component';
 import { AegisKnightComponent } from './pages/aegis-knight.component';
+import { KnightCisComponent } from './pages/knight-cis.component';
 import { HistoryPageComponent } from './pages/history-page.component';
 import { NistHomeComponent } from './pages/nist/nist-home.component';
 import { NistFunctionComponent } from './pages/nist/nist-function.component';
@@ -50,6 +51,8 @@ export const routes: Routes = [
   { path: 'dashboard', component: DashboardsComponent, canActivate: [authGuard], title: 'Aegis · Dashboards' },
 
   // AEGIS KNIGHT — navegação interna preservada (?run, ?finding, ?plan, ?tab). /identity era o endereço anterior.
+  // [AEGIS-KNIGHT-CIS-01] Visão CIS Benchmarks, dentro do módulo KNIGHT (a aba "Geral" continua sendo a entrada).
+  { path: 'knight/cis', component: KnightCisComponent, canActivate: [authGuard], title: 'AEGIS KNIGHT · CIS Benchmarks' },
   { path: 'knight', component: AegisKnightComponent, canActivate: [authGuard], title: 'AEGIS KNIGHT' },
   { path: 'identity', redirectTo: redirectWith('/knight') },
 

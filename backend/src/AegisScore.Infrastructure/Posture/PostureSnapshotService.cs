@@ -500,6 +500,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
         var includedSourceTypes = new List<KnightSourceType>();
         var mergedLimitations = new List<string>();
         var mergedCapabilities = new List<KnightCapabilityStatus>();
+        // [AEGIS-KNIGHT-CIS-01] As MESMAS execuções da composição alimentam a visão CIS congelada.
+        var cisSources = new List<AegisScore.Application.Knight.Cis.KnightCisSourceInput>();
+        var noRules = Array.Empty<AegisScore.Application.Knight.Cis.KnightCisRuleInput>();
         DateTimeOffset? recency = null;
 
         foreach (var source in candidates)
@@ -510,6 +513,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             if (scope.IsOutOfScope(source))
             {
                 entries.Add(KnightConsolidatedAvailability.OutOfScopeEntry(source, KnightConsolidatedCandidates.StaticLabel(source)));
+                cisSources.Add(new(source, KnightConsolidatedCandidates.StaticLabel(source), KnightConsolidatedAvailability.OutOfScope, false,
+                    null, null, null, null, noRules));
                 continue;
             }
 
@@ -543,6 +548,8 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 entries.Add(new KnightConsolidatedSourceEntry(
                     source, KnightConsolidatedCandidates.StaticLabel(source), false, "NotAssessed",
                     null, null, null, null, null, null, null, null, null, null, null, null, Array.Empty<string>()));
+                cisSources.Add(new(source, KnightConsolidatedCandidates.StaticLabel(source), KnightConsolidatedAvailability.NotAssessed, false,
+                    null, null, null, null, noRules));
                 continue;
             }
 
@@ -554,6 +561,9 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
                 run.Id, run.SourceState.ToString(), run.CatalogVersion, at,
                 run.Score, run.Coverage, run.PassedCount, run.ExposedCount, run.MitigatedCount,
                 run.NotEvaluatedCount, run.ErrorCount, run.NotApplicableCount, limitations));
+            cisSources.Add(new(source, run.Source, included ? KnightConsolidatedAvailability.Included : KnightConsolidatedAvailability.Available,
+                included, run.Id, run.CatalogVersion, at, run.SourceState.ToString(),
+                included ? AegisScore.Application.Knight.Cis.KnightCisInputs.FromRun(run) : noRules));
 
             if (!included) continue;
 
@@ -675,6 +685,15 @@ public sealed class PostureSnapshotService : IPostureSnapshotService
             ? null
             : System.Text.Json.JsonSerializer.Serialize(mergedCapabilities, KnightCapabilitiesJson.Options);
         snapshot.CompositionJson = KnightConsolidatedCompositionJson.Serialize(entries);
+
+        // [AEGIS-KNIGHT-CIS-01] Visão CIS da MESMA composição, congelada com a versão do mapeamento e os resultados manuais vigentes
+        // na publicação. O HTML lê só daqui; fotografias anteriores (sem a visão) continuam abrindo com o que registraram.
+        var manual = await new AegisScore.Infrastructure.Knight.KnightManualResultService(_db, _tenant, TimeProvider.System).CurrentAsync(ct);
+        var cis = AegisScore.Application.Knight.Cis.KnightCisProjection.Build(new AegisScore.Application.Knight.Cis.KnightCisInput(
+            snapshot.SourceLabel, recency, cisSources, manual,
+            new AegisScore.Application.Knight.Cis.KnightCisKnightTotals(includedIndicators.Count, score.ApplicableCount, score.EvaluatedCount,
+                score.PassedCount, score.ExposedCount, score.MitigatedCount, score.NotEvaluatedCount, score.ErrorCount, score.NotApplicableCount)));
+        snapshot.CisBenchmarkJson = AegisScore.Application.Knight.Cis.KnightCisJson.Serialize(cis);
 
         return snapshot;
     }

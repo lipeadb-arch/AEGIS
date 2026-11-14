@@ -227,6 +227,13 @@ public class PostureSnapshot : Entity, ITenantOwned
     public string? HistoryJson { get; set; }
 
     /// <summary>
+    /// [AEGIS-KNIGHT-CIS-01] Visão CIS Benchmarks CONGELADA na publicação consolidada: resultado por recomendação, regras e recursos
+    /// que o sustentam, versão do mapeamento e perfil registrado. Assinada pelo hash. O HTML lê só daqui — reexportar nunca
+    /// reprojeta com o catálogo de hoje. Nula nas fotografias anteriores a este recurso, que continuam abrindo como antes.
+    /// </summary>
+    public string? CisBenchmarkJson { get; set; }
+
+    /// <summary>
     /// [AEGIS-MVP-PRODUCT-03] Ações CONGELADAS no instante da publicação. Uma fotografia antiga continua
     /// mostrando as ações como estavam então: injetar o estado atual dos planos num relatório histórico
     /// faria o documento assinado mudar de conteúdo depois de emitido.

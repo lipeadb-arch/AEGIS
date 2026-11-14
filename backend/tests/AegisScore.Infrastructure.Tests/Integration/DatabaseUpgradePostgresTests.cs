@@ -143,6 +143,9 @@ public sealed class DatabaseUpgradePostgresTests
             // [AEGIS-KNIGHT-SCOPE-01] Escopo salvo da avaliação KNIGHT por tenant: uma tabela NOVA, sem alterar nenhuma existente
             // e sem backfill — sem registro, todas as fontes elegíveis continuam no escopo, como antes.
             "20261112140227_KnightScope01_TenantAssessmentScope",
+            // [AEGIS-KNIGHT-CIS-01] Visão CIS congelada na fotografia: uma coluna text ANULÁVEL, sem backfill — fotografias anteriores
+            // ficam sem a visão, com o hash idêntico, e o HTML delas abre como antes.
+            "20261113150602_KnightCis01_SnapshotCisBenchmark",
         }).ToArray();
 
     private readonly ITestOutputHelper _output;

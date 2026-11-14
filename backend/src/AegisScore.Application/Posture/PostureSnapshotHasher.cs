@@ -70,6 +70,12 @@ public static class PostureSnapshotHasher
     /// </summary>
     private const string HistoryExtensionVersion = "posture-hash-ext-history-v1";
 
+    /// <summary>
+    /// [AEGIS-KNIGHT-CIS-01] Extensão da visão CIS congelada: só escrita quando a fotografia a tem, para que as fotografias já
+    /// publicadas re-derivem o mesmo hash.
+    /// </summary>
+    private const string CisExtensionVersion = "posture-hash-ext-knight-cis-v1";
+
     /// <summary>Computa o hash SHA-256 (hex minúsculo, 64 chars) do conteúdo canônico da fotografia.</summary>
     public static string Compute(PostureSnapshot s)
     {
@@ -297,6 +303,9 @@ public static class PostureSnapshotHasher
 
         if (!string.IsNullOrEmpty(s.HistoryJson))
             w.Str(HistoryExtensionVersion).Str(s.HistoryJson);
+
+        if (!string.IsNullOrEmpty(s.CisBenchmarkJson))
+            w.Str(CisExtensionVersion).Str(s.CisBenchmarkJson);
 
         return w.ToString();
     }

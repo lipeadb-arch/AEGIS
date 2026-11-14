@@ -202,6 +202,9 @@ public static class KnightReferenceDispositions
         ["CIS-M365-7.0.0:1.3.2"] = new[] { "AK-ENTRA-069", "AK-ENTRA-075" },
         // Denúncia permitida na política de mensagens do Teams + destino das denúncias no Defender para Office 365.
         ["CIS-M365-7.0.0:8.6.1"] = new[] { "AK-TEAMS-017", "AK-MDO-019" },
+        // [AEGIS-KNIGHT-CIS-01] Métodos fracos: SMS e voz (AK-ENTRA-029) + e-mail de senha única (AK-ENTRA-031). Antes, o vínculo
+        // integral do AK-ENTRA-029 sozinho declarava a referência implementada.
+        ["CIS-M365-7.0.0:5.2.3.5"] = new[] { "AK-ENTRA-029", "AK-ENTRA-031" },
     };
 
     /// <summary>Controles que, juntos, avaliam integralmente a referência; nulo quando ela não é composta.</summary>

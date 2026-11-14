@@ -111,7 +111,7 @@ public static class PostureSnapshotHtmlWriter
                 : problem ? "Coleta com limitação: todos os controles aplicáveis foram avaliados, mas alguma leitura de fonte não foi concluída." : null;
 
         var sb = new StringBuilder("<section id=\"aegis-summary\" class=\"grp\" aria-labelledby=\"sum-h\">");
-        sb.Append("<h2 id=\"sum-h\" class=\"grp-h\">Resumo executivo</h2>");
+        sb.Append("<h2 id=\"sum-h\" class=\"grp-h\">Resumo da avaliação</h2>");
         if (m.Sources is { } inc)
         {
             sb.Append("<p class=\"incl\"><strong>").Append(E(inc.Text)).Append("</strong>");

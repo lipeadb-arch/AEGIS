@@ -17,6 +17,7 @@ import {
   KnightSourceType,
   sourceSlug,
 } from '../models/knight.models';
+import { KnightCisView } from '../models/knight-cis.models';
 
 /**
  * [AEGIS-KNIGHT-DURABLE-01] O NAVEGADOR deixou de esperar — o que aconteceu no servidor NÃO é conhecido. A
@@ -184,6 +185,17 @@ export class KnightService {
     return this.http.get<KnightAssessment>(`${this.base}/consolidated`, { params }).pipe(
       timeout(this.READ_TIMEOUT_MS),
       catchError(this.normalize('Não foi possível carregar o relatório consolidado.')),
+    );
+  }
+
+  /**
+   * [AEGIS-KNIGHT-CIS-01] Visão CIS Benchmarks da composição do escopo salvo (a mesma da aba "Geral"): resultado por recomendação,
+   * regras e recursos que o sustentam e o mapeamento. Somente leitura; a projeção é do servidor e é a mesma que a publicação congela.
+   */
+  getCis(): Observable<KnightCisView> {
+    return this.http.get<KnightCisView>(`${this.base}/cis`).pipe(
+      timeout(this.READ_TIMEOUT_MS),
+      catchError(this.normalize('Não foi possível carregar a visão CIS Benchmarks.')),
     );
   }
 

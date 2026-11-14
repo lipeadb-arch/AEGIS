@@ -7,6 +7,8 @@
   <ItemGroup>
     <!-- [AEGIS-KNIGHT-COVERAGE-01] Catálogo de referência (seções dos benchmarks, títulos autorais). -->
     <EmbeddedResource Include="Knight\Reference\knight-reference-catalog.json" LogicalName="AegisScore.Knight.ReferenceCatalog.json" />
+    <!-- [AEGIS-KNIGHT-CIS-01] Rastreio das recomendações CIS nos rulesets do Monkey365 (regra, edição e perfil registrado). -->
+    <EmbeddedResource Include="Knight\Cis\knight-cis-trace.json" LogicalName="AegisScore.Knight.CisTrace.json" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\AegisScore.Domain\AegisScore.Domain.csproj" />

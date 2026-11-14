@@ -1651,6 +1651,8 @@ public class AegisScoreDbContext : DbContext
             e.Property(x => x.NistReportJson).HasColumnType("text");
             // [AEGIS-ASSESSMENT-VISUALS-01] Histórico mensal congelado (JSON canônico, sob o hash). Nulo nas fotografias antigas.
             e.Property(x => x.HistoryJson).HasColumnType("text");
+            // [AEGIS-KNIGHT-CIS-01] Visão CIS congelada (JSON canônico, sob o hash). Nula nas fotografias antigas.
+            e.Property(x => x.CisBenchmarkJson).HasColumnType("text");
             e.Property(x => x.NistCycleName).HasMaxLength(120);
             e.HasIndex(x => new { x.TenantId, x.NistAssessmentId, x.NistCycleId, x.NistScopeId });
             e.HasMany(x => x.Objects).WithOne(o => o.Snapshot)

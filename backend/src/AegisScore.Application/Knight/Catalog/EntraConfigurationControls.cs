@@ -783,7 +783,10 @@ public static class EntraConfigurationControls
                     ? KnightControlOutcome.Passed("SMS e chamada de voz estão desabilitados.", objs)
                     : KnightControlOutcome.Exposed("Métodos fracos habilitados: " + string.Join(" e ", enabled) + ".", Array.Empty<KnightIndicatorObject>(), objs);
             }),
-            Ref(M365 + "5.2.3.5", note: "O e-mail (senha única), parte do mesmo critério, é avaliado no AK-ENTRA-031.")),
+            // [AEGIS-KNIGHT-CIS-01] Era um vínculo integral: SMS e voz sozinhos não decidem a recomendação, que inclui o e-mail
+            // (AK-ENTRA-031). A referência continua integral pela COMPOSIÇÃO dos dois (KnightReferenceDispositions).
+            Ref(M365 + "5.2.3.5", KnightReferenceMatch.Partial,
+                "Parte do critério: SMS e chamada de voz. A outra parte, o e-mail (senha única), é avaliada no AK-ENTRA-031; os dois juntos cobrem a referência.")),
 
         Control("AK-ENTRA-030", "Revisão de acesso do papel Criador de Locatário não configurada", KnightIndicatorCategory.PrivilegedAccess, SeverityLevel.Medium,
             "Criar revisão de acesso recorrente das atribuições do papel Criador de Locatário, com revisores definidos e remoção do acesso negado ao aplicar.",
@@ -804,7 +807,8 @@ public static class EntraConfigurationControls
                     : KnightControlOutcome.Passed("O método de senha única por e-mail está desabilitado.", new[] { obj });
             }),
             Ref(M365 + "5.2.3.7"),
-            Ref(M365 + "5.2.3.5", KnightReferenceMatch.Partial, "SMS e voz, parte do mesmo critério, são avaliados no AK-ENTRA-029.")),
+            Ref(M365 + "5.2.3.5", KnightReferenceMatch.Partial,
+                "Parte do critério: o e-mail (senha única). A outra parte, SMS e chamada de voz, é avaliada no AK-ENTRA-029; os dois juntos cobrem a referência.")),
 
         // ==== Regras de senha e grupos (configurações de diretório) ====
         Control("AK-ENTRA-033", "Lista personalizada de senhas proibidas não aplicada", KnightIndicatorCategory.AuthenticationPolicy, SeverityLevel.Medium,
