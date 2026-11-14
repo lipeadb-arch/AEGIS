@@ -18,10 +18,13 @@ import {
   describeCisFilters,
   filterCis,
   fixFallback,
+  knightReadingLabel,
+  knightStatusOf,
   profileOptions,
   ratio,
   ruleRows,
   serviceOptions,
+  shortReason,
 } from '../models/knight-cis.models';
 import { KnightSourceType, sourceSlug } from '../models/knight.models';
 import { KnightService } from '../services/knight.service';
@@ -79,13 +82,17 @@ import { KnightService } from '../services/knight.service';
                     <td data-l="Situação"><span class="avail" [class]="s.included ? 'Included' : s.availability">{{ s.availabilityLabel }}</span></td>
                     <td data-l="Coleta">@if (s.included) { {{ s.capturedAt | date: 'dd/MM/yyyy HH:mm' }}@if (s.sourceStateLabel) { · {{ s.sourceStateLabel }} } } @else { — }</td>
                     <td data-l="Catálogo">{{ s.catalogVersion || '—' }}</td>
-                    <td data-l="Mapeamento">@if (!s.included) { — } @else if (s.mappingReliable) { Confirmado para esta versão } @else { <span class="warn-text">{{ s.note }}</span> }</td>
+                    <td data-l="Mapeamento">@if (!s.included) { — } @else if (s.mappingReliable) { Vínculos revisados para esta versão } @else { <span class="warn-text">{{ s.note }}</span> }</td>
                   </tr>
                 }
               </tbody>
             </table>
           </div>
           <p class="muted small">{{ v.mapping.note }}</p>
+          @if (v.mapping.criterionNote) {
+            <p class="small"><b>Critério da edição:</b> {{ v.mapping.criterionNote }}
+              Fontes oficiais consultadas: {{ v.mapping.officialSources?.length ? v.mapping.officialSources!.join('; ') : 'nenhuma' }}.</p>
+          }
         </section>
 
         <!-- 2. Resumo por benchmark: contagens com denominador e barra segmentada rotulada. -->
@@ -118,11 +125,16 @@ import { KnightService } from '../services/knight.service';
                   }
                 </ul>
                 <dl class="kv">
+                  @if (b.criterionConfirmed !== null && b.criterionConfirmed !== undefined) { <dt>Critério confirmado</dt><dd>{{ b.criterionConfirmed }} de {{ b.recommendations }} recomendações</dd> }
+                  @if (b.knightCounts; as kc) {
+                    <dt>Resultado do KNIGHT</dt>
+                    <dd>{{ kc.compliant }} aprovadas · {{ kc.nonCompliant }} reprovadas · {{ kc.notApplicable }} não aplicáveis · {{ kc.notEvaluated }} sem conclusão <span class="muted">(não é resultado CIS)</span></dd>
+                  }
                   <dt>Conformes</dt><dd>{{ ratio(b.counts.compliant, b.counts.evaluated, 'com veredito') }}</dd>
                   <dt>Com veredito</dt><dd>{{ ratio(b.counts.evaluated, b.counts.considered, 'consideradas') }}</dd>
                   <dt>Verificação manual</dt>
                   <dd>@if (manualTotal(b.manualCounts); as m) { {{ m }} (conforme {{ b.manualCounts.compliant }} · não conforme {{ b.manualCounts.nonCompliant }} · não aplicável {{ b.manualCounts.notApplicable }}) } @else { nenhuma registrada }</dd>
-                  @if (b.mitigated) { <dt>Mitigadas</dt><dd>{{ b.mitigated }} não conforme(s) com controle compensatório — mitigação não é conformidade</dd> }
+                  @if (b.mitigated) { <dt>Mitigadas</dt><dd>{{ b.mitigated }} reprovada(s) com controle compensatório na leitura do KNIGHT — mitigação não é conformidade</dd> }
                   <dt>Perfil</dt>
                   <dd>@if (b.profileNotRecorded || b.profileDivergent) {
                         @if (b.profileNotRecorded) { {{ b.profileNotRecorded }} sem perfil registrado na fonte de rastreio }
@@ -170,10 +182,17 @@ import { KnightService } from '../services/knight.service';
                 </select>
               </label>
               <label class="fl">
-                <span class="filter-label">Resultado</span>
+                <span class="filter-label">Resultado CIS</span>
                 <select [value]="filters().status" (change)="set('status', $any($event.target).value)">
                   <option value="">Todos</option>
                   @for (st of statuses; track st) { <option [value]="st">{{ statusLabel(st) }}</option> }
+                </select>
+              </label>
+              <label class="fl">
+                <span class="filter-label">Resultado do KNIGHT</span>
+                <select [value]="filters().knight" (change)="set('knight', $any($event.target).value)">
+                  <option value="">Todos</option>
+                  @for (st of statuses; track st) { <option [value]="st">{{ knightLabel(st) }}</option> }
                 </select>
               </label>
               <label class="fl">
@@ -202,15 +221,34 @@ import { KnightService } from '../services/knight.service';
                       <span class="tt"><span class="sec">{{ rec.section }}</span>{{ rec.title }}</span>
                       <span class="code">{{ bench(v, rec.benchmark) }} · {{ rec.serviceLabel }}@if (rec.profileLabels.length) { · {{ rec.profileLabels.join(', ') }} }
                         · @if (rec.ruleIds.length) { regras {{ rec.ruleIds.join(', ') }} } @else { sem regra automatizada }</span>
+                      @if (rec.reason) { <span class="why">{{ short(rec.reason) }}</span> }
                     </span>
                     <span class="tags">
-                      <span class="st" [class]="rec.status">{{ rec.statusLabel }}@if (rec.mitigated) { (mitigada) }</span>
-                      @if (rec.origin === 'Manual' || rec.origin === 'AutomatedAndManual') { <span class="st manual">{{ rec.originLabel }}</span> }
+                      <span class="st" [class]="rec.status">CIS: {{ rec.statusLabel }}@if (rec.mitigated) { (mitigada) }</span>
+                      @if (rec.knight; as k) { <span class="st kread" [class]="k.status">{{ k.statusLabel }}@if (k.mitigated) { (mitigado) }</span> }
+                      @if ((rec.knight?.origin ?? rec.origin) === 'Manual' || (rec.knight?.origin ?? rec.origin) === 'AutomatedAndManual') { <span class="st manual">{{ rec.knight?.originLabel ?? rec.originLabel }}</span> }
                       <span class="sev" [class]="rec.severity">{{ rec.severityLabel }}</span>
                     </span>
                   </button>
                   @if (open() === rec.id) {
                     <div class="rec-body" [id]="'rec-' + rec.id">
+                      @if (rec.criterion; as cr) {
+                        <div class="blk result">
+                          <h4>Resultado CIS e origem</h4>
+                          <dl class="kv">
+                            <dt>Resultado CIS</dt><dd><span class="st" [class]="rec.status">{{ rec.statusLabel }}</span></dd>
+                            @if (rec.reason) { <dt>Motivo</dt><dd>{{ rec.reason }}</dd> }
+                            @if (rec.knight; as k) { <dt>Resultado do KNIGHT</dt><dd>{{ k.statusLabel }} · {{ k.originLabel }}@if (k.mitigated) { · reprovado com mitigação (não é conformidade) }</dd> }
+                            <dt>Critério da edição</dt><dd>{{ cr.edition }} · seção {{ cr.section }} — {{ cr.stateLabel }}</dd>
+                            <dt>Procedência</dt>
+                            <dd>@if (cr.state === 'Confirmed') { {{ cr.officialSource }}@if (cr.location) { · {{ cr.location }} }@if (cr.reviewedBy) { · conferido por {{ cr.reviewedBy }}@if (cr.consultedOn) { em {{ cr.consultedOn }} } }@if (cr.reviewedCatalogVersions.length) { · catálogo {{ cr.reviewedCatalogVersions.join(', ') }} } } @else { {{ cr.trace }} }</dd>
+                            @if (rec.mappingOrigin) { <dt>Origem do mapeamento</dt><dd>{{ rec.mappingOrigin }}</dd> }
+                          </dl>
+                          @if (cr.state !== 'Confirmed') {
+                            <p class="muted small">Para concluir: conferir o critério desta seção na edição oficial do CIS e registrar a procedência. A leitura do KNIGHT abaixo (regra, resultado e evidência) não muda.</p>
+                          }
+                        </div>
+                      }
                       <div class="blk">
                         <h4>O que foi verificado</h4>
                         <p>{{ rec.whatChecked }}</p>
@@ -218,13 +256,13 @@ import { KnightService } from '../services/knight.service';
                           <dt>Recomendação</dt><dd>{{ bench(v, rec.benchmark) }} · seção {{ rec.section }}</dd>
                           <dt>Serviço</dt><dd>{{ rec.serviceLabel }} · {{ rec.platform }}</dd>
                           <dt>Perfil</dt><dd>{{ rec.profileLabels.length ? rec.profileLabels.join(', ') : rec.profileStateLabel }}</dd>
-                          <dt>Origem do resultado</dt><dd>{{ rec.originLabel }}</dd>
+                          <dt>{{ rec.knight ? 'Origem da leitura do KNIGHT' : 'Origem do resultado' }}</dt><dd>{{ rec.knight?.originLabel ?? rec.originLabel }}</dd>
                         </dl>
                       </div>
                       <div class="blk">
                         <h4>O que encontramos</h4>
                         <p>{{ rec.found }}</p>
-                        @if (rec.reason && rec.status !== 'NotEvaluated') { <p class="muted small">{{ rec.reason }}</p> }
+                        @if (!rec.knight && rec.reason && rec.status !== 'NotEvaluated') { <p class="muted small">{{ rec.reason }}</p> }
                       </div>
                       @if (rec.whyItMatters) { <div class="blk"><h4>Por que importa</h4><p>{{ rec.whyItMatters }}</p></div> }
                       <div class="blk">
@@ -233,7 +271,7 @@ import { KnightService } from '../services/knight.service';
                         @if (rec.links.length) {
                           <ul class="links">@for (l of rec.links; track l.url) { <li><a [href]="l.url" target="_blank" rel="noopener noreferrer">{{ l.title }}</a><span class="muted">&nbsp;(Microsoft Learn)</span></li> }</ul>
                         }
-                        @if (rec.status === 'NonCompliant') {
+                        @if (knightOf(rec) === 'NonCompliant') {
                           <p class="muted small">Orientação para revisão humana: confirme o impacto antes de alterar a configuração e valide pela próxima coleta.</p>
                         }
                       </div>
@@ -391,6 +429,8 @@ import { KnightService } from '../services/knight.service';
       .st.Error { color: var(--violet-text); background: var(--tint-violet); }
       .st.NotEvaluated, .st.NotApplicable { color: var(--text-2); background: var(--hover); }
       .st.OutOfScope { color: var(--muted); border: 1px dashed var(--line-strong); }
+      .st.kread { background: transparent; border: 1px dashed currentColor; }
+      .why { font-size: var(--fs-caps); color: var(--amber); overflow-wrap: anywhere; }
       .sev { border: 1px solid currentColor; }
       .sev.Critical { color: var(--red-text); } .sev.High { color: #ff9a3d; } .sev.Medium { color: var(--amber); }
       .sev.Low { color: var(--cyan); } .sev.Informational { color: var(--text-2); }
@@ -436,6 +476,9 @@ export class KnightCisComponent implements OnInit {
   protected readonly fixFallback = fixFallback;
   protected readonly bench = benchmarkLabel;
   protected readonly rows = ruleRows;
+  protected readonly knightLabel = knightReadingLabel;
+  protected readonly knightOf = knightStatusOf;
+  protected readonly short = shortReason;
 
   readonly visible = computed(() => (this.view() ? filterCis(this.view()!, this.filters()) : []));
   readonly visibleCounts = computed(() => cisCounts(this.visible()));

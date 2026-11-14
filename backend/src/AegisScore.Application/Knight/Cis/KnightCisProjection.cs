@@ -57,7 +57,8 @@ public sealed record KnightCisCounts(int Compliant, int NonCompliant, int NotEva
 
 public sealed record KnightCisMapping(
     string CatalogVersion, string ReferenceRepository, string ReferenceCommit, string TraceRepository, string TraceCommit,
-    IReadOnlyList<string> ReliableCatalogVersions, string Note);
+    IReadOnlyList<string> ReliableCatalogVersions, string Note, IReadOnlyList<string>? OfficialSources = null, int? CriteriaConfirmed = null,
+    string? CriterionNote = null);
 
 public sealed record KnightCisOriginSource(
     string Source, string Label, string Availability, string AvailabilityLabel, bool Included, Guid? RunId, string? CatalogVersion,
@@ -70,7 +71,26 @@ public sealed record KnightCisProfileOption(string Key, string Label, int Recomm
 public sealed record KnightCisBenchmarkSummary(
     string Key, string Framework, string Version, string Label, string Url, string Ruleset, int Recommendations, int CatalogEntries,
     KnightCisCounts Counts, KnightCisCounts ManualCounts, int Mitigated, IReadOnlyList<KnightCisProfileOption> Profiles,
-    int ProfileNotRecorded, int ProfileDivergent);
+    int ProfileNotRecorded, int ProfileDivergent, KnightCisCounts? KnightCounts = null, int? CriterionConfirmed = null);
+
+/// <summary>[v2] Resultado TÉCNICO do KNIGHT contra a recomendação (regras, resultado, evidência) — não é resultado CIS.</summary>
+public sealed record KnightCisReading(string Status, string StatusLabel, string Origin, string OriginLabel, bool Mitigated, string? Reason);
+
+public static class KnightCisCriterionState
+{
+    public const string Confirmed = "Confirmed";
+    public const string NotConfirmed = "NotConfirmed";
+
+    public static string Label(string state) => state == Confirmed ? "Critério da edição confirmado em fonte oficial" : KnightCisCriteria.NotConfirmedReason;
+}
+
+/// <summary>
+/// [v2] Situação do critério da edição: a edição e a seção (do rastreio), a procedência do rastreio e, quando houver, a fonte
+/// oficial conferida, por quem, quando e para quais versões do catálogo e regras.
+/// </summary>
+public sealed record KnightCisCriterion(
+    string State, string StateLabel, string Edition, string Section, string Trace, string? OfficialSource, string? Location,
+    string? ConsultedOn, string? ReviewedBy, IReadOnlyList<string> ReviewedCatalogVersions, IReadOnlyList<string> ReviewedRules, string? Note);
 
 /// <summary>Uma regra citada por uma variante, com o que o desfecho dela provou contra o critério oficial.</summary>
 public sealed record KnightCisRuleRef(string IndicatorId, string Match, string MatchLabel, string? Note, string Proof, string ProofLabel);
@@ -89,7 +109,8 @@ public sealed record KnightCisRecommendation(
     string Severity, string SeverityLabel, string ProfileState, string ProfileStateLabel, IReadOnlyList<string> Profiles,
     IReadOnlyList<string> ProfileLabels, string Status, string StatusLabel, string Origin, string OriginLabel, bool Mitigated,
     string? Reason, string WhatChecked, string Found, string? WhyItMatters, string? HowToFix, IReadOnlyList<KnightCisLink> Links,
-    IReadOnlyList<string> Limitations, IReadOnlyList<KnightCisVariant> Variants, IReadOnlyList<string> RuleIds, KnightCisManual? Manual);
+    IReadOnlyList<string> Limitations, IReadOnlyList<KnightCisVariant> Variants, IReadOnlyList<string> RuleIds, KnightCisManual? Manual,
+    KnightCisReading? Knight = null, KnightCisCriterion? Criterion = null, string? MappingOrigin = null);
 
 public sealed record KnightCisRule(
     string IndicatorId, string Title, string Source, string SourceLabel, Guid? RunId, string? CatalogVersion, string Status,
@@ -141,12 +162,13 @@ public static class KnightCisStatus
 
 public static class KnightCisProjection
 {
-    public const string SchemaVersion = "knight-cis-v1";
+    public const string SchemaVersion = "knight-cis-v2";
 
     public const string Disclaimer =
-        "Recorte técnico avaliado pelo AEGIS KNIGHT sobre as recomendações dos CIS Benchmarks nas edições indicadas: cada resultado sai das "
-        + "regras e da coleta desta avaliação. Não é certificação, auditoria nem atestado de conformidade emitido pelo CIS. Títulos e textos "
-        + "são autorais do AEGIS, em português; o texto oficial das recomendações não é reproduzido.";
+        "Recorte técnico do AEGIS KNIGHT sobre as recomendações dos CIS Benchmarks nas edições indicadas. O resultado do KNIGHT sai das "
+        + "regras e da coleta desta avaliação; ele só vira resultado CIS quando o critério da edição foi conferido numa fonte oficial do CIS. "
+        + "Não é certificação, auditoria nem atestado de conformidade emitido pelo CIS. Títulos e textos são autorais do AEGIS, em português; "
+        + "o texto oficial das recomendações não é reproduzido.";
 
     // Estados internos de uma regra contra UMA referência.
     private enum Proof { Compliant, Violation, NotApplicable, Inconclusive, NoResult, OutOfScope, Unmapped }
@@ -180,10 +202,12 @@ public static class KnightCisProjection
         IReadOnlyList<RuleEval> Rules, KnightCisManual? Manual, string? Limitation);
 
     public static KnightCisView Build(KnightCisInput input) =>
-        Build(input, KnightReferenceCatalog.Coverage(), KnightCatalog.Indicators);
+        Build(input, KnightReferenceCatalog.Coverage(), KnightCatalog.Indicators, KnightCisCriteria.Registered);
 
-    public static KnightCisView Build(KnightCisInput input, KnightReferenceCoverage coverage, IReadOnlyList<KnightIndicatorDefinition> catalog)
+    public static KnightCisView Build(KnightCisInput input, KnightReferenceCoverage coverage, IReadOnlyList<KnightIndicatorDefinition> catalog,
+        IReadOnlyList<KnightCisCriterionConfirmation>? confirmations = null)
     {
+        var confirmed = KnightCisCriteria.Index(confirmations ?? KnightCisCriteria.Registered);
         var candidates = KnightConsolidatedCandidates.Sources;
         var sources = input.Sources.ToDictionary(s => s.Source);
         var defs = catalog.ToDictionary(d => d.Id, StringComparer.Ordinal);
@@ -230,7 +254,7 @@ public static class KnightCisProjection
             if (!KnightCisEvidencePolicy.MappingReliableFor(se.CatalogVersion))
                 return new RuleEval(id, link.Match, link.Note, Proof.Unmapped, false, false,
                     $"A avaliação de {se.Label} foi executada com o catálogo {se.CatalogVersion ?? "não registrado"}; os vínculos entre regras e "
-                    + $"recomendações são confirmados para {string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions)}.", null, se);
+                    + $"recomendações foram revisados para {string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions)}.", null, se);
             if (!ruleIndex.TryGetValue(id, out var hit))
                 return new RuleEval(id, link.Match, link.Note, Proof.NoResult, false, false,
                     $"A regra {id} não consta da avaliação de {se.Label}.", null, se);
@@ -346,7 +370,7 @@ public static class KnightCisProjection
                 ownReferenceEntries.AddRange(entries.Zip(evals));
                 continue;
             }
-            recommendations.Add(BuildRecommendation(g.Key, entries, evals, traces, ruleIndex));
+            recommendations.Add(BuildRecommendation(g.Key, entries, evals, traces, confirmed));
         }
         recommendations = recommendations
             .OrderBy(r => BenchmarkOrder(r.Benchmark)).ThenBy(r => SectionSortKey(r.Section), StringComparer.Ordinal)
@@ -391,9 +415,10 @@ public static class KnightCisProjection
                 return new KnightCisProfileOption(tag, KnightCisTrace.ProfileLabel(tag), sel.Count, CountsOf(sel));
             }).ToList();
             return new KnightCisBenchmarkSummary(b.Key, b.Framework, b.Version, b.Label, b.Url, b.Ruleset, recs.Count, entries,
-                CountsOf(recs), CountsOf(recs.Where(r => r.Origin == "Manual")), recs.Count(r => r.Mitigated), options,
+                CountsOf(recs), KnightCountsOf(recs.Where(r => r.Knight!.Origin == "Manual")), recs.Count(r => r.Knight!.Mitigated), options,
                 recs.Count(r => r.ProfileState == nameof(KnightCisProfileState.NotRecorded)),
-                recs.Count(r => r.ProfileState is nameof(KnightCisProfileState.Divergent) or nameof(KnightCisProfileState.Ambiguous)));
+                recs.Count(r => r.ProfileState is nameof(KnightCisProfileState.Divergent) or nameof(KnightCisProfileState.Ambiguous)),
+                KnightCountsOf(recs), recs.Count(r => r.Criterion!.State == KnightCisCriterionState.Confirmed));
         }).ToList();
 
         // ---- Origem e reconciliação ------------------------------------------------------------------------
@@ -404,7 +429,7 @@ public static class KnightCisProjection
                 s.Included ? s.SourceState : null, s.Included && s.SourceState is not null ? KnightConsolidatedCollection.Label(s.SourceState) : null,
                 s.Included && KnightCisEvidencePolicy.MappingReliableFor(s.CatalogVersion),
                 s.Included && !KnightCisEvidencePolicy.MappingReliableFor(s.CatalogVersion)
-                    ? $"Executada com o catálogo {s.CatalogVersion ?? "não registrado"}: as recomendações que dependem desta fonte ficam não avaliadas (mapeamento confirmado para {string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions)})."
+                    ? $"Executada com o catálogo {s.CatalogVersion ?? "não registrado"}: as recomendações que dependem desta fonte ficam não avaliadas (vínculos revisados para {string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions)})."
                     : null))
             .ToList());
 
@@ -428,6 +453,12 @@ public static class KnightCisProjection
         if (all.OutOfScope > 0)
             explanation.Add($"{all.OutOfScope} recomendações dependem de {(outLabels.Count == 1 ? "fonte fora" : "fontes fora")} do escopo salvo "
                 + $"({string.Join(", ", outLabels)}) e aparecem como \"Fora do escopo\", fora dos totais.");
+        var knightAll = KnightCountsOf(recommendations);
+        var withReading = knightAll.Compliant + knightAll.NonCompliant + knightAll.NotApplicable;
+        var sustained = all.Compliant + all.NonCompliant + all.NotApplicable;
+        explanation.Add($"O resultado do KNIGHT chega a uma conclusão técnica em {withReading} recomendações ({knightAll.Compliant} aprovadas, "
+            + $"{knightAll.NonCompliant} reprovadas, {knightAll.NotApplicable} não aplicáveis). {sustained} têm o critério da edição confirmado "
+            + "numa fonte oficial do CIS e a evidência suficiente para um resultado CIS; as demais contam como não avaliadas, com a leitura do KNIGHT ao lado.");
         explanation.Add($"Totais CIS: {all.Considered} recomendações consideradas = {all.Compliant} conformes + {all.NonCompliant} não conformes + "
             + $"{all.NotEvaluated} não avaliadas + {all.NotApplicable} não aplicáveis; {all.OutOfScope} fora do escopo; {recommendations.Count} no total.");
 
@@ -437,8 +468,15 @@ public static class KnightCisProjection
 
         var limitations = new List<string>
         {
-            $"Identificação rastreada nos rulesets do Monkey365 (commit {Short(KnightCisTrace.Commit)}) para cada edição; o texto oficial das "
-            + "recomendações não é reproduzido nem foi conferido linha a linha pelo AEGIS. Onde a fonte de rastreio diverge, a recomendação fica sem veredito.",
+            KnightCisCriteria.OfficialSourcesConsulted.Count == 0
+                ? "Nenhuma fonte oficial do CIS foi consultada: as edições oficiais são distribuídas mediante cadastro no site do CIS, que não foi feito. "
+                  + "Sem o critério da edição confirmado, nenhuma recomendação recebe Conforme, Não conforme ou Não aplicável "
+                  + $"(\"{KnightCisCriteria.NotConfirmedReason}\"); o resultado do KNIGHT aparece ao lado, como leitura técnica."
+                : $"Critérios conferidos em: {string.Join("; ", KnightCisCriteria.OfficialSourcesConsulted)}. As demais recomendações ficam não avaliadas "
+                  + $"(\"{KnightCisCriteria.NotConfirmedReason}\").",
+            $"Identificação da edição e da seção rastreada nos rulesets do Monkey365 (commit {Short(KnightCisTrace.Commit)}). O rastreio, a classificação "
+            + "integral ou parcial do catálogo, o perfil e a versão do catálogo da execução não confirmam o critério oficial. Onde a fonte de rastreio "
+            + "diverge, a recomendação fica sem veredito.",
             "Perfil (licença E3/E5 e nível) é o registrado pela fonte de rastreio PARA ESTA EDIÇÃO; quando ela não registra, ou registra de "
             + "forma divergente, o perfil fica como limitação e a recomendação aparece só em \"Todos os perfis\".",
             "A orientação de correção é a registrada nas regras do KNIGHT, com os links da Microsoft Learn do catálogo; ela é apresentada "
@@ -455,7 +493,12 @@ public static class KnightCisProjection
         return new KnightCisView(SchemaVersion,
             new KnightCisMapping(coverage.CatalogVersion, "https://github.com/silverhack/monkey365", coverage.ReferenceCommit,
                 KnightCisTrace.Repository, KnightCisTrace.Commit, KnightCisEvidencePolicy.MappingCatalogVersions,
-                $"Vínculos regra → recomendação do catálogo {coverage.CatalogVersion}; identificação e perfil rastreados no Monkey365 (commit {Short(KnightCisTrace.Commit)})."),
+                $"Vínculos regra → recomendação do catálogo {coverage.CatalogVersion}, revisados para {string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions)}; "
+                + $"identificação e perfil rastreados no Monkey365 (commit {Short(KnightCisTrace.Commit)}).",
+                KnightCisCriteria.OfficialSourcesConsulted, recommendations.Count(r => r.Criterion!.State == KnightCisCriterionState.Confirmed),
+                KnightCisCriteria.OfficialSourcesConsulted.Count == 0 && confirmed.Count == 0
+                    ? "Nenhuma fonte oficial do CIS consultada: nenhum critério de edição confirmado."
+                    : $"Critério da edição confirmado em {recommendations.Count(r => r.Criterion!.State == KnightCisCriterionState.Confirmed)} recomendação(ões)."),
             origin, benchmarks, recommendations, rules, ownChecks, reconciliation, limitations, Disclaimer);
     }
 
@@ -489,8 +532,10 @@ public static class KnightCisProjection
 
     private static KnightCisRecommendation BuildRecommendation(
         string id, IReadOnlyList<KnightReferenceStatus> entries, IReadOnlyList<EntryEval> evals, IReadOnlyList<KnightCisTraceEntry?> traces,
-        IReadOnlyDictionary<string, (KnightCisSourceInput Source, KnightCisRuleInput Rule)> ruleIndex)
+        IReadOnlyDictionary<string, KnightCisCriterionConfirmation> confirmations)
     {
+        // Primeiro a LEITURA TÉCNICA do KNIGHT (o que a evidência das regras sustenta contra o critério rastreado); depois, a
+        // confirmação do critério da edição decide se ela vira resultado CIS.
         var first = entries[0].Control;
         var bench = KnightCisTrace.BenchmarkOf(first.Key)!;
         var group = entries.Count > 1 ? KnightCisEvidencePolicy.GroupOf(id) : null;
@@ -548,6 +593,50 @@ public static class KnightCisProjection
         var origins = deciding.Select(e => e.Origin).Where(o => o != "None").Distinct().ToList();
         var origin = origins.Count == 0 ? "None" : origins.Count == 1 ? origins[0] : "AutomatedAndManual";
         var mitigated = status == KnightCisStatus.NonCompliant && deciding.All(e => e.Mitigated) && deciding.Count > 0;
+        var knightStatus = status;
+        var knightReason = reason;
+        var knightOrigin = origin;
+        var knightMitigated = mitigated;
+
+        // ---- Critério da edição: só ele transforma a leitura do KNIGHT em resultado CIS --------------------------------
+        var trace = TraceText(bench, traces);
+        confirmations.TryGetValue(id, out var conf);
+        string? gate = null;
+        if (knightStatus != KnightCisStatus.OutOfScope)
+        {
+            if (conf is null)
+                gate = $"{KnightCisCriteria.NotConfirmedReason}: a seção {first.Section ?? "s/n"} de {bench.Framework} {bench.Version} não foi conferida "
+                    + "numa fonte oficial do CIS. A identificação vem do rastreio e o vínculo, do catálogo KNIGHT; o resultado do KNIGHT fica ao lado "
+                    + "e não vale como resultado CIS.";
+            else if (knightStatus is KnightCisStatus.Compliant or KnightCisStatus.NonCompliant or KnightCisStatus.NotApplicable
+                     && knightOrigin is "Automated" or "AutomatedAndManual")
+            {
+                var used = deciding.SelectMany(e => e.Rules)
+                    .Where(r => r.Rule is not null && (r.Proof is Proof.Compliant or Proof.Violation or Proof.NotApplicable || r.RawPassed))
+                    .GroupBy(r => r.IndicatorId, StringComparer.Ordinal).Select(g => g.First()).ToList();
+                var notReviewed = used.Where(r => !conf.ReviewedRules.Contains(r.IndicatorId, StringComparer.Ordinal)).Select(r => r.IndicatorId).ToList();
+                var otherVersion = used.Select(r => r.Source?.CatalogVersion ?? "não registrado")
+                    .Where(v => !conf.ReviewedCatalogVersions.Contains(v, StringComparer.Ordinal)).Distinct(StringComparer.Ordinal).ToList();
+                if (notReviewed.Count > 0)
+                    gate = $"O critério da edição foi conferido em {conf.OfficialSource}, mas o vínculo de {string.Join(", ", notReviewed)} não foi "
+                        + "revisado contra ele; o resultado do KNIGHT fica ao lado e não vale como resultado CIS.";
+                else if (otherVersion.Count > 0)
+                    gate = $"O vínculo foi revisado contra o critério da edição para o catálogo {string.Join(", ", conf.ReviewedCatalogVersions)}; "
+                        + $"a avaliação usou {string.Join(", ", otherVersion)}.";
+            }
+        }
+        if (gate is not null)
+        {
+            status = KnightCisStatus.NotEvaluated;
+            reason = gate;
+            origin = "None";
+            mitigated = false;
+        }
+        var criterion = new KnightCisCriterion(
+            conf is null ? KnightCisCriterionState.NotConfirmed : KnightCisCriterionState.Confirmed,
+            KnightCisCriterionState.Label(conf is null ? KnightCisCriterionState.NotConfirmed : KnightCisCriterionState.Confirmed),
+            $"{bench.Framework} {bench.Version}", first.Section ?? "s/n", trace, conf?.OfficialSource, conf?.Location, conf?.ConsultedOn,
+            conf?.ReviewedBy, conf?.ReviewedCatalogVersions ?? Array.Empty<string>(), conf?.ReviewedRules ?? Array.Empty<string>(), conf?.Note);
 
         // Perfil: o mesmo em todas as variantes, ou a limitação dita.
         var states = traces.Select(t => t?.ProfileState ?? KnightCisProfileState.NotRecorded).Distinct().ToList();
@@ -580,26 +669,30 @@ public static class KnightCisProjection
               + (evals.Any(e => e.Rules.Any(r => r.Match == KnightReferenceMatch.Partial)) ? ", com equivalência parcial explicada nas limitações." : ".")
             : $"{first.Title}. Sem regra automatizada: {KnightReferenceCatalog.DispositionLabel(entries[0].Disposition).ToLowerInvariant()}.";
 
-        string found = status switch
+        string found = knightStatus switch
         {
-            KnightCisStatus.NonCompliant => manual is not null && origin == "Manual"
+            KnightCisStatus.NonCompliant => manual is not null && knightOrigin == "Manual"
                 ? $"Verificação manual registrada como não conforme por {manual.ResponsibleName}: {manual.Justification}"
                 : string.Join(" ", rulesWithResult.Where(r => r.Proof == Proof.Violation).Select(r => $"{r.IndicatorId} reprovou: {r.Rule!.Evidence}")),
-            KnightCisStatus.Compliant => manual is not null && origin == "Manual"
+            KnightCisStatus.Compliant => manual is not null && knightOrigin == "Manual"
                 ? $"Verificação manual registrada como conforme por {manual.ResponsibleName}: {manual.Justification}"
                 : string.Join(" ", rulesWithResult.Where(r => r.RawPassed).Select(r => $"{r.IndicatorId} aprovou: {r.Rule!.Evidence}"))
-                  + (origin == "AutomatedAndManual" && manual is not null ? $" Complemento manual por {manual.ResponsibleName}: {manual.Justification}" : ""),
-            KnightCisStatus.NotApplicable => manual is not null && origin == "Manual"
+                  + (knightOrigin == "AutomatedAndManual" && manual is not null ? $" Complemento manual por {manual.ResponsibleName}: {manual.Justification}" : ""),
+            KnightCisStatus.NotApplicable => manual is not null && knightOrigin == "Manual"
                 ? $"Verificação manual registrada como não aplicável por {manual.ResponsibleName}: {manual.Justification}"
                 : string.Join(" ", rulesWithResult.Select(r => $"{r.IndicatorId}: {r.Rule!.Evidence}")),
-            _ => reason ?? "Sem evidência suficiente para concluir.",
+            // Sem conclusão do KNIGHT: a evidência de cada regra continua visível antes do motivo.
+            _ => string.Join(" ", rulesWithResult
+                    .Where(r => r.Rule!.Status is KnightIndicatorStatus.Passed or KnightIndicatorStatus.Exposed or KnightIndicatorStatus.Mitigated or KnightIndicatorStatus.NotApplicable)
+                    .Select(r => $"{r.IndicatorId} {Verb(r.Rule!.Status)}: {r.Rule!.Evidence.Trim().TrimEnd('.')}.")
+                    .Append(knightReason ?? "Sem evidência suficiente para concluir.")),
         };
-        if (string.IsNullOrWhiteSpace(found)) found = reason ?? "—";
+        if (string.IsNullOrWhiteSpace(found)) found = knightReason ?? "—";
 
         var why = rulesWithResult.Select(r => r.Rule!).Select(r => Join(r.Rationale, r.Impact)).FirstOrDefault(x => x is not null);
-        string? how = status switch
+        string? how = knightStatus switch
         {
-            KnightCisStatus.NonCompliant => origin == "Manual"
+            KnightCisStatus.NonCompliant => knightOrigin == "Manual"
                 ? "Corrija conforme a verificação manual registrada e registre uma nova verificação com a evidência."
                 : Join(rulesWithResult.Where(r => r.Proof == Proof.Violation).Select(r => r.Rule!.Recommendation).OfType<string>().Distinct().ToArray()),
             KnightCisStatus.NotEvaluated => HowToEvaluate(evals, entries[0]),
@@ -624,7 +717,48 @@ public static class KnightCisProjection
             first.Severity.ToString(), SeverityLabel(first.Severity),
             profileState.ToString(), KnightCisTrace.ProfileStateLabel(profileState), profiles, profiles.Select(KnightCisTrace.ProfileLabel).ToList(),
             status, KnightCisStatus.Label(status), origin, KnightCisStatus.OriginLabel(origin), mitigated, reason,
-            what, found, why, how, links, limitations.Distinct().ToList(), variants, ruleIds, manual);
+            what, found, why, how, links, limitations.Distinct().ToList(), variants, ruleIds, manual,
+            new KnightCisReading(knightStatus, KnightReadingLabel(knightStatus), knightOrigin, KnightCisStatus.OriginLabel(knightOrigin), knightMitigated, knightReason),
+            criterion, MappingOriginText(entries, evals, trace));
+    }
+
+    /// <summary>Rótulo do resultado TÉCNICO: o do KNIGHT, para não ser lido como resultado CIS.</summary>
+    public static string KnightReadingLabel(string status) => status switch
+    {
+        KnightCisStatus.Compliant => "Aprovado pelo KNIGHT",
+        KnightCisStatus.NonCompliant => "Reprovado pelo KNIGHT",
+        KnightCisStatus.NotApplicable => "Não aplicável pelo KNIGHT",
+        KnightCisStatus.OutOfScope => "Fora do escopo",
+        _ => "Sem conclusão do KNIGHT",
+    };
+
+    private static string Verb(KnightIndicatorStatus s) => s switch
+    {
+        KnightIndicatorStatus.Passed => "aprovou",
+        KnightIndicatorStatus.Exposed => "reprovou",
+        KnightIndicatorStatus.Mitigated => "reprovou com mitigação",
+        _ => "não se aplica",
+    };
+
+    private static string TraceText(KnightCisBenchmarkDescriptor bench, IReadOnlyList<KnightCisTraceEntry?> traces)
+    {
+        var rules = traces.Select(t => t?.Rule).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        return $"Monkey365 · {bench.Ruleset}" + (rules.Count > 0 ? " · " + string.Join(", ", rules) : "") + $" (commit {Short(KnightCisTrace.Commit)}) — rastreio, não texto oficial";
+    }
+
+    /// <summary>De onde vem o vínculo regra → recomendação, dito perto do resultado.</summary>
+    private static string MappingOriginText(IReadOnlyList<KnightReferenceStatus> entries, IReadOnlyList<EntryEval> evals, string trace)
+    {
+        var links = evals.SelectMany(e => e.Rules).GroupBy(r => r.IndicatorId, StringComparer.Ordinal).Select(g => g.First())
+            .Select(r => $"{r.IndicatorId} ({(r.Match == KnightReferenceMatch.Exact ? "integral" : "parcial")})").ToList();
+        var versions = evals.SelectMany(e => e.Rules).Select(r => r.Source?.CatalogVersion).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        var reviewed = string.Join(", ", KnightCisEvidencePolicy.MappingCatalogVersions);
+        var head = links.Count == 0
+            ? $"Sem vínculo de regra no catálogo KNIGHT: {KnightReferenceCatalog.DispositionLabel(entries[0].Disposition).ToLowerInvariant()}."
+            : $"Vínculo do catálogo KNIGHT: {string.Join(", ", links)}"
+              + (versions.Count > 0 ? $"; avaliação executada com {string.Join(", ", versions)}" : "")
+              + $"; vínculos revisados para {reviewed}.";
+        return head + $" Identificação: {trace}.";
     }
 
     private static string? HowToEvaluate(IReadOnlyList<EntryEval> evals, KnightReferenceStatus st)
@@ -633,7 +767,7 @@ public static class KnightCisProjection
             return "Faça a verificação no portal indicado e registre o resultado manual (resultado, justificativa, responsável, evidência e validade) "
                 + "em Cobertura e verificação manual.";
         if (evals.SelectMany(e => e.Rules).Any(r => r.Proof == Proof.Unmapped))
-            return "Sincronize novamente a fonte para obter uma avaliação com o catálogo atual; a visão CIS só projeta vínculos confirmados.";
+            return "Sincronize novamente a fonte para obter uma avaliação com o catálogo atual; a visão CIS só projeta vínculos revisados para a versão executada.";
         if (evals.SelectMany(e => e.Rules).Any(r => r.Proof is Proof.NoResult))
             return "Conclua uma avaliação da fonte em Configurações → Integrações e inclua-a na composição.";
         if (evals.SelectMany(e => e.Rules).Any(r => r.Rule?.Status is KnightIndicatorStatus.NotEvaluated or KnightIndicatorStatus.Error))
@@ -650,6 +784,15 @@ public static class KnightCisProjection
         v.Result.ToString(), v.ResultLabel, v.Justification, v.ResponsibleName, v.EvidenceReference, v.EvidenceDocumentTitle,
         v.EvidenceDocumentSha256, v.ValidUntil?.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture), v.Expired,
         v.RecordedByName, v.RecordedAt, complement);
+
+    /// <summary>Contagem pela leitura técnica do KNIGHT (antes da confirmação do critério da edição).</summary>
+    public static KnightCisCounts KnightCountsOf(IEnumerable<KnightCisRecommendation> recs)
+    {
+        var list = recs.ToList();
+        int N(string s) => list.Count(r => (r.Knight?.Status ?? r.Status) == s);
+        return new KnightCisCounts(N(KnightCisStatus.Compliant), N(KnightCisStatus.NonCompliant), N(KnightCisStatus.NotEvaluated),
+            N(KnightCisStatus.NotApplicable), N(KnightCisStatus.OutOfScope));
+    }
 
     public static KnightCisCounts CountsOf(IEnumerable<KnightCisRecommendation> recs)
     {

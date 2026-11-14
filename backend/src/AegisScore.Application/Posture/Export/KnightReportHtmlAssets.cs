@@ -90,8 +90,8 @@ table.stack td{display:block;border:0;padding:3px 0}table.stack td[data-l]::befo
 .c-Compliant{background:var(--ok)}.c-NonCompliant{background:var(--fail)}.c-NotEvaluated{background:var(--ne)}.c-NotApplicable{background:var(--na)}
 .c-OutOfScope{background:repeating-linear-gradient(45deg,var(--na),var(--na) 3px,var(--panel) 3px,var(--panel) 6px)}
 .cis-legend{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px}.cis-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-.bm h3{margin-top:0}.bm .kv{margin-top:8px;grid-template-columns:150px minmax(0,1fr)}.cisf{grid-template-columns:2fr repeat(4,minmax(0,1fr)) auto}
-.cis-sec{font-family:Consolas,Menlo,monospace;font-weight:700;margin-right:6px}.cis-rules td{font-size:12px}.lgrp li{margin-bottom:4px}
+.bm h3{margin-top:0}.bm .kv{margin-top:8px;grid-template-columns:150px minmax(0,1fr)}.cisf{grid-template-columns:2fr repeat(5,minmax(0,1fr)) auto}
+.cis-sec{font-family:Consolas,Menlo,monospace;font-weight:700;margin-right:6px}.pill.kread{background:transparent;border:1px dashed currentColor}.ctl .why{color:var(--warn)}.cis-rules td{font-size:12px}.lgrp li{margin-bottom:4px}
 @media (max-width:980px){.cisf{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:700px){.bm .kv{grid-template-columns:minmax(0,1fr)}}
 @media print{.tabs,.filters,.btn,.no-print{display:none!important}[hidden]{display:block!important}.panel,.ctl{break-inside:avoid}body{background:#fff}}
 """;
@@ -232,7 +232,9 @@ return p;}
 // ---------- [AEGIS-KNIGHT-CIS-01] CIS Benchmarks ----------
 // Tudo vem da visão CONGELADA na publicação (D.cis): resultado por recomendação, regras e recursos que o sustentam e o mapeamento.
 var CS=[['NonCompliant','Não conforme'],['NotEvaluated','Não avaliado'],['Compliant','Conforme'],['NotApplicable','Não aplicável'],['OutOfScope','Fora do escopo']];
-var CF={q:'',bench:'',service:'',status:'',profile:''},cisBox=null,cisRec=null,cisIn={},RULE={};
+var KS=[['NonCompliant','Reprovado pelo KNIGHT'],['Compliant','Aprovado pelo KNIGHT'],['NotApplicable','Não aplicável pelo KNIGHT'],['NotEvaluated','Sem conclusão do KNIGHT'],['OutOfScope','Fora do escopo']];
+function ks(r){return r.knight?r.knight.status:r.status;}
+var CF={q:'',bench:'',service:'',status:'',knight:'',profile:''},cisBox=null,cisRec=null,cisIn={},RULE={};
 function cnt(c,k){return k==='Compliant'?c.compliant:k==='NonCompliant'?c.nonCompliant:k==='NotEvaluated'?c.notEvaluated:k==='NotApplicable'?c.notApplicable:c.outOfScope;}
 function thead(h){return el('thead',null,[el('tr',null,h.map(function(x){return el('th',{text:x});}))]);}
 function kvl(rows){var d=el('div',{cls:'kv'});rows.forEach(function(r){if(r[1]===null||r[1]===undefined||r[1]==='')return;d.appendChild(el('span',{cls:'k',text:r[0]}));d.appendChild(typeof r[1]==='string'?el('span',{text:r[1]}):r[1]);});return d;}
@@ -242,8 +244,9 @@ function bmCard(b){var c=b.counts,cons=c.compliant+c.nonCompliant+c.notEvaluated
 var p=el('div',{cls:'panel bm'},[el('h3',{text:b.label}),el('p',{cls:'sub',text:b.recommendations+' recomendações · '+b.catalogEntries+' entradas do catálogo (variantes contam na recomendação) · '+cons+' consideradas'+(c.outOfScope?' · '+c.outOfScope+' fora do escopo':'')})]);
 p.appendChild(segBar(c,b.label));var ul=el('ul',{cls:'cis-legend'});
 CS.forEach(function(s){var n=cnt(c,s[0]);ul.appendChild(el('li',null,[el('i',{cls:'c-'+s[0]}),el('button',{type:'button',cls:'linkbtn','aria-label':b.label+': '+s[1]+', '+n+' — ver a lista',onclick:function(){cisGo({bench:b.key,status:s[0]});},text:s[1]+': '+n})]));});p.appendChild(ul);
-p.appendChild(kvl([['Conformes',ev?c.compliant+' de '+ev+' com veredito ('+pct(100*c.compliant/ev)+')':'nenhuma recomendação com veredito'],['Com veredito',cons?ev+' de '+cons+' consideradas ('+pct(100*ev/cons)+')':'nenhuma considerada'],
-['Verificação manual',man?man+' (conforme '+m.compliant+' · não conforme '+m.nonCompliant+' · não aplicável '+m.notApplicable+')':'nenhuma registrada'],['Não conformes mitigadas',b.mitigated?String(b.mitigated)+' (mitigação não é conformidade)':null],
+var kc=b.knightCounts;p.appendChild(kvl([['Critério confirmado',b.criterionConfirmed===null||b.criterionConfirmed===undefined?null:b.criterionConfirmed+' de '+b.recommendations+' recomendações'],
+['Resultado do KNIGHT',kc?kc.compliant+' aprovadas · '+kc.nonCompliant+' reprovadas · '+kc.notApplicable+' não aplicáveis · '+kc.notEvaluated+' sem conclusão (não é resultado CIS)':null],['Conformes',ev?c.compliant+' de '+ev+' com veredito ('+pct(100*c.compliant/ev)+')':'nenhuma recomendação com veredito'],['Com veredito',cons?ev+' de '+cons+' consideradas ('+pct(100*ev/cons)+')':'nenhuma considerada'],
+['Verificação manual',man?man+' (conforme '+m.compliant+' · não conforme '+m.nonCompliant+' · não aplicável '+m.notApplicable+')':'nenhuma registrada'],[kc?'Reprovadas com mitigação':'Não conformes mitigadas',b.mitigated?String(b.mitigated)+(kc?' na leitura do KNIGHT':'')+' (mitigação não é conformidade)':null],
 ['Perfil (rastreio)',b.profileNotRecorded+b.profileDivergent?(b.profileNotRecorded?b.profileNotRecorded+' sem perfil registrado':'')+(b.profileDivergent?(b.profileNotRecorded?' · ':'')+b.profileDivergent+' divergente(s)':'')+' na fonte de rastreio':'registrado em todas']]));
 p.appendChild(el('p',{cls:'sub'},[link(b.url,'Página do benchmark no CIS'),' · edição '+b.version]));return p;}
 function benchLabel(k){var b=(D.cis.benchmarks||[]).filter(function(x){return x.key===k;})[0];return b?b.label:k;}
@@ -251,12 +254,13 @@ function cisTab(){var box=el('div',{id:'tab-cis',role:'tabpanel','aria-labelledb
 box.appendChild(el('h2',{cls:'grp-h',text:'CIS Benchmarks'}));
 if(!C){box.appendChild(el('div',{cls:'panel'},[el('p',{text:D.cisState==='SingleSource'?'A visão CIS Benchmarks é publicada no relatório consolidado, que compõe as fontes do escopo. Este relatório é de uma fonte só.':D.cisState==='Frozen'?'A visão CIS registrada nesta fotografia não pôde ser lida.':'Esta publicação é anterior à visão CIS Benchmarks e não registrou resultados por recomendação. Os resultados do KNIGHT continuam valendo nas demais abas; uma nova publicação congela a visão CIS.'})]));return box;}
 C.rules.forEach(function(r){RULE[r.indicatorId]=r;});
-box.appendChild(el('p',{cls:'note info',text:C.disclaimer}));
-var o=C.origin,op=el('div',{cls:'panel'},[el('h3',{text:'Avaliação de origem'}),kvl([['Composição',o.label],['Dados de',dt(o.dataRecency)],['Publicado em',dt(D.header.capturedAt)],['Mapeamento',C.mapping.note]])]);
+box.appendChild(el('p',{cls:'note info',text:C.disclaimer}));var legacy=!C.recommendations.length||!C.recommendations[0].criterion;
+if(legacy)box.appendChild(el('p',{cls:'note',text:'Visão registrada antes da confirmação do critério da edição ('+C.schemaVersion+'): os resultados desta publicação foram calculados só pela leitura do KNIGHT, sem critério oficial do CIS confirmado. O texto congelado não é alterado; uma nova publicação registra a visão atual.'}));
+var o=C.origin,op=el('div',{cls:'panel'},[el('h3',{text:'Avaliação de origem'}),kvl([['Composição',o.label],['Dados de',dt(o.dataRecency)],['Publicado em',dt(D.header.capturedAt)],['Mapeamento',C.mapping.note],['Critério da edição',C.mapping.criterionNote],['Fontes oficiais consultadas',C.mapping.officialSources?(C.mapping.officialSources.length?C.mapping.officialSources.join('; '):'nenhuma'):null]])]);
 var tb=el('tbody'),H=['Fonte','Situação','Coleta','Catálogo','Execução','Mapeamento'];
 o.sources.forEach(function(s){tb.appendChild(el('tr',null,[el('td',{'data-l':H[0],text:s.label}),el('td',{'data-l':H[1]},[pill(s.included?'s-Passed':s.availability==='OutOfScope'?'s-OutOfScope':'s-NotEvaluated',s.availabilityLabel)]),
 el('td',{'data-l':H[2],text:s.included?dt(s.capturedAt)+(s.sourceStateLabel?' · '+s.sourceStateLabel:''):'—'}),el('td',{'data-l':H[3],text:s.catalogVersion||'—'}),el('td',{'data-l':H[4],cls:'mono',text:s.runId||'—'}),
-el('td',{'data-l':H[5],text:s.included?(s.mappingReliable?'Confirmado para esta versão':(s.note||'Não confirmado')):'—'})]));});
+el('td',{'data-l':H[5],text:s.included?(s.mappingReliable?'Vínculos revisados para esta versão':(s.note||'Vínculos não revisados')):'—'})]));});
 op.appendChild(el('div',{cls:'tw'},[el('table',{cls:'stack'},[thead(H),tb])]));box.appendChild(op);
 var sg=el('div',{cls:'grid g2'});C.benchmarks.forEach(function(b){sg.appendChild(bmCard(b));});
 box.appendChild(el('section',{cls:'grp','aria-labelledby':'cis-sum-h'},[el('h3',{id:'cis-sum-h',text:'Resumo por benchmark'}),el('p',{cls:'sub',text:'Cada recomendação conta uma vez no seu benchmark. Percentuais sobre as consideradas (Fora do escopo não entra). A nota KNIGHT ('+(D.kpis.score===null||D.kpis.score===undefined?'sem nota':Math.round(D.kpis.score)+'/100')+') é outra medida: pondera as regras do KNIGHT, não as recomendações, e não sai destes totais.'}),sg]));
@@ -267,7 +271,8 @@ var f=el('div',{cls:'panel filters cisf',role:'search','aria-label':'Filtrar rec
 function sel(name,label,opts){var s=el('select',{id:'cf-'+name,onchange:function(){CF[name]=s.value;if(name==='bench'){CF.profile='';fillProfiles();}cisRender();}},[el('option',{value:'',text:'Todos'})].concat(opts.map(function(o){return el('option',{value:o[0],text:o[1]});})));cisIn[name]=s;return el('label',{'for':'cf-'+name},[label,s]);}
 var q=el('input',{id:'cf-q',type:'search',placeholder:'Seção (ex.: 5.2.2.1) ou título',oninput:function(){CF.q=q.value;cisRender();}});cisIn.q=q;
 f.appendChild(el('label',{'for':'cf-q'},['Pesquisa',q]));f.appendChild(sel('bench','Benchmark',C.benchmarks.map(function(b){return[b.key,b.label];})));
-f.appendChild(sel('service','Serviço',uniqPairs(C.recommendations.map(function(r){return[r.service,r.serviceLabel];}))));f.appendChild(sel('status','Resultado',CS));
+f.appendChild(sel('service','Serviço',uniqPairs(C.recommendations.map(function(r){return[r.service,r.serviceLabel];}))));f.appendChild(sel('status','Resultado CIS',CS));
+if(!legacy)f.appendChild(sel('knight','Resultado do KNIGHT',KS));
 f.appendChild(sel('profile','Perfil',[]));f.appendChild(el('button',{cls:'btn',type:'button',onclick:function(){cisGo({});},text:'Limpar filtros'}));
 box.appendChild(f);cisRec=el('p',{cls:'recorte',role:'status','aria-live':'polite'});box.appendChild(cisRec);cisBox=el('div');box.appendChild(cisBox);
 if(C.ownChecks.length){var ob=el('tbody');C.ownChecks.forEach(function(x){ob.appendChild(el('tr',null,[el('td',{'data-l':'Regra'},[ctlRef(x.indicatorId,x.title)]),el('td',{'data-l':'Fonte',text:x.sourceLabel}),el('td',{'data-l':'Resultado do KNIGHT'},[pill('s-'+x.status,x.statusLabel)]),el('td',{'data-l':'Por que fica fora',text:x.note})]));});
@@ -277,30 +282,36 @@ fillProfiles();cisRender();return box;}
 function fillProfiles(){var s=cisIn.profile;if(!s)return;s.textContent='';s.appendChild(el('option',{value:'',text:'Todos os perfis'}));
 var bs=D.cis.benchmarks.filter(function(b){return!CF.bench||b.key===CF.bench;}),seen={};bs.forEach(function(b){b.profiles.forEach(function(p){if(seen[p.key])return;seen[p.key]=1;s.appendChild(el('option',{value:p.key,text:p.label+(CF.bench?' ('+p.recommendations+')':'')}));});});
 s.appendChild(el('option',{value:'-',text:'Perfil não registrado na fonte de rastreio'}));s.value=CF.profile||'';}
-function cisMatch(r){var f=CF;if(f.bench&&r.benchmark!==f.bench)return false;if(f.service&&r.service!==f.service)return false;if(f.status&&r.status!==f.status)return false;
+function cisMatch(r){var f=CF;if(f.bench&&r.benchmark!==f.bench)return false;if(f.service&&r.service!==f.service)return false;if(f.status&&r.status!==f.status)return false;if(f.knight&&ks(r)!==f.knight)return false;
 if(f.profile==='-'){if(r.profiles.length)return false;}else if(f.profile&&r.profiles.indexOf(f.profile)<0)return false;
 if(f.q){var t=f.q.toLowerCase().trim();if((r.section+' '+r.title+' '+r.id).toLowerCase().indexOf(t)<0)return false;}return true;}
-function cisGo(fl,open){if(srcSel!=='geral')setSrc('geral');CF={q:'',bench:'',service:'',status:'',profile:''};for(var k in fl)CF[k]=fl[k];fillProfiles();for(var k2 in cisIn)cisIn[k2].value=CF[k2]||'';cisRender(open);setTab('cis');
+function cisGo(fl,open){if(srcSel!=='geral')setSrc('geral');CF={q:'',bench:'',service:'',status:'',knight:'',profile:''};for(var k in fl)CF[k]=fl[k];fillProfiles();for(var k2 in cisIn)cisIn[k2].value=CF[k2]||'';cisRender(open);setTab('cis');
 var h=document.getElementById(open?'cis-'+open:'tab-cis');if(h){h.scrollIntoView();var b=h.querySelector('button');if(b&&open)b.focus();}}
 function cisRender(open){if(!cisBox)return;var all=D.cis.recommendations,list=all.filter(cisMatch);cisBox.textContent='';
 var c={compliant:0,nonCompliant:0,notEvaluated:0,notApplicable:0,outOfScope:0};list.forEach(function(r){var k=r.status;c[k.charAt(0).toLowerCase()+k.slice(1)]++;});
 var cons=c.compliant+c.nonCompliant+c.notEvaluated+c.notApplicable;
-cisRec.textContent='Mostrando '+list.length+' de '+all.length+' recomendações · '+(c.compliant+c.nonCompliant)+' com veredito de '+cons+' consideradas no recorte ('+c.compliant+' conformes, '+c.nonCompliant+' não conformes, '+c.notEvaluated+' não avaliadas, '+c.notApplicable+' não aplicáveis'+(c.outOfScope?', '+c.outOfScope+' fora do escopo':'')+').';
+var kn={c:0,n:0};list.forEach(function(r){var k=ks(r);if(k==='Compliant')kn.c++;if(k==='NonCompliant')kn.n++;});
+cisRec.textContent='Mostrando '+list.length+' de '+all.length+' recomendações · '+(c.compliant+c.nonCompliant)+' com veredito de '+cons+' consideradas no recorte ('+c.compliant+' conformes, '+c.nonCompliant+' não conformes, '+c.notEvaluated+' não avaliadas, '+c.notApplicable+' não aplicáveis'+(c.outOfScope?', '+c.outOfScope+' fora do escopo':'')+')'+(list.length&&list[0].knight?' · resultado do KNIGHT: '+kn.c+' aprovadas, '+kn.n+' reprovadas':'')+'.';
 if(!list.length){cisBox.appendChild(el('p',{cls:'empty',text:'Nenhuma recomendação corresponde aos filtros. Use “Limpar filtros”.'}));return;}
 list.forEach(function(r){cisBox.appendChild(cisItem(r,open===r.id));});}
+function short(t){var i=t.indexOf(': ');return i>0&&i<70?t.slice(0,i):t.length>140?t.slice(0,137)+'…':t;}
 function cisItem(r,isOpen){var body=null,id='cis-'+r.id;
 var head=el('button',{type:'button','aria-expanded':isOpen?'true':'false','aria-controls':id+'-b',onclick:function(){var o=head.getAttribute('aria-expanded')==='true';head.setAttribute('aria-expanded',o?'false':'true');if(!body){body=cisDetail(r);body.id=id+'-b';wrap.appendChild(body);}body.hidden=o;}},
-[el('span',null,[el('div',{cls:'t'},[el('span',{cls:'cis-sec',text:r.section}),r.title]),el('div',{cls:'s',text:benchLabel(r.benchmark)+' · '+r.serviceLabel+(r.profileLabels.length?' · '+r.profileLabels.join(', '):'')+(r.ruleIds.length?' · regras '+r.ruleIds.join(', '):' · sem regra automatizada')})]),
-el('span',{cls:'tags'},[pill('s-'+r.status,r.statusLabel+(r.mitigated?' (mitigada)':'')),r.origin==='Manual'||r.origin==='AutomatedAndManual'?pill('s-Mitigated',r.originLabel):null,pill('v-'+r.severity,r.severityLabel)])]);
+[el('span',null,[el('div',{cls:'t'},[el('span',{cls:'cis-sec',text:r.section}),r.title]),el('div',{cls:'s',text:benchLabel(r.benchmark)+' · '+r.serviceLabel+(r.profileLabels.length?' · '+r.profileLabels.join(', '):'')+(r.ruleIds.length?' · regras '+r.ruleIds.join(', '):' · sem regra automatizada')}),r.reason?el('div',{cls:'s why',text:short(r.reason)}):null]),
+el('span',{cls:'tags'},[pill('s-'+r.status,'CIS: '+r.statusLabel+(r.mitigated?' (mitigada)':'')),r.knight?pill('kread s-'+r.knight.status,r.knight.statusLabel+(r.knight.mitigated?' (mitigado)':'')):null,(r.knight?r.knight.origin:r.origin)==='Manual'||(r.knight?r.knight.origin:r.origin)==='AutomatedAndManual'?pill('s-Mitigated',r.knight?r.knight.originLabel:r.originLabel):null,pill('v-'+r.severity,r.severityLabel)])]);
 var wrap=el('div',{cls:'ctl',id:id},[head]);if(isOpen){body=cisDetail(r);body.id=id+'-b';wrap.appendChild(body);}return wrap;}
-function cisDetail(r){var b=el('div',{cls:'ctl-body'});
-b.appendChild(sec('O que foi verificado',[el('p',{text:r.whatChecked}),kvl([['Recomendação',benchLabel(r.benchmark)+' · seção '+r.section],['Serviço',r.serviceLabel+' · '+r.platform],['Perfil',r.profileLabels.length?r.profileLabels.join(', '):r.profileStateLabel],['Severidade de referência',r.severityLabel],['Origem do resultado',r.originLabel]])]));
-b.appendChild(sec('O que encontramos',[el('p',{text:r.found}),r.status==='NotEvaluated'||!r.reason?null:el('p',{cls:'sub',text:r.reason})]));
+function cisDetail(r){var b=el('div',{cls:'ctl-body'}),K=r.knight,Cr=r.criterion;
+if(Cr){var conf=Cr.state==='Confirmed';b.appendChild(sec('Resultado CIS e origem',[kvl([['Resultado CIS',el('span',null,[pill('s-'+r.status,r.statusLabel)])],['Motivo',r.reason],
+['Resultado do KNIGHT',K?K.statusLabel+' · '+K.originLabel+(K.mitigated?' · reprovado com mitigação (não é conformidade)':''):null],
+['Critério da edição',Cr.edition+' · seção '+Cr.section+' — '+Cr.stateLabel],['Procedência',conf?[Cr.officialSource,Cr.location,Cr.reviewedBy?'conferido por '+Cr.reviewedBy+(Cr.consultedOn?' em '+Cr.consultedOn:''):null,Cr.reviewedCatalogVersions.length?'catálogo '+Cr.reviewedCatalogVersions.join(', '):null].filter(function(x){return x;}).join(' · '):Cr.trace],
+['Origem do mapeamento',r.mappingOrigin]]),conf?null:el('p',{cls:'sub',text:'Para concluir: conferir o critério desta seção na edição oficial do CIS e registrar a procedência. A leitura do KNIGHT abaixo (regra, resultado e evidência) não muda.'})]));}
+b.appendChild(sec('O que foi verificado',[el('p',{text:r.whatChecked}),kvl([['Recomendação',benchLabel(r.benchmark)+' · seção '+r.section],['Serviço',r.serviceLabel+' · '+r.platform],['Perfil',r.profileLabels.length?r.profileLabels.join(', '):r.profileStateLabel],['Severidade de referência',r.severityLabel],[K?'Origem da leitura do KNIGHT':'Origem do resultado',K?K.originLabel:r.originLabel]])]));
+b.appendChild(sec('O que encontramos',[el('p',{text:r.found}),K||r.status==='NotEvaluated'||!r.reason?null:el('p',{cls:'sub',text:r.reason})]));
 if(r.whyItMatters)b.appendChild(sec('Por que importa',[el('p',{text:r.whyItMatters})]));
 var fix=[];if(r.howToFix)fix.push(el('p',{text:r.howToFix}));
 if(r.links.length){var ul=el('ul');r.links.forEach(function(l){ul.appendChild(el('li',null,[link(l.url,l.title),' (Microsoft Learn)']));});fix.push(el('div',null,[el('div',{cls:'k',text:'Documentação oficial'}),ul]));}
-if(r.status==='NonCompliant')fix.push(el('p',{cls:'sub',text:'Orientação para revisão humana: confirme o impacto na operação antes de alterar a configuração e valide pela próxima coleta.'}));
-if(!fix.length)fix.push(el('p',{cls:'sub',text:r.status==='Compliant'?'Nada a corrigir: a evidência comprova o critério.':r.status==='NotApplicable'?'Nada a corrigir: o critério não se aplica a este ambiente.':r.status==='OutOfScope'?'A fonte desta recomendação foi retirada do escopo da avaliação.':'Sem orientação adicional registrada.'}));
+if(ks(r)==='NonCompliant')fix.push(el('p',{cls:'sub',text:'Orientação para revisão humana: confirme o impacto na operação antes de alterar a configuração e valide pela próxima coleta.'}));
+if(!fix.length)fix.push(el('p',{cls:'sub',text:K&&r.status==='NotEvaluated'&&(K.status==='Compliant'||K.status==='NotApplicable')?'Nada a corrigir pela leitura do KNIGHT; o resultado CIS depende da confirmação do critério da edição.':r.status==='Compliant'?'Nada a corrigir: a evidência comprova o critério.':r.status==='NotApplicable'?'Nada a corrigir: o critério não se aplica a este ambiente.':r.status==='OutOfScope'?'A fonte desta recomendação foi retirada do escopo da avaliação.':'Sem orientação adicional registrada.'}));
 b.appendChild(sec('Como corrigir',fix));
 var rows=[];r.variants.forEach(function(v){v.rules.forEach(function(x){rows.push({v:v,x:x});});});
 if(rows.length){var tb=el('tbody'),H=['Regra do KNIGHT','Resultado','Valor observado','Valor esperado','Contas e recursos','Limitação','O que prova'];

@@ -38,10 +38,11 @@ public sealed record KnightCisVariantGroup(KnightCisVariantKind Kind, string Rat
 public static class KnightCisEvidencePolicy
 {
     /// <summary>
-    /// Versões do catálogo KNIGHT para as quais os vínculos regra → recomendação são confiáveis. Uma avaliação executada com outra
-    /// versão não é projetada com o mapeamento de hoje: as recomendações que dependem dela ficam não avaliadas, com o motivo.
+    /// Versões do catálogo KNIGHT cujos vínculos regra → recomendação foram REVISADOS para esta visão, fixadas aqui de forma
+    /// explícita. Subir o catálogo não aprova a versão nova: ela entra nesta lista só depois da revisão dos vínculos. Uma avaliação
+    /// executada com outra versão não é projetada: as recomendações que dependem dela ficam não avaliadas, com o motivo.
     /// </summary>
-    public static IReadOnlyList<string> MappingCatalogVersions { get; } = new[] { KnightCatalog.Version };
+    public static IReadOnlyList<string> MappingCatalogVersions { get; } = new[] { "ak-knight-v13" };
 
     public static bool MappingReliableFor(string? runCatalogVersion) =>
         runCatalogVersion is not null && MappingCatalogVersions.Contains(runCatalogVersion, StringComparer.Ordinal);
@@ -114,8 +115,8 @@ public static class KnightCisEvidencePolicy
             "Sem chaves de acesso, o Redis gerenciado só autentica pelo Entra ID: aprovada, cobre o critério. Aceitar também as chaves não prova que o Entra ID está desligado."),
         [Key(Azd + "3.5", "AK-AZ-DB-019")] = P(true, false, false,
             "A regra exige a chave do cliente em todas as contas: aprovada, cobre as que guardam dados críticos. Quais contas são críticas é decisão organizacional."),
-        [Key(Az + "2.1.8", "AK-AZ-DBR-003")] = P(true, false, false,
-            "A regra aceita a chave do cliente nos serviços gerenciados ou no DBFS de todos os workspaces: aprovada, cobre os dados críticos; reprovada, o workspace pode não guardar dado crítico."),
+        [Key(Az + "2.1.8", "AK-AZ-DBR-003")] = P(false, false, false,
+            "A regra aceita a chave do cliente nos serviços gerenciados OU no DBFS: não mostra onde estão os dados críticos do workspace nem se a superfície que os guarda está coberta. Nenhum desfecho conclui sozinho — é preciso confirmar o escopo dos dados críticos."),
     };
 
     private const string SpoOnlyWhenOff =

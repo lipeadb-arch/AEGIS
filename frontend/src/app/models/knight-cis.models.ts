@@ -28,6 +28,10 @@ export interface CisMapping {
   traceCommit: string;
   reliableCatalogVersions: string[];
   note: string;
+  /** [v2] Fontes oficiais do CIS consultadas (vazio: nenhuma) e quantas recomendações têm o critério da edição confirmado. */
+  officialSources?: string[] | null;
+  criteriaConfirmed?: number | null;
+  criterionNote?: string | null;
 }
 
 export interface CisOriginSource {
@@ -64,6 +68,28 @@ export interface CisBenchmark {
   profiles: CisProfileOption[];
   profileNotRecorded: number;
   profileDivergent: number;
+  /** [v2] Contagem pela leitura técnica do KNIGHT (não é resultado CIS) e recomendações com o critério confirmado. */
+  knightCounts?: CisCounts | null;
+  criterionConfirmed?: number | null;
+}
+
+/** [v2] Resultado técnico do KNIGHT contra a recomendação — regra, resultado e evidência; não é resultado CIS. */
+export interface CisReading { status: CisStatus; statusLabel: string; origin: string; originLabel: string; mitigated: boolean; reason: string | null; }
+
+/** [v2] Critério da edição: edição e seção do rastreio e a procedência da confirmação (quando houver). */
+export interface CisCriterion {
+  state: 'Confirmed' | 'NotConfirmed';
+  stateLabel: string;
+  edition: string;
+  section: string;
+  trace: string;
+  officialSource: string | null;
+  location: string | null;
+  consultedOn: string | null;
+  reviewedBy: string | null;
+  reviewedCatalogVersions: string[];
+  reviewedRules: string[];
+  note: string | null;
 }
 
 export interface CisRuleRef { indicatorId: string; match: string; matchLabel: string; note: string | null; proof: string; proofLabel: string; }
@@ -126,6 +152,10 @@ export interface CisRecommendation {
   variants: CisVariant[];
   ruleIds: string[];
   manual: CisManual | null;
+  /** [v2] Ausentes numa visão v1 já publicada. */
+  knight?: CisReading | null;
+  criterion?: CisCriterion | null;
+  mappingOrigin?: string | null;
 }
 
 export interface CisRule {
@@ -196,16 +226,43 @@ export function cisStatusLabel(s: CisStatus | string): string {
   return CIS_STATUS_LABEL[s as CisStatus] ?? s;
 }
 
-/** Filtros da página. `profile` "-" = perfil não registrado pela fonte de rastreio. */
-export interface CisFilters { q: string; benchmark: string; service: string; status: '' | CisStatus; profile: string; }
+const KNIGHT_READING_LABEL: Record<CisStatus, string> = {
+  Compliant: 'Aprovado pelo KNIGHT',
+  NonCompliant: 'Reprovado pelo KNIGHT',
+  NotEvaluated: 'Sem conclusão do KNIGHT',
+  NotApplicable: 'Não aplicável pelo KNIGHT',
+  OutOfScope: 'Fora do escopo',
+};
 
-export const EMPTY_CIS_FILTERS: CisFilters = { q: '', benchmark: '', service: '', status: '', profile: '' };
+/** Rótulo da leitura técnica do KNIGHT (nunca confundido com o resultado CIS). */
+export function knightReadingLabel(s: CisStatus | string): string {
+  return KNIGHT_READING_LABEL[s as CisStatus] ?? s;
+}
+
+/** Leitura do KNIGHT da recomendação; numa visão v1 já publicada, o próprio resultado registrado. */
+export function knightStatusOf(r: CisRecommendation): CisStatus {
+  return r.knight?.status ?? r.status;
+}
+
+/** Motivo curto para a linha da lista: a primeira frase até os dois-pontos ("Critério da edição CIS ainda não confirmado"). */
+export function shortReason(reason: string | null | undefined): string {
+  if (!reason) return '';
+  const i = reason.indexOf(': ');
+  if (i > 0 && i < 70) return reason.slice(0, i);
+  return reason.length > 140 ? reason.slice(0, 137) + '…' : reason;
+}
+
+/** Filtros da página. `profile` "-" = perfil não registrado pela fonte de rastreio. */
+export interface CisFilters { q: string; benchmark: string; service: string; status: '' | CisStatus; knight: '' | CisStatus; profile: string; }
+
+export const EMPTY_CIS_FILTERS: CisFilters = { q: '', benchmark: '', service: '', status: '', knight: '', profile: '' };
 
 /** Busca por seção ("5.2.2", com ou sem o prefixo do benchmark) ou por palavras do título, sem distinguir acento nem caixa. */
 export function matchesCis(r: CisRecommendation, f: CisFilters): boolean {
   if (f.benchmark && r.benchmark !== f.benchmark) return false;
   if (f.service && r.service !== f.service) return false;
   if (f.status && r.status !== f.status) return false;
+  if (f.knight && knightStatusOf(r) !== f.knight) return false;
   if (f.profile === '-') { if (r.profiles.length) return false; }
   else if (f.profile && !r.profiles.includes(f.profile)) return false;
   const q = fold(f.q);
@@ -296,7 +353,8 @@ export function describeCisFilters(view: KnightCisView, f: CisFilters): string {
   const p: string[] = [];
   if (f.benchmark) p.push(`benchmark: ${benchmarkLabel(view, f.benchmark)}`);
   if (f.service) p.push(`serviço: ${view.recommendations.find((r) => r.service === f.service)?.serviceLabel ?? f.service}`);
-  if (f.status) p.push(`resultado: ${cisStatusLabel(f.status)}`);
+  if (f.status) p.push(`resultado CIS: ${cisStatusLabel(f.status)}`);
+  if (f.knight) p.push(`resultado do KNIGHT: ${knightReadingLabel(f.knight)}`);
   if (f.profile === '-') p.push('perfil não registrado na fonte de rastreio');
   else if (f.profile) p.push(`perfil: ${profileOptions(view, '').find((x) => x.key === f.profile)?.label ?? f.profile}`);
   if (f.q.trim()) p.push(`pesquisa: “${f.q.trim()}”`);
@@ -311,6 +369,8 @@ export function ruleRows(view: KnightCisView, r: CisRecommendation): { ref: CisR
 
 /** O que a seção "Como corrigir" diz quando a projeção não traz orientação. */
 export function fixFallback(r: CisRecommendation): string {
+  if (r.knight && r.status === 'NotEvaluated' && (r.knight.status === 'Compliant' || r.knight.status === 'NotApplicable'))
+    return 'Nada a corrigir pela leitura do KNIGHT; o resultado CIS depende da confirmação do critério da edição.';
   switch (r.status) {
     case 'Compliant': return 'Nada a corrigir: a evidência comprova o critério.';
     case 'NotApplicable': return 'Nada a corrigir: o critério não se aplica a este ambiente.';

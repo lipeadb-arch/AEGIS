@@ -32,7 +32,9 @@ import {
   describeCisFilters,
   filterCis,
   groupSourceLimitations,
+  knightStatusOf,
   profileOptions,
+  shortReason,
   ratio,
   ruleRows,
 } from '../src/app/models/knight-cis.models';
@@ -211,6 +213,29 @@ test('ordem: origem → resumo por benchmark → reconciliação → lista; deta
   ok(at('<h4>O que foi verificado</h4>') < at('<h4>O que encontramos</h4>') && at('<h4>O que encontramos</h4>') < at('<h4>Por que importa</h4>')
     && at('<h4>Por que importa</h4>') < at('<h4>Como corrigir</h4>'), 'quatro perguntas na ordem');
   ok(src.includes('aria-expanded') && src.includes('role="search"') && src.includes('aria-live="polite"'), 'acessibilidade: expansível, busca e recorte anunciado');
+});
+
+// ---- (5b) resultado do KNIGHT ≠ resultado CIS ----------------------------------------------------------
+test('critério não confirmado: resultado CIS não avaliado, leitura do KNIGHT filtrável e motivo curto perto do resultado', () => {
+  const v = view();
+  const gate = 'Critério da edição CIS ainda não confirmado: a seção 5.2.2.1 de CIS Microsoft 365 Foundations 7.0.0 não foi conferida numa fonte oficial do CIS.';
+  v.recommendations[0] = rec('CIS-M365-7.0.0:5.2.2.1', 'NotEvaluated', {
+    reason: gate,
+    knight: { status: 'NonCompliant', statusLabel: 'Reprovado pelo KNIGHT', origin: 'Automated', originLabel: 'Avaliação automatizada', mitigated: false, reason: null },
+    criterion: { state: 'NotConfirmed', stateLabel: 'Critério da edição CIS ainda não confirmado', edition: 'CIS Microsoft 365 Foundations 7.0.0', section: '5.2.2.1',
+      trace: 'Monkey365 · cis_m365_7.0.0.json (commit 7cfa390) — rastreio, não texto oficial', officialSource: null, location: null, consultedOn: null,
+      reviewedBy: null, reviewedCatalogVersions: [], reviewedRules: [], note: null },
+    mappingOrigin: 'Vínculo do catálogo KNIGHT: AK-ENTRA-900 (integral); vínculos revisados para ak-knight-v13.',
+  });
+  eq(filterCis(v, { ...EMPTY_CIS_FILTERS, status: 'NonCompliant' }).length, 0, 'sem veredito CIS sem critério confirmado');
+  eq(filterCis(v, { ...EMPTY_CIS_FILTERS, knight: 'NonCompliant' })[0].id, 'CIS-M365-7.0.0:5.2.2.1', 'filtro pela leitura do KNIGHT');
+  eq(filterCis(v, { ...EMPTY_CIS_FILTERS, knight: 'Compliant' }).length, 1, 'visão v1 sem leitura usa o resultado registrado');
+  eq(knightStatusOf(v.recommendations[1]), 'Compliant', 'tolerância à visão v1');
+  eq(shortReason(gate), 'Critério da edição CIS ainda não confirmado', 'motivo curto na linha');
+  eq(describeCisFilters(v, { ...EMPTY_CIS_FILTERS, knight: 'NonCompliant' }), 'resultado do KNIGHT: Reprovado pelo KNIGHT', 'recorte em palavras');
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'src', 'app', 'pages', 'knight-cis.component.ts'), 'utf8');
+  ok(src.indexOf('<h4>Resultado CIS e origem</h4>') < src.indexOf('<h4>O que foi verificado</h4>'), 'resultado, motivo e origem do mapeamento no topo do detalhe');
+  ok(src.includes('Origem do mapeamento') && src.includes('Procedência'), 'origem do mapeamento e procedência perto do resultado');
 });
 
 // ---- (6) limitações agrupadas ------------------------------------------------------------------------
