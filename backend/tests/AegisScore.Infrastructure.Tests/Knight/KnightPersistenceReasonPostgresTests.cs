@@ -274,6 +274,11 @@ public sealed class KnightPersistenceReasonPostgresTests
             var desta = todas.Single(m => m.EndsWith("_KnightPersistence01_DiagnosticTextColumns", StringComparison.Ordinal));
             await migrator.MigrateAsync(todas[todas.IndexOf(desta) - 1]);
             (await ColumnTypesAsync(db)).Should().Contain("KnightIndicatorResults.NotEvaluatedReason=character varying(500)");
+            // [AEGIS-KNIGHT-CIS-01] O seeding abaixo publica pelo serviço com o modelo ATUAL, que conhece colunas criadas por migrations
+            // POSTERIORES a este ponto. Elas existem vazias só durante o seeding (uma fotografia de fonte única não usa a visão CIS) e
+            // saem antes da migração completa, que as recria — o registro "de antes" continua sendo o do ponto anterior.
+            foreach (var (table, column, type) in LaterColumns)
+                await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"{table}\" ADD COLUMN \"{column}\" {type} NULL");
         }
         var tenant = await SeedAsync(opt);
 
@@ -294,6 +299,8 @@ public sealed class KnightPersistenceReasonPostgresTests
 
         await using (var db = new AegisScoreDbContext(opt, new SystemTenantContext(null)))
         {
+            foreach (var (table, column, _) in LaterColumns)
+                await db.Database.ExecuteSqlRawAsync($"ALTER TABLE \"{table}\" DROP COLUMN \"{column}\"");
             await db.Database.MigrateAsync();
             var tipos = await ColumnTypesAsync(db);
             _output.WriteLine(string.Join(Environment.NewLine, tipos));
@@ -318,6 +325,12 @@ public sealed class KnightPersistenceReasonPostgresTests
             PostureSnapshotHasher.Verify(fotografia).Should().BeTrue("a fotografia anterior continua íntegra depois da migration");
         }
     }
+
+    /// <summary>Colunas de tabelas tocadas pelo seeding, criadas por migrations posteriores a KnightPersistence01.</summary>
+    private static readonly (string Table, string Column, string Type)[] LaterColumns =
+    {
+        ("PostureSnapshots", "CisBenchmarkJson", "text"),
+    };
 
     private static async Task<List<string>> ColumnTypesAsync(AegisScoreDbContext db)
     {

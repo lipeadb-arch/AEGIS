@@ -26,6 +26,8 @@ import {
 } from '../../models/knight.models';
 import { approvalBasis, limitationGroups, noLimitationText, priorityViews, scoreCoverage, sourceInclusion } from '../../models/knight-summary.models';
 import { KnightControlRefsComponent } from './knight-control-refs.component';
+import { RouterLink } from '@angular/router';
+import { SourceLimitationGroup, groupSourceLimitations } from '../../models/knight-cis.models';
 
 /** A mesma ordem (e as mesmas cores) dos estados nos gráficos do painel e do relatório: o que pede atenção primeiro. */
 const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 'NotEvaluated', 'Passed', 'NotApplicable'];
@@ -44,7 +46,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
 @Component({
   selector: 'app-knight-overview',
   standalone: true,
-  imports: [DatePipe, KnightControlRefsComponent],
+  imports: [DatePipe, KnightControlRefsComponent, RouterLink],
   template: `
     @let a = assessment();
     @let k = kpis();
@@ -143,7 +145,54 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
       }
     </section>
 
-    <!-- 4. Resultados por serviço (barras empilhadas, contagens inteiras) e controles com achados por severidade. -->
+    <!-- 4. [AEGIS-KNIGHT-CIS-01] Resultados por fonte: números da própria fonte, com denominador, e as limitações agrupadas por causa
+         (a frase de cada leitura, com códigos e endpoints, fica recolhida). Antes ficava escondido no detalhamento técnico. -->
+    @if (composition(); as comp) {
+      <section class="panel" aria-labelledby="ov-src">
+        <div class="hd"><h3 id="ov-src">Resultados por fonte</h3>
+          <span class="hint">Cada fonte com nota, cobertura e data próprias — não somadas</span></div>
+        <p class="small" [class.warn-text]="!collection(comp).complete"><b>Estado da coleta:</b> {{ collection(comp).text }}</p>
+        <div class="table-wrap">
+          <table class="data-table stack">
+            <thead><tr><th>Fonte</th><th>Situação</th><th>Avaliados</th><th>Aprovados</th><th>Achados</th><th>Sem avaliação</th><th>Nota</th><th>Catálogo e coleta</th><th>Limitações da fonte</th></tr></thead>
+            <tbody>
+              @for (s of comp; track s.source) {
+                <tr>
+                  <td data-l="Fonte">{{ s.label }}</td>
+                  <td data-l="Situação"><span class="avail" [class]="s.availabilityState">{{ availabilityLabel(s.availabilityState) }}</span></td>
+                  <td data-l="Avaliados">@if (s.counts; as c) { {{ c.passed + c.exposed + c.mitigated }} de {{ c.passed + c.exposed + c.mitigated + c.notEvaluated + c.error }} ({{ pct(s.coverage) }}) } @else { — }</td>
+                  <td data-l="Aprovados">{{ s.counts ? s.counts.passed : '—' }}</td>
+                  <td data-l="Achados">{{ s.counts ? s.counts.exposed + s.counts.mitigated : '—' }}</td>
+                  <td data-l="Sem avaliação">{{ s.counts ? s.counts.notEvaluated + s.counts.error : '—' }}</td>
+                  <td data-l="Nota">{{ s.score === null ? '—' : round(s.score) }}</td>
+                  <td data-l="Catálogo e coleta">{{ s.catalogVersion || '—' }}@if (s.capturedAt) { · {{ s.capturedAt | date: 'dd/MM/yyyy HH:mm' }} }@if (s.sourceState) { · {{ stateLabel(s.sourceState) }} }</td>
+                  <td data-l="Limitações da fonte">
+                    @if (s.collectionLimitations.length) {
+                      <ul class="lim">
+                        @for (g of groupedLimitations(s.collectionLimitations); track g.cause) {
+                          <li><b>{{ g.cause }}</b> · {{ g.items.length === 1 ? '1 leitura' : g.items.length + ' leituras' }}
+                            <details class="tech"><summary>Ver leituras e detalhes</summary>
+                              <ul>@for (it of g.items; track $index) { <li>{{ it.capability }}@if (it.detail) { — {{ it.detail }} }</li> }</ul>
+                            </details>
+                          </li>
+                        }
+                      </ul>
+                    } @else { — }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">
+          Avaliados = aprovados + achados (reprovados e mitigados) sobre os controles aplicáveis da fonte. A nota consolidada aplica a mesma
+          fórmula sobre a união dos controles das fontes incluídas; não é a média. Uma fonte fora do escopo do tenant não entra em nenhum total.
+          O resultado por recomendação desta composição está em <a routerLink="/knight/cis">CIS Benchmarks</a>.
+        </p>
+      </section>
+    }
+
+    <!-- 5. Resultados por serviço (barras empilhadas, contagens inteiras) e controles com achados por severidade. -->
     <div class="ov-grid">
       <section class="panel" aria-labelledby="ov-svc">
         <div class="hd"><h3 id="ov-svc">Resultados por serviço</h3>
@@ -196,7 +245,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
       </section>
     </div>
 
-    <!-- 5. Limitações relevantes: equivalentes agrupadas, cada capacidade consultável com o detalhe técnico seguro. -->
+    <!-- 6. Limitações relevantes: equivalentes agrupadas, cada capacidade consultável com o detalhe técnico seguro. -->
     <section class="panel" aria-labelledby="ov-lim">
       <div class="hd"><h3 id="ov-lim">Limitações relevantes</h3>
         @if (limitationCount()) { <span class="hint">{{ limitationCount() }} capacidade(s) não coletada(s) em {{ groups().length }} grupo(s)</span> }</div>
@@ -236,7 +285,7 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
     <!-- Leituras consultivas da página (interpretação e risco de identidade atual), fora dos números da avaliação. -->
     <ng-content />
 
-    <!-- 6. Detalhamento técnico, cobertura e metodologia — completo e consultável, sem ficar no caminho dos resultados. -->
+    <!-- 7. Detalhamento técnico, cobertura e metodologia — completo e consultável, sem ficar no caminho dos resultados. -->
     <details class="panel tech-section">
       <summary><h3>Detalhamento técnico, cobertura e metodologia</h3></summary>
 
@@ -306,40 +355,6 @@ const STATUS_ORDER: KnightIndicatorStatus[] = ['Exposed', 'Mitigated', 'Error', 
                   <td data-l="Tipo">{{ o.kindLabel || kindLabel(o.kind) }}</td>
                   <td data-l="Quantidade de controles">{{ o.controlCount }}</td>
                   <td data-l="Controles relacionados"><app-knight-control-refs [refs]="refs(o.indicatorIds)" (open)="open.emit($event)" /></td>
-                </tr>
-              }
-            </tbody>
-          </table>
-        </div>
-      }
-
-      @if (composition(); as comp) {
-        <h4>Composição do resultado consolidado</h4>
-        <p class="muted small">
-          Cada fonte tem a própria nota, cobertura e data — não são somadas. A nota consolidada aplica a mesma fórmula sobre a união
-          dos controles das fontes incluídas; não é a média. Uma fonte disponível e não incluída, ou sem avaliação concluída, aparece
-          aqui sem virar aprovação. Uma fonte fora do escopo do tenant não entra em nenhum total.
-        </p>
-        <p class="small" [class.warn-text]="!collection(comp).complete"><b>Estado da coleta:</b> {{ collection(comp).text }}</p>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Fonte</th><th>Situação</th><th>Controles avaliados</th><th>Nota</th><th>Cobertura</th><th>Catálogo</th><th>Coleta</th><th>Estado da coleta</th><th>Limitações da fonte</th></tr></thead>
-            <tbody>
-              @for (s of comp; track s.source) {
-                <tr>
-                  <td>{{ s.label }}</td>
-                  <td><span class="avail" [class]="s.availabilityState">{{ availabilityLabel(s.availabilityState) }}</span></td>
-                  <td>{{ s.included ? evaluatedOf(s.source) : '—' }}</td>
-                  <td>{{ s.score === null ? '—' : round(s.score) }}</td>
-                  <td>{{ s.coverage === null ? '—' : pct(s.coverage) }}</td>
-                  <td>{{ s.catalogVersion || '—' }}</td>
-                  <td>{{ s.capturedAt ? (s.capturedAt | date: 'dd/MM/yyyy HH:mm') : '—' }}</td>
-                  <td>{{ s.sourceState ? stateLabel(s.sourceState) : '—' }}</td>
-                  <td>
-                    @if (s.collectionLimitations.length) {
-                      <ul class="lim">@for (l of s.collectionLimitations; track $index) { <li>{{ readable(l) }}</li> }</ul>
-                    } @else { — }
-                  </td>
                 </tr>
               }
             </tbody>
@@ -566,6 +581,11 @@ export class KnightOverviewComponent {
 
   readable(raw: string): string {
     return readableLimitation(raw);
+  }
+
+  /** [AEGIS-KNIGHT-CIS-01] Limitações da fonte agrupadas pela causa (rótulos legíveis); o detalhe de cada leitura fica recolhido. */
+  groupedLimitations(raws: string[]): SourceLimitationGroup[] {
+    return groupSourceLimitations(raws.map(readableLimitation));
   }
 
   stateLabel(state: KnightSourceState): string {

@@ -98,6 +98,8 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
           </p>
         </div>
         <div class="page-actions">
+          <!-- [AEGIS-KNIGHT-CIS-01] Resultado por recomendação dos CIS Benchmarks, sobre a composição do escopo (a de "Geral"). -->
+          <a class="btn ghost cis-link" routerLink="/knight/cis">CIS Benchmarks</a>
           <a class="btn ghost" routerLink="/history">Histórico auditável</a>
           <a class="btn ghost" routerLink="/settings/integrations">Integrações</a>
           <!-- [AEGIS-MVP-PRODUCT-03] Publica EXATAMENTE a avaliação aberta. Sem o runId, o servidor
@@ -237,6 +239,7 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
                 }
               </div>
               <p class="sources-note" role="status">{{ scopeSaving() ? 'Salvando o escopo da avaliação…' : scopeNote() }}</p>
+              <p class="sources-note">Resultado por recomendação desta composição: <a routerLink="/knight/cis">CIS Benchmarks</a>.</p>
               @if (scopeError(); as serr) {
                 <p class="sources-note err" role="alert">{{ serr }} O escopo salvo não mudou.</p>
               }
@@ -350,7 +353,7 @@ type PublishTarget = { kind: 'run'; runId: string } | { kind: 'consolidated'; se
             <button type="button" role="tab" id="knight-tab-controls" [class.on]="tab() === 'controls'"
                     [attr.aria-selected]="tab() === 'controls'" [attr.tabindex]="tab() === 'controls' ? 0 : -1"
                     (click)="setTab('controls')" (keydown)="tabKey($event)">
-              Controles e findings <span class="tab-count">{{ findingsCount() }}</span>
+              Controles e achados <span class="tab-count">{{ findingsCount() }}</span>
             </button>
             <button type="button" role="tab" id="knight-tab-coverage" [class.on]="tab() === 'coverage'"
                     [attr.aria-selected]="tab() === 'coverage'" [attr.tabindex]="tab() === 'coverage' ? 0 : -1"
