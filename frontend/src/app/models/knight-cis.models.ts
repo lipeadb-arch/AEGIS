@@ -78,7 +78,7 @@ export interface CisReading { status: CisStatus; statusLabel: string; origin: st
 
 /** [v2] Critério da edição: edição e seção do rastreio e a procedência da confirmação (quando houver). */
 export interface CisCriterion {
-  state: 'Confirmed' | 'NotConfirmed';
+  state: 'Confirmed' | 'NotConfirmed' | 'AbsentFromEdition';
   stateLabel: string;
   edition: string;
   section: string;
@@ -370,7 +370,7 @@ export function ruleRows(view: KnightCisView, r: CisRecommendation): { ref: CisR
 /** O que a seção "Como corrigir" diz quando a projeção não traz orientação. */
 export function fixFallback(r: CisRecommendation): string {
   if (r.knight && r.status === 'NotEvaluated' && (r.knight.status === 'Compliant' || r.knight.status === 'NotApplicable'))
-    return r.criterion?.state === 'Confirmed'
+    return r.criterion && r.criterion.state !== 'NotConfirmed'
       ? 'Nada a corrigir pela leitura do KNIGHT; ela não basta para um resultado CIS nesta recomendação (veja o motivo acima).'
       : 'Nada a corrigir pela leitura do KNIGHT; o resultado CIS depende da confirmação do critério da edição.';
   switch (r.status) {
