@@ -33,9 +33,9 @@ public static class KnightCisCriteria
 {
     public const string NotConfirmedReason = "Critério da edição CIS ainda não confirmado";
 
-    /// <summary>Edição oficial consultada para o primeiro lote (seção 8 — Microsoft Teams admin center).</summary>
+    /// <summary>Edição oficial consultada para os lotes da seção 8 (Microsoft Teams) e da seção 6 (Exchange Online).</summary>
     public const string M365V700Pdf =
-        "CIS Microsoft 365 Foundations Benchmark v7.0.0 — PDF oficial do CIS (CIS_Microsoft_365_Foundations_Benchmark_v7.0.0.pdf, documento de 19/05/2026)";
+        "CIS Microsoft 365 Foundations Benchmark v7.0.0 — PDF oficial do CIS (CIS_Microsoft_365_Foundations_Benchmark_v7.0.0.pdf, edição de 20/05/2026, data impressa na capa)";
 
     private const string ConsultedOn = "2026-11-14";
     private const string Reviewer = "Claude (assistente de IA), a pedido de Felipe — conferência do texto oficial, sem segunda revisão humana";
@@ -55,17 +55,20 @@ public static class KnightCisCriteria
         + "Restrita ali, a edição aprova; aberta ali, a política Global ainda pode atender ao critério.";
 
     private static KnightCisCriterionConfirmation Teams(string section, string pages, string rule, string note,
+        IReadOnlyList<string>? sustained = null, string? unsustained = null) => M365(section, pages, rule, note, sustained, unsustained);
+
+    private static KnightCisCriterionConfirmation M365(string section, string pages, string rule, string note,
         IReadOnlyList<string>? sustained = null, string? unsustained = null) =>
         new("CIS-M365-7.0.0:" + section, M365V700Pdf, $"seção {section}, p. {pages} (Descrição, Auditoria e Valor padrão)", ConsultedOn, Reviewer,
             Reviewed, new[] { rule }, note, sustained, unsustained);
 
     /// <summary>
-    /// Confirmações registradas — primeiro lote: CIS Microsoft 365 Foundations 7.0.0, seção 8 (Microsoft Teams), conferida no PDF
+    /// Primeiro lote: CIS Microsoft 365 Foundations 7.0.0, seção 8 (Microsoft Teams), conferida no PDF
     /// oficial contra a regra KNIGHT e a evidência que ela coleta. Ficam FORA do lote, com o motivo: 8.4.1 (sem regra vinculada —
     /// a leitura exige acesso que o conector não tem) e 8.6.1 (composição com AK-MDO-019, cuja parte no Defender ainda não foi
     /// conferida contra o texto da edição).
     /// </summary>
-    public static IReadOnlyList<KnightCisCriterionConfirmation> Registered { get; } = new[]
+    private static readonly KnightCisCriterionConfirmation[] TeamsLot =
     {
         Teams("8.1.1", "500–503", "AK-TEAMS-001",
             "Edição: na configuração do cliente do Teams (Global), somente os provedores autorizados pela organização ficam True. "
@@ -120,6 +123,94 @@ public static class KnightCisCriteria
             "Edição: AllowCloudRecording = False na política de reunião Global. O KNIGHT exige o mesmo valor em todas as políticas.",
             OnlyCompliant, GlobalMeetingPolicy),
     };
+
+    private static readonly string[] Nothing = Array.Empty<string>();
+
+    private const string DefaultOwaPolicy =
+        "a edição audita só a política PADRÃO do Outlook na web (IsDefault); o KNIGHT reprova quando QUALQUER política viola o critério, "
+        + "então a reprovação pode vir só de uma política personalizada com a padrão conforme.";
+
+    /// <summary>
+    /// Segundo lote: CIS Microsoft 365 Foundations 7.0.0, seção 6 (Exchange admin center), conferido no mesmo PDF oficial contra
+    /// as regras AK-EXO e a configuração que elas coletam. Todas as 13 recomendações da seção estão aqui. Em 6.1.2, 6.2.1 e 6.2.2 o
+    /// critério foi conferido, mas a regra não sustenta nenhum desfecho da edição (lista vazia): ficam inconclusivas, com o motivo.
+    /// </summary>
+    private static readonly KnightCisCriterionConfirmation[] ExchangeLot =
+    {
+        M365("6.1.1", "417–418", "AK-EXO-005",
+            "Edição: AuditDisabled = False em Get-OrganizationConfig. Mesmo valor e mesma configuração que o KNIGHT lê; "
+            + "a aprovação e a reprovação são sustentadas."),
+        M365("6.1.2", "419–425", "AK-EXO-006",
+            "Edição: em cada caixa UserMailbox, AuditEnabled = True e as ações exigidas nos três tipos de acesso — inclusive FolderBind e "
+            + "Send (administrativo), FolderBind (delegado) e MailboxLogin (dono). As listas da regra no catálogo ak-knight-v13 não têm essas "
+            + "ações, e a regra verifica também caixas compartilhadas, que a edição não audita.",
+            Nothing,
+            "as listas de ações da regra (catálogo ak-knight-v13) não incluem FolderBind e Send no acesso administrativo, FolderBind no "
+            + "delegado e MailboxLogin no do dono, que a edição 7.0.0 exige — a aprovação do KNIGHT não prova a conformidade; e a regra "
+            + "verifica também caixas compartilhadas, fora da auditoria da edição — a reprovação pode vir só delas."),
+        M365("6.1.3", "426–429", "AK-EXO-007",
+            "Edição: nenhuma associação com AuditBypassEnabled = True em Get-MailboxAuditBypassAssociation, salvo exceção escrita. "
+            + "O KNIGHT lê as mesmas associações e só aprova com a leitura completa.",
+            OnlyCompliant,
+            "a edição admite o desvio de auditoria em contas com EXCEÇÃO ESCRITA, que a coleta não conhece; uma conta dispensada pode estar "
+            + "coberta por exceção."),
+        M365("6.2.1", "430–433", "AK-EXO-008",
+            "Edição: auditoria em dois passos — regras de transporte sem redirecionamento (RedirectMessageTo) para domínios externos e todas as "
+            + "políticas de saída (Get-HostedOutboundSpamFilterPolicy) com AutoForwardingMode = Off. O KNIGHT exige também a leitura do "
+            + "encaminhamento nas caixas de correio.",
+            Nothing,
+            "a reprovação do KNIGHT pode vir só do encaminhamento configurado em caixas de correio, ou de cópia para destino interno, que "
+            + "a auditoria da edição não verifica; e a aprovação do KNIGHT desconsidera regras de transporte desabilitadas, que a auditoria "
+            + "da edição lista sem filtrar pelo estado."),
+        M365("6.2.2", "434–436", "AK-EXO-009",
+            "Edição: nenhuma regra de transporte com SetSCL = -1 e SenderDomainIs preenchido (Get-TransportRule, sem filtro de estado). "
+            + "O KNIGHT considera também endereços e padrões de remetente, e só as regras em vigor.",
+            Nothing,
+            "a aprovação do KNIGHT desconsidera regras desabilitadas ou em modo de teste, que a auditoria da edição reprova; e a reprovação "
+            + "do KNIGHT pode vir de regra que isenta por endereço ou padrão de remetente, sem domínio, fora do critério da edição."),
+        M365("6.2.3", "437–439", "AK-EXO-010",
+            "Edição: Get-ExternalInOutlook com Enabled = True e AllowList só com endereços permitidos pela organização. O KNIGHT aprova com "
+            + "a identificação habilitada e a lista vazia.",
+            OnlyCompliant,
+            "a edição admite na AllowList os endereços que a organização permitiu; o KNIGHT reprova qualquer isenção e não sabe quais foram autorizadas."),
+        M365("6.3.1", "440–443", "AK-EXO-011",
+            "Edição: a política de atribuição de função PADRÃO sem My Custom Apps, My Marketplace Apps e My ReadWriteMailbox Apps. Mesmas "
+            + "três funções na regra, que as verifica em todas as políticas e só aprova com a padrão conforme.",
+            OnlyCompliant,
+            "a edição audita só a política de atribuição de função PADRÃO; o KNIGHT reprova quando qualquer política atribui as funções, "
+            + "então a reprovação pode vir só de uma política personalizada."),
+        M365("6.3.2", "444–448", "AK-EXO-012",
+            "Edição: PersonalAccountsEnabled = False e PersonalAccountCalendarsEnabled = False na política PADRÃO do Outlook na web. O "
+            + "KNIGHT exige os mesmos valores em todas as políticas e só aprova com a padrão conforme.",
+            OnlyCompliant, DefaultOwaPolicy),
+        M365("6.5.1", "449–451", "AK-EXO-013",
+            "Edição: OAuth2ClientProfileEnabled = True em Get-OrganizationConfig. Mesmo valor e mesma configuração que o KNIGHT lê; "
+            + "a aprovação e a reprovação são sustentadas."),
+        M365("6.5.2", "452–453", "AK-EXO-014",
+            "Edição: MailTipsAllTipsEnabled, MailTipsExternalRecipientsTipsEnabled e MailTipsGroupMetricsEnabled = True e "
+            + "MailTipsLargeAudienceThreshold num valor aceitável (25 é o padrão). O KNIGHT exige os três e o limite no máximo 25.",
+            OnlyCompliant,
+            "a edição deixa o limite de público amplo a critério da organização (“valor aceitável”); o KNIGHT reprova acima de 25, e a "
+            + "reprovação pode vir só do limite."),
+        M365("6.5.3", "454–455", "AK-EXO-015",
+            "Edição: AdditionalStorageProvidersAvailable = False na política OwaMailboxPolicy-Default. O KNIGHT exige o mesmo valor em todas "
+            + "as políticas e só aprova com a padrão conforme.",
+            OnlyCompliant, DefaultOwaPolicy),
+        M365("6.5.4", "456–457", "AK-EXO-016",
+            "Edição: SmtpClientAuthenticationDisabled = True em Get-TransportConfig. O KNIGHT exige o mesmo valor na organização e nenhuma "
+            + "caixa de correio habilitando o SMTP AUTH por substituição.",
+            OnlyCompliant,
+            "a edição audita só o valor da organização; o KNIGHT reprova também quando uma caixa habilita o SMTP AUTH por substituição, "
+            + "então a reprovação pode vir só das caixas, com a organização conforme."),
+        M365("6.5.5", "458–460", "AK-EXO-017",
+            "Edição: RejectDirectSend = True em Get-OrganizationConfig. Mesmo valor e mesma configuração que o KNIGHT lê; a aprovação e a "
+            + "reprovação são sustentadas."),
+    };
+
+    /// <summary>
+    /// Confirmações registradas: lote 1 (seção 8, Teams) e lote 2 (seção 6, Exchange Online) do CIS Microsoft 365 Foundations 7.0.0.
+    /// </summary>
+    public static IReadOnlyList<KnightCisCriterionConfirmation> Registered { get; } = TeamsLot.Concat(ExchangeLot).ToArray();
 
     public static IReadOnlyDictionary<string, KnightCisCriterionConfirmation> Index(IEnumerable<KnightCisCriterionConfirmation> confirmations) =>
         confirmations.GroupBy(c => c.RecommendationId, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);

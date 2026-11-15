@@ -626,8 +626,10 @@ public static class KnightCisProjection
                 else if (conf.SustainedResults is { } sustainedResults && !sustainedResults.Contains(knightStatus, StringComparer.Ordinal))
                     gate = $"{KnightReadingLabel(knightStatus)} não vale como resultado CIS: "
                         + $"{conf.UnsustainedReason ?? "o critério da edição difere do critério da regra."} Critério da edição conferido em "
-                        + $"{conf.OfficialSource} ({conf.Location}); por ele, a leitura do KNIGHT só sustenta "
-                        + $"{string.Join(" ou ", sustainedResults.Select(KnightCisStatus.Label))}.";
+                        + $"{conf.OfficialSource} ({conf.Location}); "
+                        + (sustainedResults.Count == 0
+                            ? "por ele, nenhum desfecho da leitura do KNIGHT vale como resultado CIS nesta recomendação."
+                            : $"por ele, a leitura do KNIGHT só sustenta {string.Join(" ou ", sustainedResults.Select(KnightCisStatus.Label))}.");
             }
         }
         if (gate is not null)
