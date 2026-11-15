@@ -370,7 +370,9 @@ export function ruleRows(view: KnightCisView, r: CisRecommendation): { ref: CisR
 /** O que a seção "Como corrigir" diz quando a projeção não traz orientação. */
 export function fixFallback(r: CisRecommendation): string {
   if (r.knight && r.status === 'NotEvaluated' && (r.knight.status === 'Compliant' || r.knight.status === 'NotApplicable'))
-    return 'Nada a corrigir pela leitura do KNIGHT; o resultado CIS depende da confirmação do critério da edição.';
+    return r.criterion?.state === 'Confirmed'
+      ? 'Nada a corrigir pela leitura do KNIGHT; ela não basta para um resultado CIS nesta recomendação (veja o motivo acima).'
+      : 'Nada a corrigir pela leitura do KNIGHT; o resultado CIS depende da confirmação do critério da edição.';
   switch (r.status) {
     case 'Compliant': return 'Nada a corrigir: a evidência comprova o critério.';
     case 'NotApplicable': return 'Nada a corrigir: o critério não se aplica a este ambiente.';
