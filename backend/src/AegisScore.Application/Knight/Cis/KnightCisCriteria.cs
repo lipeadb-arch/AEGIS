@@ -23,17 +23,23 @@ namespace AegisScore.Application.Knight.Cis;
 /// regra do KNIGHT é MAIS restritiva que o critério da edição (lê mais políticas, aceita menos valores, ou lê a configuração que a
 /// edição trata como estado de aprovação opcional), a aprovação dela prova a conformidade, mas a reprovação não prova a não
 /// conformidade: o desfecho não sustentado fica "Não avaliado" com <c>UnsustainedReason</c>.
+/// <para><c>ResultMap</c> traduz um desfecho do KNIGHT no resultado que a PRÓPRIA edição declara para aquela situação (ex.: a
+/// edição diz que a recomendação está conforme com o compartilhamento externo desligado, e o KNIGHT diz "não aplicável"); o motivo
+/// vai em <c>ResultMapReason</c>. <c>CollectionGap</c> diz, quando o KNIGHT não conclui, qual configuração exigida pela edição a
+/// coleta atual não alcança. <c>AbsentFromEdition</c> registra uma chave do catálogo que NÃO existe na edição conferida.</para>
 /// </remarks>
 public sealed record KnightCisCriterionConfirmation(
     string RecommendationId, string OfficialSource, string Location, string ConsultedOn, string ReviewedBy,
     IReadOnlyList<string> ReviewedCatalogVersions, IReadOnlyList<string> ReviewedRules, string? Note,
-    IReadOnlyList<string>? SustainedResults = null, string? UnsustainedReason = null);
+    IReadOnlyList<string>? SustainedResults = null, string? UnsustainedReason = null,
+    IReadOnlyDictionary<string, string>? ResultMap = null, string? ResultMapReason = null,
+    string? CollectionGap = null, string? AbsentFromEdition = null);
 
 public static class KnightCisCriteria
 {
     public const string NotConfirmedReason = "Critério da edição CIS ainda não confirmado";
 
-    /// <summary>Edição oficial consultada para os lotes da seção 8 (Microsoft Teams) e da seção 6 (Exchange Online).</summary>
+    /// <summary>Edição oficial consultada para os lotes das seções 8 (Microsoft Teams), 6 (Exchange Online) e 7 (SharePoint e OneDrive).</summary>
     public const string M365V700Pdf =
         "CIS Microsoft 365 Foundations Benchmark v7.0.0 — PDF oficial do CIS (CIS_Microsoft_365_Foundations_Benchmark_v7.0.0.pdf, edição de 20/05/2026, data impressa na capa)";
 
@@ -58,9 +64,10 @@ public static class KnightCisCriteria
         IReadOnlyList<string>? sustained = null, string? unsustained = null) => M365(section, pages, rule, note, sustained, unsustained);
 
     private static KnightCisCriterionConfirmation M365(string section, string pages, string rule, string note,
-        IReadOnlyList<string>? sustained = null, string? unsustained = null) =>
+        IReadOnlyList<string>? sustained = null, string? unsustained = null,
+        IReadOnlyDictionary<string, string>? map = null, string? mapReason = null, string? CollectionGap = null) =>
         new("CIS-M365-7.0.0:" + section, M365V700Pdf, $"seção {section}, p. {pages} (Descrição, Auditoria e Valor padrão)", ConsultedOn, Reviewer,
-            Reviewed, new[] { rule }, note, sustained, unsustained);
+            Reviewed, new[] { rule }, note, sustained, unsustained, map, mapReason, CollectionGap);
 
     /// <summary>
     /// Primeiro lote: CIS Microsoft 365 Foundations 7.0.0, seção 8 (Microsoft Teams), conferida no PDF
@@ -207,10 +214,111 @@ public static class KnightCisCriteria
             + "reprovação são sustentadas."),
     };
 
+
+    private static readonly string[] CompliantOrNot = { KnightCisStatus.Compliant, KnightCisStatus.NonCompliant };
+
+    /// <summary>A configuração que a edição audita em <c>Get-SPOTenant</c> e que só a API de administração do SharePoint expõe.</summary>
+    private static string AdminOnly(string property, string scope) =>
+        $"A edição audita {property} em Get-SPOTenant ({scope}). Essa configuração só é exposta pela API de administração do SharePoint, "
+        + "que exige Sites.FullControl.All e que a coleta atual, somente leitura, não chama; o Microsoft Graph (/admin/sharepoint/settings) "
+        + "não a expõe.";
+
+    /// <summary>O "não aplicável" do KNIGHT com o compartilhamento externo desligado, quando a edição não trata esse caso à parte.</summary>
+    private static string SharingOffNotApplicable(string property) =>
+        $"com o compartilhamento externo desligado, o KNIGHT diz Não aplicável sem ler o valor; a edição audita {property} mesmo assim e "
+        + "não trata esse caso como não aplicável.";
+
+    private static readonly IReadOnlyDictionary<string, string> NotApplicableIsCompliant =
+        new Dictionary<string, string> { [KnightCisStatus.NotApplicable] = KnightCisStatus.Compliant };
+
+    private static readonly string[] CompliantNotOrSharingOff =
+        { KnightCisStatus.Compliant, KnightCisStatus.NonCompliant, KnightCisStatus.NotApplicable };
+
     /// <summary>
-    /// Confirmações registradas: lote 1 (seção 8, Teams) e lote 2 (seção 6, Exchange Online) do CIS Microsoft 365 Foundations 7.0.0.
+    /// Terceiro lote: CIS Microsoft 365 Foundations 7.0.0, seção 7 (SharePoint admin center), conferido no mesmo PDF oficial contra as
+    /// regras AK-SPO e a configuração que elas coletam. São as 13 chaves do catálogo: as 12 seções da edição e a 7.3.2, que a edição
+    /// 7.0.0 removeu (registrada como ausente). Pelo Microsoft Graph a coleta lê 7.2.1, 7.2.3, 7.2.5 e 7.2.6; as demais propriedades só
+    /// existem na API de administração do SharePoint, que a coleta não chama — sem leitura, o motivo diz qual configuração falta.
     /// </summary>
-    public static IReadOnlyList<KnightCisCriterionConfirmation> Registered { get; } = TeamsLot.Concat(ExchangeLot).ToArray();
+    private static readonly KnightCisCriterionConfirmation[] SharePointLot =
+    {
+        M365("7.2.1", "463–465", "AK-SPO-001",
+            "Edição: LegacyAuthProtocolsEnabled = False em Get-SPOTenant — configuração do locatário, vale para SharePoint e OneDrive. O KNIGHT lê "
+            + "a mesma configuração pelo Microsoft Graph (isLegacyAuthProtocolsEnabled); a aprovação e a reprovação são sustentadas."),
+        M365("7.2.2", "466–467", "AK-SPO-002",
+            "Edição: EnableAzureADB2BIntegration = True em Get-SPOTenant (SharePoint e OneDrive). A regra compara o mesmo valor quando a API de "
+            + "administração é lida.",
+            CompliantOrNot, SharingOffNotApplicable("EnableAzureADB2BIntegration"),
+            CollectionGap: AdminOnly("EnableAzureADB2BIntegration", "SharePoint e OneDrive")),
+        M365("7.2.3", "468–470", "AK-SPO-003",
+            "Edição: SharingCapability = ExternalUserSharingOnly, ExistingExternalUserSharingOnly ou Disabled em Get-SPOTenant — o nível do "
+            + "SharePoint. O KNIGHT lê o mesmo nível pelo Microsoft Graph (sharingCapability) e reprova só “qualquer pessoa”; a aprovação e a "
+            + "reprovação são sustentadas."),
+        M365("7.2.4", "471–473", "AK-SPO-004",
+            "Edição: OneDriveSharingCapability = Disabled — o nível do OneDrive, que a edição registra como nunca mais permissivo que o do "
+            + "SharePoint. O KNIGHT aprova pelo Microsoft Graph quando o SharePoint está restrito à organização e, nos demais casos, compara o "
+            + "mesmo valor pela API de administração.",
+            CollectionGap: AdminOnly("OneDriveSharingCapability", "OneDrive")
+                + " Pelo Graph, só se conclui quando o SharePoint está restrito à organização."),
+        M365("7.2.5", "474–475", "AK-SPO-005",
+            "Edição: PreventExternalUsersFromResharing = True em Get-SPOTenant (SharePoint). O KNIGHT lê a mesma configuração pelo Microsoft "
+            + "Graph (isResharingByExternalUsersEnabled, invertido).",
+            CompliantOrNot, SharingOffNotApplicable("PreventExternalUsersFromResharing")),
+        M365("7.2.6", "476–479", "AK-SPO-006",
+            "Edição: SharingCapability = Disabled, OU SharingDomainRestrictionMode = AllowList com domínios confiáveis (SharePoint). O KNIGHT lê "
+            + "as mesmas configurações pelo Microsoft Graph; com o compartilhamento desligado diz Não aplicável, que a edição declara conforme.",
+            CompliantNotOrSharingOff, null, NotApplicableIsCompliant,
+            "A edição declara esta recomendação conforme quando o compartilhamento externo do SharePoint está em “Somente pessoas da "
+            + "organização”, qualquer que seja a restrição por domínio (p. 477); a leitura do KNIGHT encontrou esse estado e o classificou "
+            + "como não aplicável."),
+        M365("7.2.7", "480–482", "AK-SPO-007",
+            "Edição: DefaultSharingLinkType = Direct (pessoas específicas) ou Internal (somente pessoas da organização) em Get-SPOTenant — o "
+            + "link padrão do SharePoint e do OneDrive. O KNIGHT aceita só Direct.",
+            OnlyCompliant, "a edição aceita também “Somente pessoas da organização” (Internal), que o KNIGHT reprova.",
+            CollectionGap: AdminOnly("DefaultSharingLinkType", "SharePoint e OneDrive")),
+        M365("7.2.8", "483–486", "AK-SPO-008",
+            "Edição: SharingCapability = Disabled, OU WhoCanShareAuthenticatedGuestAllowList com ao menos um grupo de segurança — configuração "
+            + "global, vale para SharePoint e OneDrive. A regra lê outra propriedade (GuestSharingGroupAllowList); só o estado de compartilhamento "
+            + "desligado, lido pelo Microsoft Graph, coincide com a edição.",
+            new[] { KnightCisStatus.NotApplicable },
+            "a regra lê GuestSharingGroupAllowList, e a edição audita WhoCanShareAuthenticatedGuestAllowList — outra propriedade do locatário.",
+            NotApplicableIsCompliant,
+            "A edição declara esta recomendação conforme quando o compartilhamento externo do SharePoint está em “Somente pessoas da "
+            + "organização”, qualquer que seja a lista de grupos (p. 484); a leitura do KNIGHT encontrou esse estado e o classificou como não "
+            + "aplicável.",
+            AdminOnly("WhoCanShareAuthenticatedGuestAllowList", "SharePoint e OneDrive")
+                + " A regra, além disso, compara GuestSharingGroupAllowList, que não é a propriedade da edição."),
+        M365("7.2.9", "487–489", "AK-SPO-009",
+            "Edição: ExternalUserExpirationRequired = True e ExternalUserExpireInDays = 30 (o mínimo aceito é 30) — convidados de sites do "
+            + "SharePoint e do OneDrive. A regra aceita “até 30 dias”, equivalente a 30 pelo mínimo do serviço.",
+            CompliantOrNot, SharingOffNotApplicable("ExternalUserExpirationRequired e ExternalUserExpireInDays"),
+            CollectionGap: AdminOnly("ExternalUserExpirationRequired e ExternalUserExpireInDays", "sites do SharePoint e OneDrive")),
+        M365("7.2.10", "490–492", "AK-SPO-010",
+            "Edição: EmailAttestationRequired = True e EmailAttestationReAuthDays até 15 em Get-SPOTenant (SharePoint e OneDrive). Mesmo critério "
+            + "na regra quando a API de administração é lida.",
+            CompliantOrNot, SharingOffNotApplicable("EmailAttestationRequired e EmailAttestationReAuthDays"),
+            CollectionGap: AdminOnly("EmailAttestationRequired e EmailAttestationReAuthDays", "SharePoint e OneDrive")),
+        M365("7.2.11", "493–495", "AK-SPO-011",
+            "Edição: DefaultLinkPermission = View em Get-SPOTenant (links de compartilhamento do SharePoint). Mesmo valor na regra quando a API de "
+            + "administração é lida; a aprovação e a reprovação são sustentadas.",
+            CollectionGap: AdminOnly("DefaultLinkPermission", "SharePoint")),
+        M365("7.3.1", "496–497", "AK-SPO-012",
+            "Edição: DisallowInfectedFileDownload = True em Get-SPOTenant (SharePoint). Mesmo valor na regra quando a API de administração é lida; "
+            + "a aprovação e a reprovação são sustentadas.",
+            CollectionGap: AdminOnly("DisallowInfectedFileDownload", "SharePoint")),
+        new("CIS-M365-7.0.0:7.3.2", M365V700Pdf, "Appendix: Change History, versão 7.0.0, p. 613–615 (REMOVE - 7.3.2, Ticket #26841)",
+            ConsultedOn, Reviewer, Reviewed, new[] { "AK-SPO-013" },
+            "A chave CIS-M365-7.0.0:7.3.2 vem do ruleset do Monkey365 (commit 7cfa390); a edição oficial não tem essa seção. A regra AK-SPO-013 "
+            + "continua como leitura técnica do KNIGHT.",
+            AbsentFromEdition: "a recomendação “Ensure OneDrive sync is restricted for unmanaged devices” foi removida nesta edição (histórico de "
+            + "mudanças da versão 7.0.0, Ticket #26841)."),
+    };
+
+    /// <summary>
+    /// Confirmações registradas do CIS Microsoft 365 Foundations 7.0.0: lote 1 (seção 8, Teams), lote 2 (seção 6, Exchange Online) e
+    /// lote 3 (seção 7, SharePoint e OneDrive).
+    /// </summary>
+    public static IReadOnlyList<KnightCisCriterionConfirmation> Registered { get; } = TeamsLot.Concat(ExchangeLot).Concat(SharePointLot).ToArray();
 
     public static IReadOnlyDictionary<string, KnightCisCriterionConfirmation> Index(IEnumerable<KnightCisCriterionConfirmation> confirmations) =>
         confirmations.GroupBy(c => c.RecommendationId, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);

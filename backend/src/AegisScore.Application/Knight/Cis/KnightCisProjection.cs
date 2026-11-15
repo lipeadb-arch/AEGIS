@@ -80,8 +80,15 @@ public static class KnightCisCriterionState
 {
     public const string Confirmed = "Confirmed";
     public const string NotConfirmed = "NotConfirmed";
+    /// <summary>A chave do catálogo foi procurada na edição oficial e a seção não existe nela.</summary>
+    public const string AbsentFromEdition = "AbsentFromEdition";
 
-    public static string Label(string state) => state == Confirmed ? "Critério da edição confirmado em fonte oficial" : KnightCisCriteria.NotConfirmedReason;
+    public static string Label(string state) => state switch
+    {
+        Confirmed => "Critério da edição confirmado em fonte oficial",
+        AbsentFromEdition => "Seção ausente da edição oficial",
+        _ => KnightCisCriteria.NotConfirmedReason,
+    };
 }
 
 /// <summary>
@@ -608,6 +615,10 @@ public static class KnightCisProjection
                 gate = $"{KnightCisCriteria.NotConfirmedReason}: a seção {first.Section ?? "s/n"} de {bench.Framework} {bench.Version} não foi conferida "
                     + "numa fonte oficial do CIS. A identificação vem do rastreio e o vínculo, do catálogo KNIGHT; o resultado do KNIGHT fica ao lado "
                     + "e não vale como resultado CIS.";
+            else if (conf.AbsentFromEdition is { } absent)
+                gate = $"A seção {first.Section ?? "s/n"} não consta de {bench.Framework} {bench.Version}: {absent} Conferido em {conf.OfficialSource} "
+                    + $"({conf.Location}). A chave vem do rastreio e o vínculo, do catálogo KNIGHT; a leitura do KNIGHT fica ao lado e não vale "
+                    + "como resultado CIS.";
             else if (knightStatus is KnightCisStatus.Compliant or KnightCisStatus.NonCompliant or KnightCisStatus.NotApplicable
                      && knightOrigin is "Automated" or "AutomatedAndManual")
             {
@@ -639,9 +650,24 @@ public static class KnightCisProjection
             origin = "None";
             mitigated = false;
         }
+        else if (conf is not null && knightStatus != KnightCisStatus.OutOfScope)
+        {
+            // A configuração que a edição audita e a coleta não alcança: dita antes do motivo da regra.
+            if (knightStatus == KnightCisStatus.NotEvaluated && conf.CollectionGap is { } gap)
+                reason = gap + (string.IsNullOrWhiteSpace(reason) ? "" : " Leitura do KNIGHT: " + reason);
+            // O resultado que a PRÓPRIA edição declara para a situação que o KNIGHT leu.
+            else if (conf.ResultMap is { } map && map.TryGetValue(knightStatus, out var mapped)
+                     && knightOrigin is "Automated" or "AutomatedAndManual")
+            {
+                status = mapped;
+                reason = conf.ResultMapReason;
+            }
+        }
+        var criterionState = conf is null ? KnightCisCriterionState.NotConfirmed
+            : conf.AbsentFromEdition is not null ? KnightCisCriterionState.AbsentFromEdition : KnightCisCriterionState.Confirmed;
         var criterion = new KnightCisCriterion(
-            conf is null ? KnightCisCriterionState.NotConfirmed : KnightCisCriterionState.Confirmed,
-            KnightCisCriterionState.Label(conf is null ? KnightCisCriterionState.NotConfirmed : KnightCisCriterionState.Confirmed),
+            criterionState,
+            KnightCisCriterionState.Label(criterionState),
             $"{bench.Framework} {bench.Version}", first.Section ?? "s/n", trace, conf?.OfficialSource, conf?.Location, conf?.ConsultedOn,
             conf?.ReviewedBy, conf?.ReviewedCatalogVersions ?? Array.Empty<string>(), conf?.ReviewedRules ?? Array.Empty<string>(), conf?.Note);
 

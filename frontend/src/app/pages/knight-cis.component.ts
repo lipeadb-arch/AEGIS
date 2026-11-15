@@ -241,11 +241,11 @@ import { KnightService } from '../services/knight.service';
                             @if (rec.knight; as k) { <dt>Resultado do KNIGHT</dt><dd>{{ k.statusLabel }} · {{ k.originLabel }}@if (k.mitigated) { · reprovado com mitigação (não é conformidade) }</dd> }
                             <dt>Critério da edição</dt><dd>{{ cr.edition }} · seção {{ cr.section }} — {{ cr.stateLabel }}</dd>
                             <dt>Procedência</dt>
-                            <dd>@if (cr.state === 'Confirmed') { {{ cr.officialSource }}@if (cr.location) { · {{ cr.location }} }@if (cr.reviewedBy) { · conferido por {{ cr.reviewedBy }}@if (cr.consultedOn) { em {{ cr.consultedOn }} } }@if (cr.reviewedCatalogVersions.length) { · catálogo {{ cr.reviewedCatalogVersions.join(', ') }} } } @else { {{ cr.trace }} }</dd>
-                            @if (cr.state === 'Confirmed' && cr.reviewedRules.length) { <dt>Vínculos conferidos</dt><dd>{{ cr.reviewedRules.join(', ') }}@if (cr.note) { — {{ cr.note }} }</dd> }
+                            <dd>@if (cr.state !== 'NotConfirmed') { {{ cr.officialSource }}@if (cr.location) { · {{ cr.location }} }@if (cr.reviewedBy) { · conferido por {{ cr.reviewedBy }}@if (cr.consultedOn) { em {{ cr.consultedOn }} } }@if (cr.reviewedCatalogVersions.length) { · catálogo {{ cr.reviewedCatalogVersions.join(', ') }} } } @else { {{ cr.trace }} }</dd>
+                            @if (cr.state !== 'NotConfirmed' && cr.reviewedRules.length) { <dt>Vínculos conferidos</dt><dd>{{ cr.reviewedRules.join(', ') }}@if (cr.note) { — {{ cr.note }} }</dd> }
                             @if (rec.mappingOrigin) { <dt>Origem do mapeamento</dt><dd>{{ rec.mappingOrigin }}</dd> }
                           </dl>
-                          @if (cr.state !== 'Confirmed') {
+                          @if (cr.state === 'NotConfirmed') {
                             <p class="muted small">Para concluir: conferir o critério desta seção na edição oficial do CIS e registrar a procedência. A leitura do KNIGHT abaixo (regra, resultado e evidência) não muda.</p>
                           }
                         </div>

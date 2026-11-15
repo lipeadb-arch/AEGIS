@@ -132,10 +132,11 @@ public sealed class KnightCisBenchmarkTests : IDisposable
             b.ManualCounts.Total.Should().Be(rows.Count(r => r.Knight!.Origin == "Manual"));
             b.KnightCounts.Should().BeEquivalentTo(KnightCisProjection.KnightCountsOf(rows), b.Key);
             var withVerdict = rows.Where(x => x.Status is KnightCisStatus.Compliant or KnightCisStatus.NonCompliant or KnightCisStatus.NotApplicable).ToList();
-            withVerdict.Where(x => !(x.Id.StartsWith("CIS-M365-7.0.0:6.") && x.Criterion!.State == KnightCisCriterionState.Confirmed)).Should().BeEmpty(
-                "só as seções 6 (Exchange) e 8 (Teams) do M365 7.0.0 têm critério confirmado, e o Teams não foi coletado no caso de referência");
-            (b.Counts.Compliant, b.Counts.NonCompliant, b.Counts.NotApplicable).Should().Be(b.Key == "CIS-M365-7.0.0" ? (4, 1, 0) : (0, 0, 0), b.Key);
-            b.CriterionConfirmed.Should().Be(b.Key == "CIS-M365-7.0.0" ? 28 : 0, b.Key);
+            withVerdict.Where(x => !((x.Id.StartsWith("CIS-M365-7.0.0:6.") || x.Id.StartsWith("CIS-M365-7.0.0:7."))
+                    && x.Criterion!.State == KnightCisCriterionState.Confirmed)).Should().BeEmpty(
+                "só as seções 6, 7 e 8 do M365 7.0.0 têm critério confirmado, e o Teams não foi coletado no caso de referência");
+            (b.Counts.Compliant, b.Counts.NonCompliant, b.Counts.NotApplicable).Should().Be(b.Key == "CIS-M365-7.0.0" ? (4, 1 + 2, 0) : (0, 0, 0), b.Key);
+            b.CriterionConfirmed.Should().Be(b.Key == "CIS-M365-7.0.0" ? 40 : 0, b.Key);
             (b.KnightCounts!.Compliant + b.KnightCounts.NonCompliant).Should().BeGreaterThan(0, "a leitura do KNIGHT continua visível");
         }
 
@@ -153,7 +154,7 @@ public sealed class KnightCisBenchmarkTests : IDisposable
             .And.Contain(x => x.StartsWith($"Totais CIS: {r.Considered} recomendações consideradas"))
             .And.Contain(x => x.StartsWith("O resultado do KNIGHT chega a uma conclusão técnica em"));
         view.Mapping.OfficialSources.Should().Equal(KnightCisCriteria.M365V700Pdf);
-        view.Mapping.CriteriaConfirmed.Should().Be(28);
+        view.Mapping.CriteriaConfirmed.Should().Be(40);
         r.Evaluated.Should().NotBe(201, "os totais CIS contam recomendações, não as 201 regras avaliadas — e a explicação diz por quê");
     }
 
@@ -503,11 +504,11 @@ public sealed class KnightCisBenchmarkTests : IDisposable
         var teamsRows = view.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:8.")).ToList();
         (teamsRows.Count(r => r.Status == KnightCisStatus.Compliant), teamsRows.Count(r => r.Status == KnightCisStatus.NonCompliant),
             teamsRows.Count(r => r.Status == KnightCisStatus.NotApplicable)).Should().Be((3, 1, 0));
-        (m365.Counts.Compliant, m365.Counts.NonCompliant).Should().Be((3 + 4, 1 + 1), "seção 8 do lote mais a seção 6 do caso de referência");
+        (m365.Counts.Compliant, m365.Counts.NonCompliant).Should().Be((3 + 4, 1 + 1 + 2), "seção 8 do lote mais as seções 6 e 7 do caso de referência");
         m365.Counts.Should().BeEquivalentTo(KnightCisProjection.CountsOf(view.Recommendations.Where(r => r.Benchmark == m365.Key).ToList()));
-        m365.CriterionConfirmed.Should().Be(28);
+        m365.CriterionConfirmed.Should().Be(40);
         view.Benchmarks.Where(b => b.Key != m365.Key).Should().OnlyContain(b => b.Counts.Compliant + b.Counts.NonCompliant + b.Counts.NotApplicable == 0);
-        view.Reconciliation.Explanation.Should().Contain(x => x.Contains(" 9 têm o critério da edição confirmado"));
+        view.Reconciliation.Explanation.Should().Contain(x => x.Contains(" 11 têm o critério da edição confirmado"));
     }
 
     [Fact]
@@ -628,7 +629,7 @@ public sealed class KnightCisBenchmarkTests : IDisposable
         (rows.Count(r => r.Status == KnightCisStatus.Compliant), rows.Count(r => r.Status == KnightCisStatus.NonCompliant),
             rows.Count(r => r.Status == KnightCisStatus.NotEvaluated)).Should().Be((3, 2, 8));
         var m365 = view.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0");
-        (m365.Counts.Compliant, m365.Counts.NonCompliant).Should().Be((3, 2), "o Teams não foi coletado neste caso");
+        (m365.Counts.Compliant, m365.Counts.NonCompliant).Should().Be((3, 2 + 2), "seção 6 do lote mais a seção 7 do caso de referência; o Teams não foi coletado");
         m365.Counts.Should().BeEquivalentTo(KnightCisProjection.CountsOf(view.Recommendations.Where(r => r.Benchmark == m365.Key).ToList()));
     }
 
@@ -655,10 +656,153 @@ public sealed class KnightCisBenchmarkTests : IDisposable
             .Should().Equal(live.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:6."))
                 .Select(r => (r.Id, r.Status, r.Reason, r.Found, r.Knight!.Status, r.Criterion!.State, r.Criterion.Location, r.Criterion.Note)));
         var m365 = frozen.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0");
-        (m365.Counts.Compliant, m365.Counts.NonCompliant, m365.CriterionConfirmed).Should().Be((3 + 3, 1 + 2, 28), "seção 8 (3/1) + seção 6 (3/2)");
+        (m365.Counts.Compliant, m365.Counts.NonCompliant, m365.CriterionConfirmed).Should().Be((3 + 3, 1 + 2 + 2, 40), "seção 8 (3/1) + seção 6 (3/2) + seção 7 do caso de referência (0/2)");
 
         var html = Encoding.UTF8.GetString((await new PostureSnapshotExporter(db).ExportAsync(snapshot.Id, PostureExportFormat.Html))!.Content);
         html.Should().Contain("6.1.2, p. 419").And.Contain("6.5.4, p. 456").And.Contain("de 20/05/2026, data impressa na capa");
+        html.Should().NotContain("src=\"http").And.NotContain("href=\"http://", "o arquivo funciona offline, sem nada externo");
+    }
+
+    // ---- Terceiro lote conferido: CIS M365 7.0.0, seção 7 (SharePoint e OneDrive), no mesmo PDF oficial ------------------
+
+    /// <summary>
+    /// Desfechos dirigidos do SharePoint por cima do caso de referência (001–004 reprovadas, 005–012 sem conclusão, 013 aprovada). Os
+    /// motivos de "não avaliado" das regras que dependem da API de administração continuam os do caso de referência.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, KnightIndicatorStatus> SharePointLot = new Dictionary<string, KnightIndicatorStatus>
+    {
+        ["AK-SPO-001"] = KnightIndicatorStatus.Passed,        // 7.2.1: Conforme (Graph)
+        ["AK-SPO-003"] = KnightIndicatorStatus.Exposed,       // 7.2.3: Não conforme (Graph)
+        ["AK-SPO-005"] = KnightIndicatorStatus.NotApplicable, // 7.2.5: não aplicável do KNIGHT não sustentado
+        ["AK-SPO-006"] = KnightIndicatorStatus.NotApplicable, // 7.2.6: a edição declara Conforme com o compartilhamento desligado
+        ["AK-SPO-008"] = KnightIndicatorStatus.NotApplicable, // 7.2.8: idem
+        ["AK-SPO-013"] = KnightIndicatorStatus.Passed,        // 7.3.2: seção ausente da edição
+    };
+
+    private static IReadOnlyDictionary<string, KnightIndicatorStatus> ThreeLots =>
+        TeamsLot.Concat(ExchangeLot).Concat(SharePointLot).ToDictionary(x => x.Key, x => x.Value);
+
+    private static readonly string[] SharePointSections =
+        { "7.2.1", "7.2.2", "7.2.3", "7.2.4", "7.2.5", "7.2.6", "7.2.7", "7.2.8", "7.2.9", "7.2.10", "7.2.11", "7.3.1", "7.3.2" };
+
+    [Fact]
+    public void LoteSharePoint_M365_700_TrezeChavesConferidas_DozeSecoesEUmaAusenteDaEdicao()
+    {
+        var view = KnightCisProjection.Build(Input(ReferenceComposition()));
+        var lot = KnightCisCriteria.Registered.Where(c => c.RecommendationId.StartsWith("CIS-M365-7.0.0:7.")).ToList();
+        lot.Select(c => c.RecommendationId).Should().BeEquivalentTo(SharePointSections.Select(s => "CIS-M365-7.0.0:" + s));
+        view.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:7.")).Select(r => r.Section)
+            .Should().BeEquivalentTo(SharePointSections, "as 13 chaves do catálogo na seção 7");
+        foreach (var c in lot)
+        {
+            var r = view.Recommendations.Single(x => x.Id == c.RecommendationId);
+            c.OfficialSource.Should().Be(KnightCisCriteria.M365V700Pdf);
+            c.ConsultedOn.Should().Be("2026-11-14");
+            c.ReviewedCatalogVersions.Should().Equal("ak-knight-v13");
+            c.ReviewedRules.Should().Equal(r.RuleIds, $"{c.RecommendationId}: o vínculo revisado é o vínculo do catálogo");
+            r.RuleIds.Should().OnlyContain(id => id.StartsWith("AK-SPO-"));
+            if (c.AbsentFromEdition is null) c.Location.Should().StartWith("seção " + r.Section + ", p. 4");
+            if (c.SustainedResults is not null && c.SustainedResults.Count < 3) c.UnsustainedReason.Should().NotBeNullOrWhiteSpace();
+            if (c.ResultMap is not null) c.ResultMapReason.Should().Contain("conforme");
+        }
+        string[] Sections(Func<KnightCisCriterionConfirmation, bool> p) => lot.Where(p).Select(c => c.RecommendationId["CIS-M365-7.0.0:".Length..]).ToArray();
+        Sections(c => c.CollectionGap is not null).Should().BeEquivalentTo(
+            new[] { "7.2.2", "7.2.4", "7.2.7", "7.2.8", "7.2.9", "7.2.10", "7.2.11", "7.3.1" }, "a coleta só lê o Microsoft Graph");
+        lot.Where(c => c.CollectionGap is not null).Should().OnlyContain(c => c.CollectionGap!.Contains("API de administração do SharePoint"));
+        Sections(c => c.ResultMap is not null).Should().BeEquivalentTo(new[] { "7.2.6", "7.2.8" });
+        Sections(c => c.AbsentFromEdition is not null).Should().Equal("7.3.2");
+        lot.Single(c => c.AbsentFromEdition is not null).Location.Should().Contain("Change History").And.Contain("Ticket #26841");
+
+        var removed = view.Recommendations.Single(r => r.Id == "CIS-M365-7.0.0:7.3.2");
+        removed.Criterion!.State.Should().Be(KnightCisCriterionState.AbsentFromEdition);
+        removed.Criterion.StateLabel.Should().Be("Seção ausente da edição oficial");
+        removed.Status.Should().Be(KnightCisStatus.NotEvaluated);
+        removed.Reason.Should().StartWith("A seção 7.3.2 não consta de ").And.Contain("removida nesta edição");
+        view.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0").CriterionConfirmed.Should().Be(40, "8 (15) + 6 (13) + 7 (12); a 7.3.2 não conta");
+    }
+
+    [Fact]
+    public void LoteSharePoint_GraphSustentaResultado_ApiAdministrativaNaoLida_MotivoEspecifico_EEdicaoConformeComCompartilhamentoDesligado()
+    {
+        var view = KnightCisProjection.Build(Input(ReferenceComposition(exact: SharePointLot)));
+        KnightCisRecommendation R(string section) => view.Recommendations.Single(r => r.Id == "CIS-M365-7.0.0:" + section);
+
+        R("7.2.1").Status.Should().Be(KnightCisStatus.Compliant);
+        R("7.2.1").Found.Should().Contain("AK-SPO-001 aprovou");
+        R("7.2.3").Status.Should().Be(KnightCisStatus.NonCompliant);
+        R("7.2.3").Criterion!.Location.Should().Be("seção 7.2.3, p. 468–470 (Descrição, Auditoria e Valor padrão)");
+        // Vínculos parciais: pelo Graph só se conclui com o compartilhamento desligado (7.2.2) ou o SharePoint restrito (7.2.4); a
+        // reprovação vinda do caso de referência não prova, e o motivo diz qual configuração da edição a coleta não alcança.
+        foreach (var (s, property) in new[] { ("7.2.2", "EnableAzureADB2BIntegration"), ("7.2.4", "OneDriveSharingCapability") })
+        {
+            R(s).Knight!.Status.Should().Be(KnightCisStatus.NotEvaluated, s);
+            R(s).Status.Should().Be(KnightCisStatus.NotEvaluated, s);
+            R(s).Reason.Should().StartWith($"A edição audita {property}", s).And.Contain("Leitura do KNIGHT: ");
+        }
+
+        foreach (var s in new[] { "7.2.6", "7.2.8" })
+        {
+            R(s).Knight!.Status.Should().Be(KnightCisStatus.NotApplicable, s);
+            R(s).Status.Should().Be(KnightCisStatus.Compliant, s + ": a edição declara conforme com o compartilhamento desligado");
+            R(s).Reason.Should().StartWith("A edição declara esta recomendação conforme", s);
+            R(s).Origin.Should().Be("Automated");
+        }
+        R("7.2.5").Knight!.Status.Should().Be(KnightCisStatus.NotApplicable);
+        R("7.2.5").Status.Should().Be(KnightCisStatus.NotEvaluated);
+        R("7.2.5").Reason.Should().StartWith("Não aplicável pelo KNIGHT não vale como resultado CIS: ").And.Contain("PreventExternalUsersFromResharing");
+
+        // Sem a API de administração: não avaliado, com a configuração exigida pela edição e o motivo da regra ao lado.
+        foreach (var (s, property) in new[] { ("7.2.7", "DefaultSharingLinkType"), ("7.2.9", "ExternalUserExpirationRequired"),
+                     ("7.2.10", "EmailAttestationRequired"), ("7.2.11", "DefaultLinkPermission"), ("7.3.1", "DisallowInfectedFileDownload") })
+        {
+            var r = R(s);
+            r.Knight!.Status.Should().Be(KnightCisStatus.NotEvaluated, s);
+            r.Status.Should().Be(KnightCisStatus.NotEvaluated, s);
+            r.Criterion!.State.Should().Be(KnightCisCriterionState.Confirmed, s);
+            r.Reason.Should().StartWith($"A edição audita {property}", s).And.Contain("API de administração do SharePoint")
+                .And.Contain("Leitura do KNIGHT: ", "o motivo da regra continua visível");
+        }
+
+        R("7.3.2").Knight!.Status.Should().Be(KnightCisStatus.Compliant, "a leitura técnica do KNIGHT é preservada");
+        R("7.3.2").Status.Should().Be(KnightCisStatus.NotEvaluated);
+        R("7.3.2").Found.Should().Contain("AK-SPO-013 aprovou");
+
+        var rows = view.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:7.")).ToList();
+        (rows.Count(r => r.Status == KnightCisStatus.Compliant), rows.Count(r => r.Status == KnightCisStatus.NonCompliant),
+            rows.Count(r => r.Status == KnightCisStatus.NotEvaluated)).Should().Be((3, 1, 9));
+        var m365 = view.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0");
+        m365.Counts.Should().BeEquivalentTo(KnightCisProjection.CountsOf(view.Recommendations.Where(r => r.Benchmark == m365.Key).ToList()));
+        (m365.Counts.Compliant, m365.Counts.NonCompliant).Should().Be((3 + 4, 1 + 1), "seção 7 do lote mais a seção 6 do caso de referência");
+    }
+
+    [Fact]
+    public async Task LoteSharePoint_TelaEHtmlOffline_MesmoResultadoEvidenciaETotais()
+    {
+        await using var db = NewContext(TenantA);
+        var composition = ReferenceComposition(exact: ThreeLots);
+        await SeedAsync(db, composition);
+        await new KnightAssessmentScopeService(db, new SystemTenantContext(TenantA), TimeProvider.System)
+            .SaveAsync(KnightConsolidatedCandidates.Sources.Where(s => s != KnightSourceType.MicrosoftFabric).ToList(), "Pessoa Gestora");
+        var controller = new KnightAssessmentsController(new FixedLatest(composition), new SystemTenantContext(TenantA),
+            new KnightManualResultService(db, new SystemTenantContext(TenantA), TimeProvider.System),
+            scope: new KnightAssessmentScopeService(db, new SystemTenantContext(TenantA), TimeProvider.System));
+        var live = (KnightCisView)((OkObjectResult)(await controller.GetCisBenchmarks(default)).Result!).Value!;
+
+        var detail = await new PostureSnapshotService(db, new SystemTenantContext(TenantA)).PublishConsolidatedKnightAsync(null);
+        var snapshot = await db.PostureSnapshots.AsNoTracking().AsSplitQuery().SingleAsync(s => s.Id == detail.Summary.Id);
+        var frozen = KnightCisJson.Deserialize(snapshot.CisBenchmarkJson)!;
+
+        frozen.Benchmarks.Select(b => (b.Key, b.Counts, b.CriterionConfirmed)).Should().BeEquivalentTo(live.Benchmarks.Select(b => (b.Key, b.Counts, b.CriterionConfirmed)));
+        frozen.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:7."))
+            .Select(r => (r.Id, r.Status, r.Reason, r.Found, r.Knight!.Status, r.Criterion!.State, r.Criterion.StateLabel, r.Criterion.Location))
+            .Should().Equal(live.Recommendations.Where(r => r.Id.StartsWith("CIS-M365-7.0.0:7."))
+                .Select(r => (r.Id, r.Status, r.Reason, r.Found, r.Knight!.Status, r.Criterion!.State, r.Criterion.StateLabel, r.Criterion.Location)));
+        var m365 = frozen.Benchmarks.Single(b => b.Key == "CIS-M365-7.0.0");
+        (m365.Counts.Compliant, m365.Counts.NonCompliant, m365.CriterionConfirmed).Should().Be((3 + 3 + 3, 1 + 2 + 1, 40),
+            "seção 8 (3/1) + seção 6 (3/2) + seção 7 (3/1)");
+
+        var html = Encoding.UTF8.GetString((await new PostureSnapshotExporter(db).ExportAsync(snapshot.Id, PostureExportFormat.Html))!.Content);
+        html.Should().Contain("7.2.6, p. 476").And.Contain("Ticket #26841").And.Contain("AbsentFromEdition").And.Contain("Cr.state!=='NotConfirmed'");
         html.Should().NotContain("src=\"http").And.NotContain("href=\"http://", "o arquivo funciona offline, sem nada externo");
     }
 
